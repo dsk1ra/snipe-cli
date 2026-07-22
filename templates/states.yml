@@ -1,0 +1,42 @@
+# snipe — Canonical States
+# Source of truth for status values written to applications.md.
+#
+# Rule: The status field in applications.md must contain EXACTLY
+# one of these values (case-insensitive). No markdown bold (**),
+# no dates, no extra text. Dates go in the date column.
+
+states:
+  - id: evaluated
+    label: Evaluated
+    aliases: [hold]
+    description: Offer evaluated with report, pending decision
+
+  - id: applied
+    label: Applied
+    aliases: [sent]
+    description: Application submitted
+
+  - id: responded
+    label: Responded
+    description: Company has responded (not yet interview)
+
+  - id: interview
+    label: Interview
+    description: Active interview process
+
+  - id: offer
+    label: Offer
+    description: Offer received
+
+  - id: rejected
+    label: Rejected
+    description: Rejected by company
+
+  - id: discarded
+    label: Discarded
+    description: Discarded by candidate or offer closed
+
+  - id: skip
+    label: SKIP
+    aliases: [monitor]
+    description: Doesn't fit, don't apply

@@ -1,0 +1,40 @@
+{
+  "name": "snipe-cli",
+  "version": "0.1.0",
+  "description": "Local job search pipeline - TUI over a three-phase Ollama evaluator, no cloud LLM calls",
+  "private": true,
+  "scripts": {
+    "verify": "node tracker/verify-pipeline.mjs",
+    "normalize": "node tracker/normalize-statuses.mjs",
+    "dedup": "node tracker/dedup-tracker.mjs",
+    "merge": "node tracker/merge-tracker.mjs",
+    "pdf": "node generate-pdf.mjs",
+    "sync-check": "node cv-sync-check.mjs",
+    "liveness": "node check-liveness.mjs",
+    "snipe-tui": "NODE_ENV=production node snipe-tui.mjs",
+    "scan": "node scan.mjs",
+    "validate:portals": "node validate-portals.mjs",
+    "tracker": "node tracker/tracker.mjs"
+  },
+  "keywords": [
+    "job-search",
+    "ollama",
+    "tui",
+    "local-llm",
+    "automation"
+  ],
+  "author": "Denys Skira <denys.skira@gmail.com>",
+  "homepage": "https://linkedin.com/in/denys-skira/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dsk1ra/snipe-cli"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.0.0",
+    "ink": "^7.1.1",
+    "js-yaml": "^4.1.1",
+    "playwright": "1.61.0",
+    "react": "^19.2.7"
+  }
+}

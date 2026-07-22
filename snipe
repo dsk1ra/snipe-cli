@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# snipe — manually add a pasted JD to the local batch pipeline and run it.
+#
+# The JD text is stored in batch/jds/<id>.txt and used by all three phases —
+# nothing is ever fetched from the link; it's kept only for tracking.
+#
+# Usage: snipe --jd "<job description text>" [--link <url>]
+#        snipe --jdf <file with job description> [--link <url>]
+#        snipe --jd-q "<text>" | --jdf-q <file>   queue only — picked up
+#                                                      when the active run ends
+#        snipe --drain                            process queued offers now
+#
+# Queueing: if a run is already active (even a plain --jd from another
+# terminal), the offer is queued instead and this terminal returns immediately.
+# Every snipe run drains the queue when its own offer finishes.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+BATCH_DIR="$SCRIPT_DIR/batch"
+INPUT_FILE="$BATCH_DIR/batch-input.tsv"
+QUEUE_FILE="$BATCH_DIR/snipe-queue.txt"
+LOCK_FILE="$BATCH_DIR/local-runner.pid"
+
+runner_active() {
+  [[ -f "$LOCK_FILE" ]] && kill -0 "$(cat "$LOCK_FILE" 2>/dev/null)" 2>/dev/null
+}
+
+wait_runner_free() {
+  while runner_active; do sleep 5; done
+}
+
+# Atomically pop the first queued id (empty output + rc 1 when queue is empty).
+# Rewrites via `cat >` (not sed -i / mv) so the inode — and everyone's flock —
+# stays valid.
+pop_queued_id() {
+  [[ -s "$QUEUE_FILE" ]] || return 1
+  local next=""
+  exec 9>>"$QUEUE_FILE"
+  flock 9
+  next=$(head -n1 "$QUEUE_FILE" 2>/dev/null || true)
+  if [[ -n "$next" ]]; then
+    tail -n +2 "$QUEUE_FILE" > "$QUEUE_FILE.tmp" \
+      && cat "$QUEUE_FILE.tmp" > "$QUEUE_FILE" && rm -f "$QUEUE_FILE.tmp"
+  fi
+  flock -u 9
+  exec 9>&-
+  [[ -n "$next" ]] && echo "$next"
+}
+
+requeue_front() {
+  exec 9>>"$QUEUE_FILE"
+  flock 9
+  { echo "$1"; cat "$QUEUE_FILE"; } > "$QUEUE_FILE.tmp" \
+    && cat "$QUEUE_FILE.tmp" > "$QUEUE_FILE" && rm -f "$QUEUE_FILE.tmp"
+  flock -u 9
+  exec 9>&-
+}
+
+drain_queue() {
+  local next
+  while next=$(pop_queued_id); do
+    echo "── picked up queued offer #$next ──"
+    wait_runner_free
+    if ! bash "$BATCH_DIR/local-runner.sh" --only-id "$next" && runner_active; then
+      # Lost the runner lock to another terminal — put the id back and retry.
+      requeue_front "$next"
+      sleep 5
+    fi
+  done
+}
+
+JD="" LINK="" QUEUE_ONLY=false DRAIN_ONLY=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --jd)      JD="$2"; shift 2 ;;
+    --jd-q)    JD="$2"; QUEUE_ONLY=true; shift 2 ;;
+    --jdf|--jdf-q)
+               [[ -f "$2" ]] || { echo "ERROR: file not found: $2"; exit 1; }
+               JD="$(cat "$2")"; [[ "$1" == "--jdf-q" ]] && QUEUE_ONLY=true
+               shift 2 ;;
+    --link)    LINK="$2"; shift 2 ;;
+    --drain)   DRAIN_ONLY=true; shift ;;
+    -h|--help) sed -n '2,/^set -/p' "$0" | grep '^# ' | sed 's/^# //'; exit 0 ;;
+    *)         echo "Unknown option: $1 (see --help)"; exit 1 ;;
+  esac
+done
+
+if [[ "$DRAIN_ONLY" == "true" ]]; then
+  [[ -s "$QUEUE_FILE" ]] || { echo "Queue is empty."; exit 0; }
+  drain_queue
+  exit 0
+fi
+
+[[ -n "$JD" ]] || { echo "ERROR: --jd, --jdf, --jd-q, or --jdf-q is required"; exit 1; }
+(( ${#JD} >= 100 )) || { echo "ERROR: JD too short (${#JD} chars) — paste the full description"; exit 1; }
+
+mkdir -p "$BATCH_DIR/jds"
+[[ -f "$INPUT_FILE" ]] || printf 'id\turl\tsource\tnotes\n' > "$INPUT_FILE"
+
+if [[ -n "$LINK" ]] && grep -qF "	$LINK	" "$INPUT_FILE"; then
+  existing_id=$(grep -F "	$LINK	" "$INPUT_FILE" | head -1 | cut -f1)
+  echo "Link already in batch-input.tsv as #$existing_id — re-run with:"
+  echo "  bash batch/local-runner.sh --only-id $existing_id --retry-failed"
+  exit 1
+fi
+
+id=$(awk -F'\t' 'NR>1 && $1+0>m {m=$1+0} END{print m+1}' "$INPUT_FILE")
+url="${LINK:-manual:snipe-$id}"
+
+printf '%s' "$JD" > "$BATCH_DIR/jds/$id.txt"
+printf '%s' "$JD" > "/tmp/batch-jd-$id.txt"
+printf '%s\t%s\t%s\t%s\n' "$id" "$url" "snipe" "manual JD $(date +%Y-%m-%d)" >> "$INPUT_FILE"
+echo "Added offer #$id (JD ${#JD} chars) → batch/jds/$id.txt"
+
+# Queue instead of running when asked to, or when another run holds the lock.
+if [[ "$QUEUE_ONLY" == "true" ]] || runner_active; then
+  exec 9>>"$QUEUE_FILE"; flock 9; echo "$id" >&9; flock -u 9; exec 9>&-
+  if runner_active; then
+    echo "Queued #$id — the active run will pick it up when it finishes."
+  else
+    echo "Queued #$id — no active run; process it with: snipe --drain"
+  fi
+  exit 0
+fi
+
+bash "$BATCH_DIR/local-runner.sh" --only-id "$id" || true
+drain_queue

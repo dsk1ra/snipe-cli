@@ -1,0 +1,17 @@
+# Phase 1 pre-scoring model (snipe-screen).
+# Base: Qwen3 4B Instruct 2507 at q8_0 — benchmarked 2026-07-17 against
+# qwen2.5:7b-instruct-q5_K_M and qwen3:8b on 8 labeled JDs (see batch/bench):
+# the 7B collapsed scores to 2.6 and fabricated hard stops in 7/8 runs; the 8B
+# judged best but spills 20-25% to CPU on 6 GB (~60s/offer); the 4B matches the
+# 8B on easy calls at ~13s/offer fully on-GPU. Its senior-role optimism is
+# absorbed by the deterministic seniorityCaps() gate in ollama-scorer.mjs.
+# Phase 2 uses snipe-eval; Phase 3 uses snipe-cv (coder base).
+#
+# Build:  ollama create snipe-screen -f batch/Modelfile.snipe-screen
+FROM qwen3:4b-instruct-2507-q8_0
+
+# All layers on GPU (~4.4 GB weights — fits 6 GB with KV headroom)
+PARAMETER num_gpu 99
+
+# Note: KV cache quantization is set via environment variable, not Modelfile:
+#   OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
