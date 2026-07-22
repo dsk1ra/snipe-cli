@@ -1,0 +1,77 @@
+# Personal data (user fills these)
+cv.md
+article-digest.md
+data/applications.md
+data/applications.db
+data/follow-ups.md
+data/pipeline.md
+data/scan-history.tsv
+data/parser-output/**/*.json
+!data/parser-output/.gitkeep
+!data/parser-output/**/.gitkeep
+data/cache/
+reports/*.md
+!reports/.gitkeep
+output/*
+!output/.gitkeep
+batch/logs/*
+!batch/logs/.gitkeep
+batch/local-state.tsv
+batch/local-runner.pid
+batch/snipe-queue.txt
+batch/batch-input.tsv
+batch/applied.tsv
+batch/skipped.tsv
+batch/tracker-additions/**/*.tsv
+!batch/tracker-additions/.gitkeep
+
+# Generated pipeline artifacts (dirs auto-created on each run)
+batch/jds/
+batch/scores/
+batch/evals/
+batch/cv-index.json
+batch/jd-index.json
+
+# Interview prep (accumulated STAR+R stories — user data)
+interview-prep/*
+!interview-prep/.gitkeep
+
+# User config and customization (never auto-updated; *.template.md / *.example.yml stay tracked)
+config/profile.yml
+config/profile.md
+portals.yml
+
+# Personal model-prompt overrides (real metrics; shipped *.md is the generic placeholder)
+batch/*.local.md
+
+# Benchmark runs + labels (personal CV/JD evaluation data — the harness ships, the runs don't)
+batch/bench/
+batch/labels.tsv
+batch/labels.xlsx
+
+# Secrets (never commit — use .env.example as template)
+.env
+
+# Generated
+node_modules/
+# Report-number reservation sentinels (ephemeral, created by reserve-report-num.mjs)
+reports/*-RESERVED.md
+
+# Backup files (normalize-statuses.mjs, dedup-tracker.mjs, manual *.bak snapshots)
+*.bak
+
+# OS
+.DS_Store
+*.mov
+*.mp4
+
+# CLI-specific local config
+.claude/settings.local.json
+.claude/memory/
+package-lock.json
+
+# Playwright MCP server run artifacts (ephemeral, machine-local — never commit)
+.playwright-mcp/
+
+# Planning (local scratchpad)
+plan/

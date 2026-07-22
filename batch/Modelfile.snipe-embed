@@ -1,0 +1,13 @@
+# snipe-embed — embedding model for the evidence-matching and CV-selection steps.
+#
+# Used by batch/embeddings.mjs to build batch/cv-index.json and
+# batch/jd-index.json: Phase 2 matches JD requirements to CV evidence, and
+# Phase 3's cv-select.mjs ranks CV bullets against Block B requirements before
+# the 7B rewrites them. No generation — embeddings only.
+#
+# Tagged rather than used as the bare base so all four pipeline models carry
+# the snipe- prefix and a pinned quantization; swapping the base is a one-line
+# change here instead of a grep across the batch scripts.
+#
+# Build:  ollama create snipe-embed -f batch/Modelfile.snipe-embed
+FROM qwen3-embedding:0.6b-q8_0

@@ -1,0 +1,9 @@
+# snipe-eval — Phase 2 deep evaluation on Qwen3 30B-A3B MoE (3.3B active).
+#
+# Runs on 6 GB VRAM + system RAM: Ollama auto-splits (measured ~4.7 GB VRAM,
+# rest in RAM; ~24 tok/s generation, ~430 tok/s prefill on the RTX 3060 Laptop).
+# Do NOT set num_gpu here — forcing all layers onto a 6 GB card fails; the
+# auto-split is what makes this model viable.
+#
+# Build:  ollama create snipe-eval -f batch/Modelfile.snipe-eval
+FROM qwen3:30b-a3b-instruct-2507-q4_K_M

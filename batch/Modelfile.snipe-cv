@@ -1,0 +1,14 @@
+# snipe-cv — Phase 3 CV-tailoring model (local path)
+#
+# Built on qwen2.5-coder (NOT the general instruct used for eval). A 5x2
+# benchmark on real offers showed the coder base hits the structured CV-JSON
+# constraints far more reliably than instruct: 50-70 word summary organically
+# 5/5 (vs 1/5), 3 projects 5/5, more relevant project selection, and faster —
+# with no prose-quality regression. CV tailoring is structured-output work,
+# which coder models are tuned for.
+#
+# Build:  ollama create snipe-cv -f batch/Modelfile.snipe-cv
+FROM qwen2.5-coder:7b-instruct-q5_K_M
+
+# All layers on GPU (6 GB budget; q8 KV cache via OLLAMA_KV_CACHE_TYPE=q8_0)
+PARAMETER num_gpu 99
