@@ -68,7 +68,6 @@ reports/*-RESERVED.md
 # CLI-specific local config
 .claude/settings.local.json
 .claude/memory/
-package-lock.json
 
 # Playwright MCP server run artifacts (ephemeral, machine-local — never commit)
 .playwright-mcp/
