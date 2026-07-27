@@ -1,0 +1,16 @@
+{
+  "//": "Type checking only — no build step. checkJs is off on purpose: a file opts in with `// @ts-check` at the top, so adding the checker never blocks on the whole repo at once. Run: npm run typecheck",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2023", "dom"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["**/*.mjs", "providers/_types.js"],
+  "exclude": ["node_modules", "output", "batch/bench"]
+}

@@ -164,9 +164,14 @@ dedup: `tracker/dedup-tracker.mjs`
 
 ## Tests
 
-`node test-all.mjs` — 269 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 281 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
+
+`npm run typecheck` — `tsc --noEmit` over the JSDoc types, also green, also in CI.
+`checkJs` is off in `tsconfig.json`: a file opts in by starting with `// @ts-check`
+(24 do today), so adding a new one is a per-file decision rather than a repo-wide
+gate. `providers/_types.js` is the shared type catalog.
 
 ## Conventions
 
