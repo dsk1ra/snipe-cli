@@ -71,8 +71,7 @@ export function loadRun(dir) {
   return out.sort((a, b) => +a.id - +b.id);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const dirs = process.argv.slice(2);
+if (process.argv[1] && fileURLToPath(import.meta.url) === _resolve(process.argv[1])) {
   const runs = dirs.map(d => ({ dir: d, offers: loadRun(d) }));
   for (const { dir, offers } of runs) {
     if (!offers.length) { console.log(`\n=== ${dir}: no completed evals ===`); continue; }
