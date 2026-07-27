@@ -491,7 +491,7 @@ score_offer() {
   update_state "$id" "$url" "scored" "$score" "$archetype" "-" "-" "-" "-" "0"
 
   local flag=""
-  [[ -n "$hard_stops" ]] && flag=" ⚠ hard stops: $hard_stops"
+  [[ -n "$hard_stops" ]] && flag=" WARN hard stops: $hard_stops"
   echo "    ✓ Score: $score/5 — $archetype$flag"
 }
 
@@ -938,7 +938,7 @@ main() {
     local ef; ef=$(find_eval_file "$id")
     if [[ -n "$ef" ]]; then
       # Eval metadata exists but report is gone — need re-eval
-      echo "  ⚠  #$id report $rnum: eval metadata found but report missing — will re-evaluate"
+      echo "  WARN: #$id report $rnum: eval metadata found but report missing — will re-evaluate"
     fi
     update_state "$id" "$url" "$p1s" "$p1sc" "$p1a" "eval_failed" "$rnum" "-" "report missing after eval" "$ret"
   done < "$STATE_FILE"
@@ -971,7 +971,7 @@ main() {
         if ! (( $(echo "$p1_score >= $P1_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
           update_state "$id" "$url" "scored" "$p1_score" "$p1_archetype" "p1-gated" "-" "skipped" "p1-gated(threshold=$P1_THRESHOLD)" "0"
           write_tracker_p1_skip "$id" "$url" "$p1_score" || true
-          echo "  ⏭  #$id skipped Phase 2 (P1 score $p1_score < P1 threshold $P1_THRESHOLD, tracker written)"
+          echo "  #$id skipped Phase 2 (P1 score $p1_score < P1 threshold $P1_THRESHOLD, tracker written)"
           continue
         fi
       fi
@@ -1026,7 +1026,7 @@ main() {
           # Write tracker line directly — no LLM needed for below-threshold offers
           update_state "$id" "$url" "scored" "$p1_score" "$p1_archetype" "evaled" "$p2_report_num" "skipped" "below-threshold($THRESHOLD)" "0"
           write_tracker_skip "$id" "$url" "$p1_score" "$p2_report_num" || true
-          echo "  ⏭  #$id skipped (eval score $gate_score < threshold $THRESHOLD, tracker written)"
+          echo "  #$id skipped (eval score $gate_score < threshold $THRESHOLD, tracker written)"
         fi
       fi
     done < "$INPUT_FILE"
@@ -1044,18 +1044,18 @@ main() {
   if [[ "$EVALUATOR_SCRIPT" == "staged-evaluator.mjs" ]]; then
     echo ""
     echo "=== Syncing embedding indexes ==="
-    node "$BATCH_DIR/embeddings.mjs" sync || echo "⚠  embeddings.mjs sync failed"
+    node "$BATCH_DIR/embeddings.mjs" sync || echo "WARN: embeddings.mjs sync failed"
   fi
 
   # ── Merge + verify ────────────────────────────────────────────────────────────
 
   echo ""
   echo "=== Merging tracker additions ==="
-  node "$PROJECT_DIR/tracker/merge-tracker.mjs" || echo "⚠  merge-tracker.mjs failed"
+  node "$PROJECT_DIR/tracker/merge-tracker.mjs" || echo "WARN: merge-tracker.mjs failed"
 
   echo ""
   echo "=== Verifying pipeline integrity ==="
-  node "$PROJECT_DIR/tracker/verify-pipeline.mjs" || echo "⚠  Verification found issues (see above)"
+  node "$PROJECT_DIR/tracker/verify-pipeline.mjs" || echo "WARN: Verification found issues (see above)"
 
   print_summary
 }
