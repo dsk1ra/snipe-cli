@@ -295,7 +295,7 @@ Every company in `tracked_companies` must have a `careers_url` — the direct UR
 
 The `careers_url` should point to the company's own careers page whenever available. Many companies use Workday, Greenhouse, or Lever under the hood, but expose vacancy IDs only through their corporate domain. Using the direct ATS URL when a corporate careers page exists can cause false 410 errors because job IDs do not match.
 
-| ✅ Correct (corporate) | ❌ Incorrect as first choice (direct ATS) |
+| Correct (corporate) | Incorrect as first choice (direct ATS) |
 |---|---|
 | `https://careers.mastercard.com` | `https://mastercard.wd1.myworkdayjobs.com` |
 | `https://openai.com/careers` | `https://job-boards.greenhouse.io/openai` |

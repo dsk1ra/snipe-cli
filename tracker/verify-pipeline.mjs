@@ -44,13 +44,13 @@ const ALIASES = {
 let errors = 0;
 let warnings = 0;
 
-function error(msg) { console.log(`❌ ${msg}`); errors++; }
-function warn(msg) { console.log(`⚠️  ${msg}`); warnings++; }
-function ok(msg) { console.log(`✅ ${msg}`); }
+function error(msg) { console.log(`ERROR: ${msg}`); errors++; }
+function warn(msg) { console.log(`WARN: ${msg}`); warnings++; }
+function ok(msg) { console.log(`OK: ${msg}`); }
 
 // --- Read applications.md ---
 if (!existsSync(APPS_FILE)) {
-  console.log('\n📊 No applications.md found. This is normal for a fresh setup.');
+  console.log('\nNo applications.md found. This is normal for a fresh setup.');
   console.log('   The file will be created when you evaluate your first offer.\n');
   process.exit(0);
 }
@@ -103,7 +103,7 @@ for (const line of lines) {
   });
 }
 
-console.log(`\n📊 Checking ${entries.length} entries in applications.md\n`);
+console.log(`\nChecking ${entries.length} entries in applications.md\n`);
 
 // --- Check 1: Canonical statuses ---
 let badStatuses = 0;
