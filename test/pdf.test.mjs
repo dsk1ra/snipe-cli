@@ -151,9 +151,18 @@ try {
 
 console.log('\n20. Relative resources resolve');
 
+// Static half — no browser needed. setContent() silently drops baseURL, so it
+// must not return as the mechanism.
+if (!/setContent\([^)]*baseURL/s.test(readFileSync(join(ROOT, 'generate-pdf.mjs'), 'utf8'))) {
+  pass('setContent() does not pass the ignored baseURL option');
+} else {
+  fail('setContent() is passing baseURL again — Playwright ignores it');
+}
+
+let dir;
 try {
   const { renderHtmlToPdf } = await import(pathToFileURL(join(ROOT, 'generate-pdf.mjs')).href);
-  const dir = mkdtempSync(join(tmpdir(), 'snipe-relres-'));
+  dir = mkdtempSync(join(tmpdir(), 'snipe-relres-'));
   // 2x2 red PNG — a raster, so a successful load lands in the PDF as an
   // embedded /Subtype /Image. Chromium refuses file:// subresources for an
   // about:blank document, so under setContent() nothing paints and the marker
@@ -189,13 +198,15 @@ try {
     fail(`staged render file left behind: ${leftovers.join(', ')}`);
   }
 
-  // setContent() silently drops baseURL, so it must not return as the mechanism.
-  if (!/setContent\([^)]*baseURL/s.test(readFileSync(join(ROOT, 'generate-pdf.mjs'), 'utf8'))) {
-    pass('setContent() does not pass the ignored baseURL option');
-  } else {
-    fail('setContent() is passing baseURL again — Playwright ignores it');
-  }
-  rmSync(dir, { recursive: true, force: true });
 } catch (e) {
-  fail(`relative resource test crashed: ${e.message}`);
+  // CI sets PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1, so there is no browser there.
+  // ponytail: warn instead of fail; add `npx playwright install chromium` to CI
+  // if the render half ever needs to be enforced there.
+  if (/Executable doesn't exist|playwright install/i.test(e.message)) {
+    warn('Playwright browser not installed — PDF render checks skipped');
+  } else {
+    fail(`relative resource test crashed: ${e.message}`);
+  }
+} finally {
+  if (dir) rmSync(dir, { recursive: true, force: true });
 }
