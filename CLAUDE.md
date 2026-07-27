@@ -153,7 +153,7 @@ TSV format — 9 tab-separated columns, **status before score** (merge swaps the
 to match the tracker's score-before-status layout):
 
 ```
-{num}\t{date}\t{company}\t{role}\t{status}\t{score}/5\t{✅|❌}\t[{num}](reports/{num}-{slug}-{date}.md)\t{note}
+{num}\t{date}\t{company}\t{role}\t{status}\t{score}/5\t{Y|N}\t[{num}](reports/{num}-{slug}-{date}.md)\t{note}
 ```
 
 The report link is always written root-relative; `tracker/merge-tracker.mjs` rewrites it
