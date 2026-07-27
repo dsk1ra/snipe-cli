@@ -67,16 +67,16 @@ async function loadProviders(dir) {
     try {
       mod = await import(pathToFileURL(full).href);
     } catch (err) {
-      console.error(`⚠️  ${file}: failed to load — ${err.message}`);
+      console.error(`WARN: ${file}: failed to load — ${err.message}`);
       continue;
     }
     const p = mod.default;
     if (!p || typeof p.fetch !== 'function' || !p.id) {
-      console.error(`⚠️  ${file}: skipping — default export must be { id, fetch }`);
+      console.error(`WARN: ${file}: skipping — default export must be { id, fetch }`);
       continue;
     }
     if (providers.has(p.id)) {
-      console.error(`⚠️  ${file}: duplicate provider id "${p.id}" — keeping first`);
+      console.error(`WARN: ${file}: duplicate provider id "${p.id}" — keeping first`);
       continue;
     }
     providers.set(p.id, p);
@@ -101,7 +101,7 @@ function resolveProvider(entry, providers, { skipIds = [] } = {}) {
       const hit = localParser.detect?.(entry);
       if (hit) return { provider: localParser };
     } catch (err) {
-      console.error(`⚠️  local-parser: detect() threw for "${entry.name}" — ${err.message}`);
+      console.error(`WARN: local-parser: detect() threw for "${entry.name}" — ${err.message}`);
     }
   }
 
@@ -111,7 +111,7 @@ function resolveProvider(entry, providers, { skipIds = [] } = {}) {
     try {
       hit = p.detect?.(entry);
     } catch (err) {
-      console.error(`⚠️  ${p.id}: detect() threw for "${entry.name}" — ${err.message}`);
+      console.error(`WARN: ${p.id}: detect() threw for "${entry.name}" — ${err.message}`);
       continue;
     }
     if (hit) return { provider: p };
@@ -548,30 +548,29 @@ async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0
             // fall through to expired (the original 404/410 is a real closure).
             if (recheck.result === 'active') {
               migrated.push({ ...offer, url: newUrl, previousUrl: offer.url });
-              console.log(`  🔄 migrated  ${offer.company} | ${offer.title} → ${newUrl}`);
+              console.log(`  migrated  ${offer.company} | ${offer.title} → ${newUrl}`);
               continue;
             }
           }
         }
         expired.push({ ...offer, reason });
-        console.log(`  ❌ expired   ${offer.company} | ${offer.title} (${reason})`);
+        console.log(`  expired   ${offer.company} | ${offer.title} (${reason})`);
       } else if (result === 'uncertain' && GUARD_CODES.has(code)) {
         // Guard failures are permanent (not transient like a timeout) — record them
         // separately so they don't end up in pipeline.md but DO appear in scan-history
         // with a precise status, dedup-blocking them on subsequent scans.
         invalid.push({ ...offer, code, reason });
-        console.log(`  ⛔ invalid   ${offer.company} | ${offer.title} (${reason})`);
+        console.log(`  invalid   ${offer.company} | ${offer.title} (${reason})`);
       } else if (result === 'uncertain' && code === 'no_apply_control') {
         // Page loaded but classifier could not find an Apply control. Treat like
         // expired for routing — drop from pipeline AND record in scan-history so
         // we don't burn a verify cycle on the same URL next scan.
         dropped.push({ ...offer, reason });
-        console.log(`  ⚠️ no-apply  ${offer.company} | ${offer.title} (${reason})`);
+        console.log(`  no-apply  ${offer.company} | ${offer.title} (${reason})`);
       } else {
         // 'active' or 'uncertain' due to navigation_error (transient — retry next scan)
         verified.push(offer);
-        const icon = result === 'active' ? '✅' : '⚠️';
-        console.log(`  ${icon} ${result.padEnd(9)} ${offer.company} | ${offer.title}`);
+        console.log(`  ${result.padEnd(9)} ${offer.company} | ${offer.title}`);
       }
 
       const wait = i < offers.length - 1 ? jitteredDelayMs(throttleBaseMs) : 0;
@@ -661,7 +660,7 @@ async function main() {
       if (!entry || typeof entry !== 'object') continue;
       if (entry.enabled === false) continue;
       if (typeof entry.name !== 'string' || !entry.name.trim()) {
-        console.error(`⚠️  Skipping entry — missing or non-string 'name' field: ${JSON.stringify(entry)}`);
+        console.error(`WARN: Skipping entry — missing or non-string 'name' field: ${JSON.stringify(entry)}`);
         continue;
       }
       if (filterCompany && !entry.name.toLowerCase().includes(filterCompany)) continue;

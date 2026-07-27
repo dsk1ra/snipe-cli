@@ -208,9 +208,9 @@ async function generatePDF() {
     process.exit(1);
   }
 
-  console.log(`📄 Input:  ${inputPath}`);
-  console.log(`📁 Output: ${outputPath}`);
-  console.log(`📏 Format: ${format.toUpperCase()}`);
+  console.log(`Input:  ${inputPath}`);
+  console.log(`Output: ${outputPath}`);
+  console.log(`Format: ${format.toUpperCase()}`);
 
   let html = await readFile(inputPath, 'utf-8');
   let cvMarkdown = '';
@@ -227,7 +227,7 @@ async function generatePDF() {
   const totalReplacements = Object.values(normalized.replacements).reduce((a, b) => a + b, 0);
   if (totalReplacements > 0) {
     const breakdown = Object.entries(normalized.replacements).map(([k, v]) => `${k}=${v}`).join(', ');
-    console.log(`🧹 ATS normalization: ${totalReplacements} replacements (${breakdown})`);
+    console.log(`ATS normalization: ${totalReplacements} replacements (${breakdown})`);
   }
 
   const result = await renderHtmlToPdf(html, outputPath, { format, baseDir: dirname(inputPath) });
@@ -242,16 +242,16 @@ async function generatePDF() {
         `-Keywords=${sourceUrl}`,
         outputPath,
       ], { stdio: 'pipe' });
-      console.log(`🔗 Source URL embedded in metadata: ${sourceUrl}`);
+      console.log(`Source URL embedded in metadata: ${sourceUrl}`);
     } catch (err) {
-      console.warn(`⚠️  Could not write source-url metadata via exiftool: ${err.message}`);
+      console.warn(`WARN: Could not write source-url metadata via exiftool: ${err.message}`);
     }
   }
 
   // Hard page-count limit. The file is kept so its layout can be inspected,
   // but a non-zero exit signals the caller to trim content and regenerate.
   if (maxPages && Number.isFinite(maxPages) && result.pageCount > maxPages) {
-    console.error(`❌ PDF is ${result.pageCount} pages — exceeds the ${maxPages}-page hard limit. Trim content and regenerate.`);
+    console.error(`ERROR: PDF is ${result.pageCount} pages — exceeds the ${maxPages}-page hard limit. Trim content and regenerate.`);
     process.exit(2);
   }
 
@@ -283,7 +283,7 @@ export async function inlineLocalFonts(html) {
     const fontPath = resolve(fontsDir, name);
     const rel = relative(fontsDir, fontPath);
     if (rel.startsWith('..') || isAbsolute(rel)) {
-      console.warn(`⚠️  Font reference escapes fonts/, keeping original reference: ${name}`);
+      console.warn(`WARN: Font reference escapes fonts/, keeping original reference: ${name}`);
       continue;
     }
     try {
@@ -292,7 +292,7 @@ export async function inlineLocalFonts(html) {
       dataUrls.set(name, `url('data:${MIME[ext] || 'application/octet-stream'};base64,${buf.toString('base64')}')`);
     } catch (err) {
       if (err?.code !== 'ENOENT') throw err;
-      console.warn(`⚠️  Font file not found, keeping original reference: fonts/${name}`);
+      console.warn(`WARN: Font file not found, keeping original reference: fonts/${name}`);
     }
   }
   return html.replace(FONT_REF, (match, _quote, name) => dataUrls.get(name) || match);
@@ -364,9 +364,9 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
     const pdfString = pdfBuffer.toString('latin1');
     const pageCount = (pdfString.match(/\/Type\s*\/Page[^s]/g) || []).length;
 
-    console.log(`✅ PDF generated: ${outputPath}`);
-    console.log(`📊 Pages: ${pageCount}`);
-    console.log(`📦 Size: ${(pdfBuffer.length / 1024).toFixed(1)} KB`);
+    console.log(`PDF generated: ${outputPath}`);
+    console.log(`Pages: ${pageCount}`);
+    console.log(`Size: ${(pdfBuffer.length / 1024).toFixed(1)} KB`);
 
     return { outputPath, pageCount, size: pdfBuffer.length };
   } finally {
@@ -378,7 +378,7 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
 if (isMain) {
   generatePDF().catch((err) => {
-    console.error('❌ PDF generation failed:', err.message);
+    console.error('ERROR: PDF generation failed:', err.message);
     process.exit(1);
   });
 }

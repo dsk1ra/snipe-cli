@@ -318,10 +318,10 @@ try {
   });
   process.once('exit', () => trackerLock?.release());
   if (trackerLock.waitMs > 0 || trackerLock.staleRecovered) {
-    console.log(`🔒 Tracker merge lock acquired (wait_ms=${trackerLock.waitMs} | attempts=${trackerLock.attempts} | stale_recovered=${trackerLock.staleRecovered})`);
+    console.log(`Tracker merge lock acquired (wait_ms=${trackerLock.waitMs} | attempts=${trackerLock.attempts} | stale_recovered=${trackerLock.staleRecovered})`);
   }
 } catch (err) {
-  console.error(`❌ ${err.message}`);
+  console.error(`ERROR: ${err.message}`);
   process.exit(1);
 }
 
@@ -359,7 +359,7 @@ function validateStatus(status) {
   // DUP/Repost → Discarded
   if (/^(dup|repost)/i.test(lower)) return 'Discarded';
 
-  console.warn(`⚠️  Non-canonical status "${status}" → defaulting to "Evaluated"`);
+  console.warn(`WARN: Non-canonical status "${status}" → defaulting to "Evaluated"`);
   return 'Evaluated';
 }
 
@@ -510,7 +510,7 @@ function parseTsvContent(content, filename) {
   if (content.startsWith('|')) {
     parts = content.split('|').map(s => s.trim()).filter(Boolean);
     if (parts.length < 8) {
-      console.warn(`⚠️  Skipping malformed pipe-delimited ${filename}: ${parts.length} fields`);
+      console.warn(`WARN: Skipping malformed pipe-delimited ${filename}: ${parts.length} fields`);
       return null;
     }
     // Format: num | date | company | role | score | status | pdf | report | notes [| location]
@@ -530,7 +530,7 @@ function parseTsvContent(content, filename) {
     // Tab-separated
     parts = content.split('\t');
     if (parts.length < 8) {
-      console.warn(`⚠️  Skipping malformed TSV ${filename}: ${parts.length} fields`);
+      console.warn(`WARN: Skipping malformed TSV ${filename}: ${parts.length} fields`);
       return null;
     }
 
@@ -575,7 +575,7 @@ function parseTsvContent(content, filename) {
   }
 
   if (isNaN(addition.num) || addition.num === 0) {
-    console.warn(`⚠️  Skipping ${filename}: invalid entry number`);
+    console.warn(`WARN: Skipping ${filename}: invalid entry number`);
     return null;
   }
 
@@ -610,10 +610,10 @@ if (MIGRATE) {
   const changed = migrated.filter((l, i) => l !== before[i]).length;
 
   if (DRY_RUN) {
-    console.log(`🔎 Migration (dry-run): ${changed} row(s) would be rewritten in ${basename(APPS_FILE)}`);
+    console.log(`Migration (dry-run): ${changed} row(s) would be rewritten in ${basename(APPS_FILE)}`);
   } else {
     writeFileAtomic(APPS_FILE, migrated.join('\n'));
-    console.log(`✅ Migration: rewrote ${changed} report link(s) in ${basename(APPS_FILE)} relative to ${TRACKER_DIR === SNIPE_ROOT ? 'repo root' : 'data/'}`);
+    console.log(`OK: Migration: rewrote ${changed} report link(s) in ${basename(APPS_FILE)} relative to ${TRACKER_DIR === SNIPE_ROOT ? 'repo root' : 'data/'}`);
   }
   process.exit(0);
 }
@@ -623,7 +623,7 @@ const appLines = appContent.split('\n');
 // both work whether the table uses the original 9-column layout or a customized
 // one (e.g. with a Location column after Role). Falls back to the legacy layout.
 COLMAP = detectColumns(appLines) || LEGACY_COLMAP;
-if (COLMAP.location != null) console.log('🧭 Detected Location column.');
+if (COLMAP.location != null) console.log('Detected Location column.');
 const existingApps = [];
 let maxNum = 0;
 
@@ -637,7 +637,7 @@ for (const line of appLines) {
   }
 }
 
-console.log(`📊 Existing: ${existingApps.length} entries, max #${maxNum}`);
+console.log(`Existing: ${existingApps.length} entries, max #${maxNum}`);
 
 // Read tracker additions
 if (!existsSync(ADDITIONS_DIR)) {
@@ -647,7 +647,7 @@ if (!existsSync(ADDITIONS_DIR)) {
 
 const tsvFiles = readdirSync(ADDITIONS_DIR).filter(f => f.endsWith('.tsv'));
 if (tsvFiles.length === 0) {
-  console.log('✅ No pending additions to merge.');
+  console.log('OK: No pending additions to merge.');
   process.exit(0);
 }
 
@@ -658,7 +658,7 @@ tsvFiles.sort((a, b) => {
   return numA - numB;
 });
 
-console.log(`📥 Found ${tsvFiles.length} pending additions`);
+console.log(`Found ${tsvFiles.length} pending additions`);
 
 let added = 0;
 let updated = 0;
@@ -716,7 +716,7 @@ for (const file of tsvFiles) {
     const oldScore = parseScore(duplicate.score);
 
     if (newScore > oldScore) {
-      console.log(`🔄 Update: #${duplicate.num} ${addition.company} — ${addition.role} (${oldScore}→${newScore})`);
+      console.log(`Update: #${duplicate.num} ${addition.company} — ${addition.role} (${oldScore}→${newScore})`);
       const lineIdx = appLines.indexOf(duplicate.raw);
       if (lineIdx >= 0) {
         const updatedLine = buildRow({
@@ -730,7 +730,7 @@ for (const file of tsvFiles) {
         updated++;
       }
     } else {
-      console.log(`⏭️  Skip: ${addition.company} — ${addition.role} (existing #${duplicate.num} ${oldScore} >= new ${newScore})`);
+      console.log(`Skip: ${addition.company} — ${addition.role} (existing #${duplicate.num} ${oldScore} >= new ${newScore})`);
       skipped++;
     }
   } else {
@@ -746,7 +746,7 @@ for (const file of tsvFiles) {
     });
     newLines.push(newLine);
     added++;
-    console.log(`➕ Add #${entryNum}: ${addition.company} — ${addition.role} (${addition.score})`);
+    console.log(`Add #${entryNum}: ${addition.company} — ${addition.role} (${addition.score})`);
   }
 }
 
@@ -774,10 +774,10 @@ if (!DRY_RUN) {
   for (const file of tsvFiles) {
     renameSync(join(ADDITIONS_DIR, file), join(MERGED_DIR, file));
   }
-  console.log(`\n✅ Moved ${tsvFiles.length} TSVs to merged/`);
+  console.log(`\nOK: Moved ${tsvFiles.length} TSVs to merged/`);
 }
 
-console.log(`\n📊 Summary: +${added} added, 🔄${updated} updated, ⏭️${skipped} skipped`);
+console.log(`\nSummary: +${added} added, ${updated} updated, ${skipped} skipped`);
 if (DRY_RUN) console.log('(dry-run — no changes written)');
 trackerLock.release();
 

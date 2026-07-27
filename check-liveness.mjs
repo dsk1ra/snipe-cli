@@ -62,8 +62,7 @@ async function main() {
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
     const { result, reason } = await checkUrlLivenessWithFallback(page, url, { getHeadedPage });
-    const icon = { active: '✅', expired: '❌', uncertain: '⚠️' }[result];
-    console.log(`${icon} ${result.padEnd(10)} ${url}`);
+    console.log(`${result.padEnd(10)} ${url}`);
     if (result !== 'active') console.log(`           ${reason}`);
     if (result === 'active') active++;
     else if (result === 'expired') expired++;
