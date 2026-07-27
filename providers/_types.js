@@ -33,13 +33,22 @@
  * Providers read these directly off the entry object — no schema enforcement
  * at the framework level.
  *
- * @typedef {object} PortalEntry
+ * @typedef {object} PortalEntryKnown
  * @property {string}             name             User-facing label; appears in logs and placeholders.
  * @property {boolean}            [enabled]        Default: true.
  * @property {string}             [careers_url]    Public listing URL; consumed by detect().
  * @property {string}             [api]            JSON API URL; used directly by greenhouse/ashby providers.
  * @property {string}             [provider]       Explicit provider id — bypasses detect().
  * @property {('http')}           [transport]      Default: 'http'. Reserved for future transports.
+ */
+
+/**
+ * The index signature is the type-level statement of the paragraph above:
+ * provider-specific keys (`api_key`, `actor_id`, `field_map`, `parser`, …) are
+ * deliberately not enumerated here, so adding one to a provider never requires
+ * touching this shared catalog.
+ *
+ * @typedef {PortalEntryKnown & Record<string, any>} PortalEntry
  */
 
 /**
@@ -69,7 +78,7 @@
  * @typedef {object} Context
  * @property {('http')} transport
  * @property {(url: string, opts?: FetchOptions) => Promise<string>}  fetchText
- * @property {(url: string, opts?: FetchOptions) => Promise<unknown>} fetchJson
+ * @property {(url: string, opts?: FetchOptions) => Promise<any>}     fetchJson  Shape is provider-specific; `any`, not `unknown`, so providers can read fields without a cast at every call site.
  */
 
 /**

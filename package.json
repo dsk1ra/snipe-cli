@@ -4,6 +4,7 @@
   "description": "Local job search pipeline - TUI over a three-phase Ollama evaluator, no cloud LLM calls",
   "private": true,
   "scripts": {
+    "typecheck": "tsc",
     "verify": "node tracker/verify-pipeline.mjs",
     "normalize": "node tracker/normalize-statuses.mjs",
     "dedup": "node tracker/dedup-tracker.mjs",
@@ -36,5 +37,9 @@
     "js-yaml": "^4.1.1",
     "playwright": "1.61.0",
     "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
   }
 }
