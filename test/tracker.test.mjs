@@ -61,7 +61,7 @@ try {
       '# Applications Tracker\n\n' +
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
       '|---|------|---------|------|-------|--------|-----|--------|-------|\n' +
-      '| 12 | 2026-01-04 | Acme | Engineer | 4.2/5 | Evaluated | ✅ | [12](reports/012-acme-2026-01-04.md) | ok |\n');
+      '| 12 | 2026-01-04 | Acme | Engineer | 4.2/5 | Evaluated | Y | [12](reports/012-acme-2026-01-04.md) | ok |\n');
 
     // Migrate by pointing the script at the fixture tracker via env override.
     run(NODE, ['tracker/merge-tracker.mjs', '--migrate'], { env: { ...process.env, SNIPE_TRACKER: tracker } });
@@ -115,16 +115,16 @@ try {
       '# Applications Tracker\n\n' +
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
       '|---|------|---------|------|-------|--------|-----|--------|-------|\n' +
-      '| 21 | 2026-01-08 | Acme | Full Stack Engineer, Foundation | 3.9/5 | Applied | ❌ | [21](../reports/021-foundation.md) | applied sibling |\n' +
-      '| 22 | 2026-01-08 | Acme | Full Stack Engineer, Guarded Releases | 4.3/5 | Evaluated | ❌ | [22](../reports/022-guarded.md) | evaluated sibling |\n' +
-      '| 23 | 2026-01-08 | Acme | Staff Software Engineer, API | 4.0/5 | Evaluated | ❌ | [23](../reports/023-api.md) | acronym sibling |\n' +
-      '| 24 | 2026-01-08 | Acme | Staff Software Engineer, SDK | 4.2/5 | Evaluated | ❌ | [24](../reports/024-sdk.md) | acronym sibling |\n' +
-      '| 25 | 2026-01-08 | Acme | Product Engineer, Growth | 3.8/5 | Evaluated | ❌ | [25](../reports/025-growth-old.md) | duplicate old |\n' +
-      '| 26 | 2026-01-09 | Acme | Product Engineer, Growth | 4.0/5 | Evaluated | ❌ | [26](../reports/026-growth-new.md) | duplicate new |\n' +
-      '| 27 | 2026-01-08 | Acme | Solutions Engineer, Revenue | 3.0/5 | Applied | ❌ | [27](../reports/027-revenue-applied.md) | applied exact-title row |\n' +
-      '| 28 | 2026-01-09 | Acme | Solutions Engineer, Revenue | 4.6/5 | Evaluated | ❌ | [28](../reports/028-revenue-eval.md) | evaluated exact-title row |\n' +
-      '| 29 | 2026-01-08 | Acme | Data Engineer, Search | 3.1/5 | Applied | ❌ | [29](../reports/029-search-old.md) | malformed duplicate-number old row |\n' +
-      '| 29 | 2026-01-09 | Acme | Data Engineer, Search | 4.1/5 | Evaluated | ❌ | [30](../reports/030-search-new.md) | malformed duplicate-number new row |\n');
+      '| 21 | 2026-01-08 | Acme | Full Stack Engineer, Foundation | 3.9/5 | Applied | N | [21](../reports/021-foundation.md) | applied sibling |\n' +
+      '| 22 | 2026-01-08 | Acme | Full Stack Engineer, Guarded Releases | 4.3/5 | Evaluated | N | [22](../reports/022-guarded.md) | evaluated sibling |\n' +
+      '| 23 | 2026-01-08 | Acme | Staff Software Engineer, API | 4.0/5 | Evaluated | N | [23](../reports/023-api.md) | acronym sibling |\n' +
+      '| 24 | 2026-01-08 | Acme | Staff Software Engineer, SDK | 4.2/5 | Evaluated | N | [24](../reports/024-sdk.md) | acronym sibling |\n' +
+      '| 25 | 2026-01-08 | Acme | Product Engineer, Growth | 3.8/5 | Evaluated | N | [25](../reports/025-growth-old.md) | duplicate old |\n' +
+      '| 26 | 2026-01-09 | Acme | Product Engineer, Growth | 4.0/5 | Evaluated | N | [26](../reports/026-growth-new.md) | duplicate new |\n' +
+      '| 27 | 2026-01-08 | Acme | Solutions Engineer, Revenue | 3.0/5 | Applied | N | [27](../reports/027-revenue-applied.md) | applied exact-title row |\n' +
+      '| 28 | 2026-01-09 | Acme | Solutions Engineer, Revenue | 4.6/5 | Evaluated | N | [28](../reports/028-revenue-eval.md) | evaluated exact-title row |\n' +
+      '| 29 | 2026-01-08 | Acme | Data Engineer, Search | 3.1/5 | Applied | N | [29](../reports/029-search-old.md) | malformed duplicate-number old row |\n' +
+      '| 29 | 2026-01-09 | Acme | Data Engineer, Search | 4.1/5 | Evaluated | N | [30](../reports/030-search-new.md) | malformed duplicate-number new row |\n');
 
     const dedupResult = run(NODE, ['tracker/dedup-tracker.mjs'], { env: { ...process.env, SNIPE_TRACKER: tracker } });
     if (dedupResult === null) {
@@ -194,18 +194,18 @@ try {
       '# Applications Tracker\n\n' +
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
       '|---|------|---------|------|-------|--------|-----|--------|-------|\n' +
-      '| 1 | 2026-01-04 | StreamCo | Full Stack Engineer 5, Ads Reporting | 4.4/5 | Evaluated | ❌ | [1](../reports/001-streamco-2026-01-04.md) | existing |\n' +
-      '| 2 | 2026-01-04 | Uber | Senior Software Engineer, Consumer Fulfillment (UberEats) | 4.2/5 | Evaluated | ❌ | [2](../reports/002-uber-2026-01-04.md) | existing |\n');
+      '| 1 | 2026-01-04 | StreamCo | Full Stack Engineer 5, Ads Reporting | 4.4/5 | Evaluated | N | [1](../reports/001-streamco-2026-01-04.md) | existing |\n' +
+      '| 2 | 2026-01-04 | Uber | Senior Software Engineer, Consumer Fulfillment (UberEats) | 4.2/5 | Evaluated | N | [2](../reports/002-uber-2026-01-04.md) | existing |\n');
     for (const n of ['001-streamco-2026-01-04', '002-uber-2026-01-04', '003-streamco-2026-01-05', '004-uber-2026-01-05', '005-streamco-2026-01-06']) {
       writeFileSync(join(mergeTmp, 'reports', `${n}.md`), '# fixture\n');
     }
     // Two DISTINCT roles (long shared prefix / shared brand token) + one true repost (score bump).
     writeFileSync(join(additionsDir, '003-streamco.tsv'),
-      '3\t2026-01-05\tStreamCo\tFull-Stack Engineer 5, AI Insights & Visualizations\tEvaluated\t4.6/5\t❌\t[3](reports/003-streamco-2026-01-05.md)\tdistinct role\n');
+      '3\t2026-01-05\tStreamCo\tFull-Stack Engineer 5, AI Insights & Visualizations\tEvaluated\t4.6/5\tN\t[3](reports/003-streamco-2026-01-05.md)\tdistinct role\n');
     writeFileSync(join(additionsDir, '004-uber.tsv'),
-      '4\t2026-01-05\tUber\tSenior Software Engineer, UberEats Feed\tEvaluated\t4.1/5\t❌\t[4](reports/004-uber-2026-01-05.md)\tdistinct team (#751)\n');
+      '4\t2026-01-05\tUber\tSenior Software Engineer, UberEats Feed\tEvaluated\t4.1/5\tN\t[4](reports/004-uber-2026-01-05.md)\tdistinct team (#751)\n');
     writeFileSync(join(additionsDir, '005-streamco.tsv'),
-      '5\t2026-01-06\tStreamCo\tFull Stack Engineer 5, Ads Reporting\tEvaluated\t4.5/5\t❌\t[5](reports/005-streamco-2026-01-06.md)\trepost\n');
+      '5\t2026-01-06\tStreamCo\tFull Stack Engineer 5, Ads Reporting\tEvaluated\t4.5/5\tN\t[5](reports/005-streamco-2026-01-06.md)\trepost\n');
 
     const mergeResult = run(NODE, ['tracker/merge-tracker.mjs'], { env: { ...process.env, SNIPE_TRACKER: tracker, SNIPE_ADDITIONS: additionsDir } });
     if (mergeResult === null) {
@@ -341,9 +341,9 @@ try {
     writeFileSync(join(mergeTmp, 'reports', '010-alpha-2026-01-07.md'), '# fixture\n');
     writeFileSync(join(mergeTmp, 'reports', '011-beta-2026-01-07.md'), '# fixture\n');
     writeFileSync(join(additionsA, '010-alpha.tsv'),
-      '10\t2026-01-07\tAlpha\tPlatform Engineer\tEvaluated\t4.1/5\t❌\t[10](reports/010-alpha-2026-01-07.md)\tfirst concurrent merge\n');
+      '10\t2026-01-07\tAlpha\tPlatform Engineer\tEvaluated\t4.1/5\tN\t[10](reports/010-alpha-2026-01-07.md)\tfirst concurrent merge\n');
     writeFileSync(join(additionsB, '011-beta.tsv'),
-      '11\t2026-01-07\tBeta\tData Engineer\tEvaluated\t4.2/5\t❌\t[11](reports/011-beta-2026-01-07.md)\tsecond concurrent merge\n');
+      '11\t2026-01-07\tBeta\tData Engineer\tEvaluated\t4.2/5\tN\t[11](reports/011-beta-2026-01-07.md)\tsecond concurrent merge\n');
 
     const first = spawnMerge(additionsA, 350);
     await waitForReady(first.ready, 2_000);
@@ -394,8 +394,8 @@ if (!sqliteAvailable) {
         '# Applications Tracker\n\n' +
         '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n' +
         '|---|------|---------|------|-------|--------|-----|--------|-------|\n' +
-        '| 2 | 2026-01-05 | Beta | Designer | 4.0/5 | Applied | ✅ | [2](../reports/002-beta-2026-01-05.md) | second |\n' +
-        '| 1 | 2026-01-04 | Acme | Engineer | 4.2/5 | Evaluated | ❌ | [1](../reports/001-acme-2026-01-04.md) | first |\n';
+        '| 2 | 2026-01-05 | Beta | Designer | 4.0/5 | Applied | Y | [2](../reports/002-beta-2026-01-05.md) | second |\n' +
+        '| 1 | 2026-01-04 | Acme | Engineer | 4.2/5 | Evaluated | N | [1](../reports/001-acme-2026-01-04.md) | first |\n';
       writeFileSync(md, clean);
       if (trackerRun(['sync']) === null) {
         fail('tracker sync crashed on clean fixture');
@@ -415,7 +415,7 @@ if (!sqliteAvailable) {
 
       // 2. Corruption is detected and normalized in the index ONLY.
       const corrupted = clean +
-        '| 1 | 2026-01-06 | Gamma | PM | — | 3.5/5 | ❌ | 鈥? | drifted |\n'; // dup id + score in status + mojibake
+        '| 1 | 2026-01-06 | Gamma | PM | — | 3.5/5 | N | 鈥? | drifted |\n'; // dup id + score in status + mojibake
       writeFileSync(md, corrupted);
       if (trackerRun(['sync', '--check']) === null) {
         pass('sync --check exits non-zero when corruption is present');
@@ -436,7 +436,7 @@ if (!sqliteAvailable) {
 
       // 3. Staleness: query after an md edit must auto-resync (no stale reads).
       writeFileSync(md, clean +
-        '| 3 | 2026-01-07 | Delta | Analyst | 4.5/5 | Applied | ✅ | [3](../reports/003-delta-2026-01-07.md) | new |\n');
+        '| 3 | 2026-01-07 | Delta | Analyst | 4.5/5 | Applied | Y | [3](../reports/003-delta-2026-01-07.md) | new |\n');
       const fresh = JSON.parse(trackerRun(['query', '--company', 'Delta', '--json']) || '[]');
       if (fresh.length === 1) {
         pass('query auto-resyncs when applications.md changed since last sync');

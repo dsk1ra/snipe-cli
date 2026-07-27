@@ -125,21 +125,21 @@ for (let i = 0; i < lines.length; i++) {
 }
 
 if (unknowns.length > 0) {
-  console.log(`\n⚠️  ${unknowns.length} unknown statuses:`);
+  console.log(`\nWARN: ${unknowns.length} unknown statuses:`);
   for (const u of unknowns) {
     console.log(`  #${u.num} (line ${u.line}): "${u.rawStatus}"`);
   }
 }
 
-console.log(`\n📊 ${changes} statuses normalized`);
+console.log(`\n${changes} statuses normalized`);
 
 if (!DRY_RUN && changes > 0) {
   // Backup first
   copyFileSync(APPS_FILE, APPS_FILE + '.bak');
   writeFileSync(APPS_FILE, lines.join('\n'));
-  console.log('✅ Written to applications.md (backup: applications.md.bak)');
+  console.log('OK: Written to applications.md (backup: applications.md.bak)');
 } else if (DRY_RUN) {
   console.log('(dry-run — no changes written)');
 } else {
-  console.log('✅ No changes needed');
+  console.log('OK: No changes needed');
 }

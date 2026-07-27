@@ -146,3 +146,67 @@ try {
 }
 
 
+
+// ── 20. RELATIVE RESOURCES RESOLVE (setContent baseURL regression) ──
+
+console.log('\n20. Relative resources resolve');
+
+// Static half — no browser needed. setContent() silently drops baseURL, so it
+// must not return as the mechanism.
+if (!/setContent\([^)]*baseURL/s.test(readFileSync(join(ROOT, 'generate-pdf.mjs'), 'utf8'))) {
+  pass('setContent() does not pass the ignored baseURL option');
+} else {
+  fail('setContent() is passing baseURL again — Playwright ignores it');
+}
+
+let dir;
+try {
+  const { renderHtmlToPdf } = await import(pathToFileURL(join(ROOT, 'generate-pdf.mjs')).href);
+  dir = mkdtempSync(join(tmpdir(), 'snipe-relres-'));
+  // 2x2 red PNG — a raster, so a successful load lands in the PDF as an
+  // embedded /Subtype /Image. Chromium refuses file:// subresources for an
+  // about:blank document, so under setContent() nothing paints and the marker
+  // is absent — that is exactly the bug this guards.
+  writeFileSync(join(dir, 'logo.png'), Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP8z4AATAxIYBQMKgAAY6oCCLQqQ1QAAAAASUVORK5CYII=',
+    'base64'));
+  const embedsImage = (pdf) => /\/Subtype\s*\/Image/.test(readFileSync(pdf).toString('latin1'));
+
+  const out = join(dir, 'out.pdf');
+  await renderHtmlToPdf('<html><head></head><body><img src="logo.png" width="40"></body></html>',
+    out, { baseDir: dir });
+  if (existsSync(out) && embedsImage(out)) {
+    pass('relative resource in baseDir is loaded into the PDF');
+  } else {
+    fail('relative resource did not load — document is not being served from baseDir');
+  }
+
+  // Control: the marker must track image painting, not be constantly present.
+  const plain = join(dir, 'plain.pdf');
+  await renderHtmlToPdf('<html><head></head><body><p>no image</p></body></html>', plain, { baseDir: dir });
+  if (!embedsImage(plain)) {
+    pass('image marker is absent without an <img> (check is not vacuous)');
+  } else {
+    fail('control failed — /Subtype /Image appears even with no image');
+  }
+
+  // The staged HTML must not survive the render.
+  const leftovers = readdirSync(dir).filter(f => f.startsWith('.snipe-render-'));
+  if (leftovers.length === 0) {
+    pass('staged render file is cleaned up');
+  } else {
+    fail(`staged render file left behind: ${leftovers.join(', ')}`);
+  }
+
+} catch (e) {
+  // CI sets PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1, so there is no browser there.
+  // ponytail: warn instead of fail; add `npx playwright install chromium` to CI
+  // if the render half ever needs to be enforced there.
+  if (/Executable doesn't exist|playwright install/i.test(e.message)) {
+    warn('Playwright browser not installed — PDF render checks skipped');
+  } else {
+    fail(`relative resource test crashed: ${e.message}`);
+  }
+} finally {
+  if (dir) rmSync(dir, { recursive: true, force: true });
+}

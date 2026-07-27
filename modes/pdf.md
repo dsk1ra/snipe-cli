@@ -200,4 +200,4 @@ Do not auto-generate the cover letter PDF without going through the interactive 
 
 ## Post-generation
 
-Update tracker if the job is already registered: change PDF from ❌ to ✅.
+Update tracker if the job is already registered: change PDF from N to Y.
