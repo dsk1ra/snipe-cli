@@ -19,7 +19,7 @@ console.log('\nsnipe test suite\n');
 // entirely within scan.test.mjs, so no ordering constraint survives the split.
 const suites = [
   'smoke', 'liveness', 'contract', 'scan', 'cadence',
-  'providers', 'tracker', 'pdf', 'pipeline',
+  'providers', 'tracker', 'pdf', 'pipeline', 'embeddings',
 ];
 
 for (const name of suites) {

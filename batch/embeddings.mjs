@@ -44,7 +44,40 @@ export async function embed(texts, { model = EMBED_MODEL, ollamaUrl = 'http://lo
   return data.embeddings;
 }
 
+// Cache-key ingredient for the indexes. The tag (`snipe-embed`) is stable by
+// design, so `ollama create snipe-embed` on a new base leaves the name — and
+// therefore any name-keyed hash — unchanged, silently keeping a stale index.
+// The resolved base identifies what actually produced the vectors.
+const fingerprintCache = new Map();
+export async function modelFingerprint({ model = EMBED_MODEL, ollamaUrl = 'http://localhost:11434' } = {}) {
+  if (fingerprintCache.has(model)) return fingerprintCache.get(model);
+  let fp = model;
+  try {
+    const res = await fetch(`${ollamaUrl}/api/show`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const d = (await res.json()).details || {};
+      // parent_model is empty for a bare base pulled without a Modelfile — fall
+      // back to the tag so the key stays stable rather than collapsing to "||".
+      fp = `${model}|${d.parent_model || model}|${d.parameter_size || ''}|${d.quantization_level || ''}`;
+    }
+  } catch { /* offline/old Ollama: degrade to the tag, same as the old behaviour */ }
+  fingerprintCache.set(model, fp);
+  return fp;
+}
+
 export function cosine(a, b) {
+  // A dim mismatch means the index was built by a different embedder. Without
+  // this guard the loop reads undefined past b's end, dot goes NaN, and the
+  // `d ? ... : 0` fallback silently returns 0 for EVERY atom — topK then ranks
+  // an all-zero list and "retrieval" degrades to "first k atoms", no error.
+  if (a.length !== b.length) {
+    throw new Error(`embedding dim mismatch: ${a.length} vs ${b.length} — stale index, run: node batch/embeddings.mjs rebuild`);
+  }
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
   const d = Math.sqrt(na) * Math.sqrt(nb);
@@ -129,7 +162,7 @@ function hashOf(str) {
 
 export async function loadCvIndex(opts = {}) {
   const atoms = extractCvAtoms();
-  const hash = hashOf(JSON.stringify(atoms.map(a => a.text)) + (opts.model || EMBED_MODEL));
+  const hash = hashOf(JSON.stringify(atoms.map(a => a.text)) + await modelFingerprint(opts));
   if (existsSync(CV_INDEX_PATH)) {
     try {
       const cached = JSON.parse(readFileSync(CV_INDEX_PATH, 'utf8'));
@@ -148,11 +181,14 @@ export async function loadCvIndex(opts = {}) {
 // are embedded on refresh.
 export async function loadJdIndex(opts = {}) {
   const jdsDir = resolve(__dirname, 'jds');
-  let cached = { model: opts.model || EMBED_MODEL, entries: [] };
+  const fp = await modelFingerprint(opts);
+  let cached = { model: fp, entries: [] };
   if (existsSync(JD_INDEX_PATH)) {
     try { cached = JSON.parse(readFileSync(JD_INDEX_PATH, 'utf8')); } catch {}
   }
-  if (cached.model !== (opts.model || EMBED_MODEL)) cached = { model: opts.model || EMBED_MODEL, entries: [] };
+  // Mismatch (including pre-fingerprint indexes keyed on the bare tag) discards
+  // the entries — a partial re-embed would mix vector spaces.
+  if (cached.model !== fp) cached = { model: fp, entries: [] };
   const have = new Set(cached.entries.map(e => e.id));
 
   const ids = existsSync(jdsDir)
