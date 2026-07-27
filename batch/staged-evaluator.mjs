@@ -96,11 +96,20 @@ const clampDim = (v) => {
 
 // ── Ollama (schema-constrained chat) ──────────────────────────────────────────
 
-async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0.1 }) {
-  // One retry: grammar-constrained output can still truncate at num_predict on a
-  // verbose sample, which breaks JSON.parse; a second sample almost always lands.
-  let lastErr;
+async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0, numCtx = 8192 }) {
+  // One retry. Two different failure modes need two different retries:
+  //   done_reason=stop   → a bad sample; re-roll at a slightly higher temperature.
+  //   done_reason=length → the answer did not FIT; re-rolling the same budget just
+  //                        truncates again (observed: offer #38 hit 3000/3000 twice
+  //                        and failed the eval), so give it more room instead.
+  let lastErr, truncated = false, promptTokens = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
+    // On a length retry, spend everything the context actually has left rather
+    // than a guessed multiple — attempt 0 reports the real prompt size, so the
+    // budget can be exact instead of risking a context overflow.
+    const budget = truncated
+      ? Math.max(numPredict, Math.min(Math.round(numPredict * 1.5), numCtx - promptTokens - 256))
+      : numPredict;
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -109,15 +118,28 @@ async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, ti
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
         stream: false,
         format: schema,
-        options: { temperature: attempt === 0 ? temperature : temperature + 0.15, num_ctx: 8192, num_predict: numPredict },
+        options: {
+          temperature: attempt === 0 || truncated ? temperature : temperature + 0.15,
+          num_ctx: numCtx,
+          num_predict: budget,
+        },
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
     const content = data?.message?.content || '';
+    // Context-budget telemetry: prompt + output must fit num_ctx, and a prompt
+    // that grows past it silently truncates the answer instead of erroring.
+    if (process.env.SNIPE_DEBUG) {
+      process.stderr.write(`[ctx] prompt=${data?.prompt_eval_count} out=${data?.eval_count}/${budget} done=${data?.done_reason} attempt=${attempt}\n`);
+    }
     try { return JSON.parse(content); }
-    catch (e) { lastErr = new Error(`invalid JSON (${content.length} chars, done_reason=${data?.done_reason}): ${content.slice(-80)}`); }
+    catch (e) {
+      truncated = data?.done_reason === 'length';
+      promptTokens = Number(data?.prompt_eval_count) || 0;
+      lastErr = new Error(`invalid JSON (${content.length} chars, done_reason=${data?.done_reason}, budget=${budget}): ${content.slice(-80)}`);
+    }
   }
   throw lastErr;
 }
