@@ -399,7 +399,7 @@ if (args.evalScore !== null && args.evalScore < args.threshold) {
   const trackerN  = nextTrackerNum();
   const trackerLine = [
     trackerN, args.date, args.company, args.role,
-    'Evaluated', `${args.evalScore}/5`, '❌',
+    'Evaluated', `${args.evalScore}/5`, 'N',
     `[${args.reportNum}](reports/${args.reportNum}-${slug}-${args.date}.md)`,
     `Below local threshold (${args.threshold}) — no PDF — ${args.url}`,
   ].join('\t');
@@ -647,7 +647,7 @@ const reportLink = `[${args.reportNum}](reports/${reportBasename})`;
 const note       = `${pdfPath ? 'PDF generated' : 'PDF failed'} — score ${args.evalScore}/5 — ${args.url}`;
 const trackerLine = [
   trackerN, args.date, args.company, args.role,
-  'Evaluated', `${args.evalScore}/5`, pdfPath ? '✅' : '❌',
+  'Evaluated', `${args.evalScore}/5`, pdfPath ? 'Y' : 'N',
   reportLink, note,
 ].join('\t');
 

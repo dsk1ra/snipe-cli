@@ -656,7 +656,7 @@ write_tracker_skip() {
 
   local tracker_file="$TRACKER_DIR/${id}.tsv"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$next_num" "$today" "$company" "$role" "Evaluated" "${score}/5" "❌" \
+    "$next_num" "$today" "$company" "$role" "Evaluated" "${score}/5" "N" \
     "[${report_num}](reports/${report_slug}.md)" \
     "Below threshold ($THRESHOLD) — no PDF" \
     > "$tracker_file"
@@ -682,7 +682,7 @@ write_tracker_p1_skip() {
 
   local tracker_file="$TRACKER_DIR/${id}.tsv"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$next_num" "$today" "$company" "$role" "Evaluated" "${p1_score}/5" "❌" \
+    "$next_num" "$today" "$company" "$role" "Evaluated" "${p1_score}/5" "N" \
     "no report — P1-gated" \
     "P1-gated (score $p1_score < $P1_THRESHOLD) — Phase 2 skipped, re-run with a lower/no --p1-threshold to re-score" \
     > "$tracker_file"
