@@ -50,7 +50,8 @@ export async function embed(texts, { model = EMBED_MODEL, ollamaUrl = 'http://lo
 // The resolved base identifies what actually produced the vectors.
 const fingerprintCache = new Map();
 export async function modelFingerprint({ model = EMBED_MODEL, ollamaUrl = 'http://localhost:11434' } = {}) {
-  if (fingerprintCache.has(model)) return fingerprintCache.get(model);
+  const key = `${ollamaUrl}|${model}`;
+  if (fingerprintCache.has(key)) return fingerprintCache.get(key);
   let fp = model;
   try {
     const res = await fetch(`${ollamaUrl}/api/show`, {
@@ -64,9 +65,9 @@ export async function modelFingerprint({ model = EMBED_MODEL, ollamaUrl = 'http:
       // parent_model is empty for a bare base pulled without a Modelfile — fall
       // back to the tag so the key stays stable rather than collapsing to "||".
       fp = `${model}|${d.parent_model || model}|${d.parameter_size || ''}|${d.quantization_level || ''}`;
+      fingerprintCache.set(key, fp);
     }
   } catch { /* offline/old Ollama: degrade to the tag, same as the old behaviour */ }
-  fingerprintCache.set(model, fp);
   return fp;
 }
 
