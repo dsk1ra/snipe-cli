@@ -11,9 +11,9 @@
  */
 
 import { chromium } from 'playwright';
-import { resolve, dirname, relative, isAbsolute } from 'path';
+import { resolve, dirname, relative, isAbsolute, join } from 'path';
 import { readFile } from 'fs/promises';
-import { mkdirSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync } from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 
@@ -318,14 +318,27 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
   html = await inlineLocalFonts(html);
 
   const browser = await chromium.launch({ headless: true });
+  // Relative resources (a logo, an image) only resolve if the document is served
+  // from baseDir. setContent() loads it as about:blank, and Chromium then refuses
+  // every file:// subresource ("Not allowed to load local resource") — a <base>
+  // tag sets document.baseURI but does not lift that block, and setContent()
+  // silently ignores the `baseURL` option, which is for navigation only. Writing
+  // the document into baseDir and navigating to it is what actually works.
+  const scratch = join(baseDir, `.snipe-render-${process.pid}-${Date.now()}.html`);
+  let scratchWritten = false;
   try {
     const page = await browser.newPage();
 
-    // Set content with file base URL for any relative resources
-    await page.setContent(html, {
-      waitUntil: 'load',
-      baseURL: `${pathToFileURL(baseDir).href}/`,
-    });
+    try {
+      writeFileSync(scratch, html);
+      scratchWritten = true;
+    } catch (err) {
+      // Read-only baseDir: fall back to setContent. Fonts are already inlined,
+      // so a self-contained document still renders correctly.
+      console.warn(`WARN: Cannot stage HTML in ${baseDir} (${err?.code || err?.message}); relative resources will not resolve`);
+    }
+    if (scratchWritten) await page.goto(pathToFileURL(scratch).href, { waitUntil: 'load' });
+    else await page.setContent(html, { waitUntil: 'load' });
 
     // Wait for fonts to load
     await page.evaluate(() => document.fonts.ready);
@@ -357,6 +370,7 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
 
     return { outputPath, pageCount, size: pdfBuffer.length };
   } finally {
+    if (scratchWritten) rmSync(scratch, { force: true });
     await browser.close();
   }
 }
