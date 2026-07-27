@@ -76,19 +76,19 @@ const HEADER_10 = `# Applications Tracker
 
 | # | Date | Company | Role | Location | Score | Status | PDF | Report | Notes |
 |---|------|---------|------|----------|-------|--------|-----|--------|-------|
-| 1 | 2026-01-01 | Acme | Engineer | Remote | 4.0/5 | Applied | ✅ | — | seed row |
+| 1 | 2026-01-01 | Acme | Engineer | Remote | 4.0/5 | Applied | Y | — | seed row |
 `;
 
 const HEADER_9 = `# Applications Tracker
 
 | # | Date | Company | Role | Score | Status | PDF | Report | Notes |
 |---|------|---------|------|-------|--------|-----|--------|-------|
-| 1 | 2026-01-01 | Acme | Engineer | 4.0/5 | Applied | ✅ | — | seed row |
+| 1 | 2026-01-01 | Acme | Engineer | 4.0/5 | Applied | Y | — | seed row |
 `;
 
 // TSV column order (status BEFORE score): num,date,company,role,status,score,pdf,report,notes[,location]
-const TSV_WITH_LOCATION = '2\t2026-02-02\tGlobex\tManager\tApplied\tN/A\t✅\t—\tnew row\tSingapore\n';
-const TSV_NO_LOCATION = '2\t2026-02-02\tGlobex\tManager\tApplied\tN/A\t✅\t—\tnew row\n';
+const TSV_WITH_LOCATION = '2\t2026-02-02\tGlobex\tManager\tApplied\tN/A\tY\t—\tnew row\tSingapore\n';
+const TSV_NO_LOCATION = '2\t2026-02-02\tGlobex\tManager\tApplied\tN/A\tY\t—\tnew row\n';
 
 // ── Test 1: 10-column tracker merges into the correct columns ──────────────
 {

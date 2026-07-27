@@ -176,7 +176,7 @@ function roleMatch(a, b) {
     const key = pairKey(a, b);
     if (!protectedFuzzyPairs.has(key)) {
       protectedFuzzyPairs.add(key);
-      console.warn(`⚠️  Keep #${a.num} and #${b.num}: fuzzy role match but advanced status requires exact report identity`);
+      console.warn(`WARN: Keep #${a.num} and #${b.num}: fuzzy role match but advanced status requires exact report identity`);
     }
     return false;
   }
@@ -248,7 +248,7 @@ for (let i = 0; i < lines.length; i++) {
   }
 }
 
-console.log(`📊 ${entries.length} entries loaded`);
+console.log(`${entries.length} entries loaded`);
 
 // Group by company+role
 const groups = new Map();
@@ -304,7 +304,7 @@ for (const [company, companyEntries] of groups) {
         const parts = lines[lineIdx].split('|').map(s => s.trim());
         parts[6] = bestStatus;
         lines[lineIdx] = '| ' + parts.slice(1, -1).join(' | ') + ' |';
-        console.log(`  📝 #${keeper.num}: status promoted to "${bestStatus}" (from #${cluster.find(e => e.status === bestStatus)?.num})`);
+        console.log(`  #${keeper.num}: status promoted to "${bestStatus}" (from #${cluster.find(e => e.status === bestStatus)?.num})`);
       }
     }
 
@@ -315,7 +315,7 @@ for (const [company, companyEntries] of groups) {
       if (lineIdx !== undefined) {
         linesToRemove.add(lineIdx);
         removed++;
-        console.log(`🗑️  Remove #${dup.num} (${dup.company} — ${dup.role}, ${dup.score}) → kept #${keeper.num} (${keeper.score})`);
+        console.log(`  Remove #${dup.num} (${dup.company} — ${dup.role}, ${dup.score}) → kept #${keeper.num} (${keeper.score})`);
       }
     }
   }
@@ -327,14 +327,14 @@ for (const idx of sortedRemoveIndices) {
   lines.splice(idx, 1);
 }
 
-console.log(`\n📊 ${removed} duplicates removed`);
+console.log(`\n${removed} duplicates removed`);
 
 if (!DRY_RUN && removed > 0) {
   copyFileSync(APPS_FILE, APPS_FILE + '.bak');
   writeFileSync(APPS_FILE, lines.join('\n'));
-  console.log('✅ Written to applications.md (backup: applications.md.bak)');
+  console.log('OK: Written to applications.md (backup: applications.md.bak)');
 } else if (DRY_RUN) {
   console.log('(dry-run — no changes written)');
 } else {
-  console.log('✅ No duplicates found');
+  console.log('OK: No duplicates found');
 }

@@ -60,7 +60,7 @@ Once the interview is complete, or once enough new details have been collected:
 2. **Update `config/profile.yml`**: Update the targets, compensation, and narrative sections.
 3. **Update `config/profile.md`**: Map the new projects/proof points to the target archetypes and update the adaptive framing rules.
 5. Provide a summary of the files updated:
-   > "✅ Interactive interview completed! Updated your profile:
+   > "Interactive interview completed! Updated your profile:
    > - **CV**: Refined summaries and project bullets with new metrics.
    > - **Profile config**: Updated target roles and comp expectations.
    > - **Custom framing**: Integrated project mappings into config/profile.md."

@@ -89,7 +89,7 @@ function openDb(DatabaseSync) {
       role    TEXT NOT NULL,
       score   TEXT NOT NULL DEFAULT '—',
       status  TEXT NOT NULL,
-      pdf     TEXT NOT NULL DEFAULT '❌',
+      pdf     TEXT NOT NULL DEFAULT 'N',
       report  TEXT NOT NULL DEFAULT '—',
       notes   TEXT NOT NULL DEFAULT ''
     );
@@ -221,7 +221,7 @@ function parseTracker(states) {
 
     if (!DATE_RE.test(date)) diag.badDate++; // kept as-is — flagged, not destroyed
 
-    apps.push({ id, pos: apps.length, date, company, role, score: score || '—', status, pdf: pdf || '❌', report: report || '—', notes });
+    apps.push({ id, pos: apps.length, date, company, role, score: score || '—', status, pdf: pdf || 'N', report: report || '—', notes });
   }
   for (const app of apps) if (app.id === 0) app.id = ++maxId;
 

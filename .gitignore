@@ -47,6 +47,7 @@ batch/*.local.md
 # Benchmark runs + labels (personal CV/JD evaluation data — the harness ships, the runs don't)
 batch/bench/
 batch/labels.tsv
+batch/labels/
 batch/labels.xlsx
 
 # Secrets (never commit — use .env.example as template)

@@ -112,6 +112,27 @@ node batch/eval-harness.mjs compare --a batch/bench/7b --b batch/bench/30b [--la
 
 `--bench-dir` keeps benchmark runs out of real `reports/` and `evals/`.
 
+### Benchmark rules (learned the hard way)
+
+1. **Compare two runs made now. `batch/evals/` is NOT a control.** It is a
+   historical archive whose calibration corpus grew underneath it (21→37→64→65
+   offers over Jul 18–21), so it scores ~0.5 higher than the same code does today
+   and silently invalidates any comparison against it.
+2. **Run at temperature 0.** Greedy decoding is byte-identical on this stack —
+   verified across 4 offers × 2 runs, evals *and* report prose. That makes the
+   noise floor 0 and a single run a valid A/B. At temp 0.1 the floor was 0.091 and
+   individual offers swung up to 2.1 points between identical runs.
+3. **Know the resolution limit before believing a delta.** With 18 labels spanning
+   3 distinct values, one label being off by ±1 moves Spearman rho by ~0.30. Any
+   improvement smaller than that is indistinguishable from label noise, no matter
+   how many runs you average. Report **pair accuracy** (fraction of differently-
+   labelled offer pairs ordered correctly) alongside rho — it is far less tied.
+4. **rho is corruptible here: the labels skew high, so generosity buys rho without
+   buying truth.** Judge changes on row-level grounding too — how often a graded
+   row cites evidence that does not contain the technology the requirement names,
+   how often one CV atom is reused across many requirements, and whether any STAR
+   story names a technology absent from `cv.md` (must stay zero).
+
 ## Tracker rules
 
 `data/applications.md` is the source of truth. `tracker/tracker.mjs` maintains an
@@ -132,7 +153,7 @@ TSV format — 9 tab-separated columns, **status before score** (merge swaps the
 to match the tracker's score-before-status layout):
 
 ```
-{num}\t{date}\t{company}\t{role}\t{status}\t{score}/5\t{✅|❌}\t[{num}](reports/{num}-{slug}-{date}.md)\t{note}
+{num}\t{date}\t{company}\t{role}\t{status}\t{score}/5\t{Y|N}\t[{num}](reports/{num}-{slug}-{date}.md)\t{note}
 ```
 
 The report link is always written root-relative; `tracker/merge-tracker.mjs` rewrites it
@@ -143,9 +164,14 @@ dedup: `tracker/dedup-tracker.mjs`
 
 ## Tests
 
-`node test-all.mjs` — 269 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 281 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
+
+`npm run typecheck` — `tsc --noEmit` over the JSDoc types, also green, also in CI.
+`checkJs` is off in `tsconfig.json`: a file opts in by starting with `// @ts-check`
+(24 do today), so adding a new one is a per-file decision rather than a repo-wide
+gate. `providers/_types.js` is the shared type catalog.
 
 ## Conventions
 

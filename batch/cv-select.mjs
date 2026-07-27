@@ -54,7 +54,9 @@ export function parseEntries(sectionLines) {
   const entries = [];
   let cur = null;
   for (const l of sectionLines.slice(1)) {
-    if (/^###\s+/.test(l)) { cur = { head: [l], bullets: [] }; entries.push(cur); continue; }
+    // scored/score are filled in by selectCvBullets; declared here so the entry
+    // shape is complete at construction rather than grown by assignment.
+    if (/^###\s+/.test(l)) { cur = { head: [l], bullets: [], scored: [], score: 0 }; entries.push(cur); continue; }
     if (!cur) { head.push(l); continue; }
     if (/^-\s+/.test(l)) cur.bullets.push(l.replace(/^-\s+/, '').trim());
     else if (cur.bullets.length === 0) { if (l.trim()) cur.head.push(l); }

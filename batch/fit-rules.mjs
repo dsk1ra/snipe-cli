@@ -140,16 +140,68 @@ export function stackMismatchCap(jdText, cvText, { cap = 3, minMentions = 2 } = 
   return { cap, jdStack: present, missing: present }; // whole required stack is foreign
 }
 
+// Aggregator/hiring-thread giveaways. The stage-1 model has an
+// `is_single_posting` flag guarding a hard score cap, but it is not reliable:
+// on batch/jds/38.txt ("40+ top trading firms seeking exceptional engineers.
+// Multiple immediate openings.") snipe-eval answered `true` 6 times out of 6 at
+// temperature 0.1, so the cap never fired and a multi-firm advert scored 4.8
+// with "Apply". Text this explicit is a regex's job, not a judgment call.
+/**
+ * Stage-2 evidence strength, derived from the model's two axes rather than asked
+ * for directly. The old single Strong/Partial/Gap enum made the model fold two
+ * independent calls into one severity label, and `Partial` conflated "same work,
+ * different tool" (real partial credit) with "vaguely adjacent" (worth nothing)
+ * — which is how a Databricks role scored 5/5 cv_match against a CV with no
+ * Databricks on it, then grew fabricated Spark stories to match.
+ *
+ * Different activity is a Gap however well the tooling lines up: listing
+ * Kubernetes as a tool does not cover a requirement for Kubernetes internals.
+ *
+ * `tooling` is three-way because most requirements name no technology to
+ * compare. As a boolean it collapsed "no tooling involved" into "wrong tooling"
+ * and quietly taxed every degree, communication and mentoring requirement 40%.
+ * Only an explicit "different" costs credit.
+ */
+export function strengthFrom(pick, sameActivity, tooling) {
+  if (pick === 'none' || !sameActivity) return 'Gap';
+  return tooling === 'different' ? 'Transferable' : 'Strong';
+}
+
+// Every pattern must name the OPENINGS, never the employer's scale. A count of
+// firms/companies/clients reads as an aggregator ("40+ top trading firms
+// seeking engineers") but far more often it is a company bragging about its
+// customers — "100,000+ companies" and "1000 clients" in real postings both
+// tripped an earlier `\d{2,}\s+(firms|companies|clients)` rule. A false positive caps
+// a real offer at 2/2 and brands it Suspicious, so the bar is deliberately high.
+const MULTI_POSTING_PATTERNS = [
+  /\bmultiple\s+(immediate\s+)?(openings|positions|roles|vacancies)\b/i,
+  /\bwho['’]?s\s+hiring\b/i,
+  /\bhiring\s+thread\b/i,
+  /\bseveral\s+(openings|positions|roles|vacancies)\b/i,
+  /\bvarious\s+(openings|positions|roles|vacancies)\b/i,
+];
+
+/**
+ * True when the JD text itself advertises more than one job. OR this with the
+ * model's `is_single_posting === false` so either signal trips the cap.
+ */
+export function looksMultiPosting(jdText) {
+  const jd = String(jdText || '');
+  return MULTI_POSTING_PATTERNS.some(re => re.test(jd));
+}
+
 // ── Self-check (ponytail: one runnable check) ─────────────────────────────────
 import { fileURLToPath as _f } from 'url';
 if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exit(1); } };
-  const cv = '**Languages**\n- English: Advanced (C1 certified)\n- Ukrainian: Native\n- Russian: Native\n';
+  // Fictional profile — the assertions only need 'a language the candidate has'
+  // and 'one they do not', so real CV languages are never required here.
+  const cv = '**Languages**\n- English: Advanced (B2 certified)\n- Spanish: Native\n- Portuguese: Native\n';
 
   let r = languageMismatchCap('Software Engineer, Agent (German speaking). Professional fluency in both German and English.', cv);
   assert(r.missing === 'german' && r.cvCap === 2, 'german-speaking role capped');
-  r = languageMismatchCap('Fluency in Ukrainian required for client calls', cv);
-  assert(r.missing === null, 'ukrainian ok — candidate has it');
+  r = languageMismatchCap('Fluency in Spanish required for client calls', cv);
+  assert(r.missing === null, 'spanish ok — candidate has it');
   r = languageMismatchCap('German is a plus but not required. Fluent German would be a bonus.', cv);
   assert(r.missing === null, 'nice-to-have german not capped');
   r = languageMismatchCap('We serve the German market from our Berlin office.', cv);
@@ -159,6 +211,26 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(s.cvCap === 2 && s.nsCap === 3, 'manager title capped as staff-tier');
   s = seniorityCaps('Software Engineer I', 'some jd text', {});
   assert(s.cvCap === 5, 'junior role uncapped');
+
+  // strengthFrom: policy lives in code, the model only answers the two axes.
+  assert(strengthFrom('A', true,  'same')           === 'Strong',       'same work + same tools = Strong');
+  assert(strengthFrom('A', true,  'different')      === 'Transferable', 'same work, another tool = Transferable');
+  assert(strengthFrom('A', true,  'not_applicable') === 'Strong',       'no technology named = full match, not a partial one');
+  assert(strengthFrom('A', false, 'different')      === 'Gap',          'different work = Gap');
+  assert(strengthFrom('A', false, 'same')           === 'Gap',          'tooling match cannot rescue a different activity');
+  assert(strengthFrom('none', true, 'same')         === 'Gap',          'no evidence picked outranks both axes');
+
+  // looksMultiPosting: the model called offer #38 a single posting 6/6 times.
+  assert(looksMultiPosting('40+ top trading firms seeking exceptional engineers. Multiple immediate openings.'), 'aggregator advert detected');
+  assert(looksMultiPosting("Ask HN: Who's hiring? (July 2026)"), 'hiring thread detected');
+  assert(looksMultiPosting('We have several openings across the platform team'), 'several openings detected');
+  // Must not fire on an ordinary single posting. The last two are real JDs that
+  // an earlier employer-scale pattern wrongly flagged (batch/jds/18, /48).
+  assert(!looksMultiPosting('Senior Rust Engineer. You will join a team of 12 engineers building trading systems.'), 'single posting not flagged');
+  assert(!looksMultiPosting('Software Engineer — 5+ years experience with distributed systems required.'), 'years-of-experience not flagged');
+  assert(!looksMultiPosting('Acme is Europe\'s leading freelance marketplace, connecting over 1,000,000 talented freelancers with 100,000+ companies.'), 'marketplace scale not flagged');
+  assert(!looksMultiPosting('You will own the AWS business within a portfolio of over 1000 clients.'), 'client count not flagged');
+  assert(!looksMultiPosting(''), 'empty JD not flagged');
 
   console.log('✓ fit-rules self-check passed');
 }

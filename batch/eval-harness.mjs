@@ -326,7 +326,7 @@ function cmdCompare() {
 
   // Labels
   if (labels.size) {
-    for (const [name, m] of [['A', a], ['B', b]]) {
+    for (const [name, m] of /** @type {[string, Map<any, any>][]} */ ([['A', a], ['B', b]])) {
       const lp = ids.filter(id => labels.has(id)).map(id => [m.get(id).score, labels.get(id)]);
       const r = spearman(lp);
       if (r !== null) console.log(`  ${name}↔labels Spearman: ${r.toFixed(3)} (${lp.length} labelled)`);
