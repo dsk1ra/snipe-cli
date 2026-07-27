@@ -5,9 +5,10 @@
  * instead of one monolithic report generation.
  *
  *   Stage 1  JD parse        → company/role/seniority/requirements/keywords (JSON)
- *   Stage 2  evidence match  → each requirement vs top-3 embedded CV atoms,
- *                              graded Strong/Partial/Gap (JSON); coverage metric
- *                              computed in code
+ *   Stage 2  evidence match  → each requirement vs top-3 embedded CV atoms; the
+ *                              model answers same_activity/same_tooling (JSON)
+ *                              and code derives Strong/Transferable/Gap plus the
+ *                              coverage metric
  *   Stage 3  judgment        → dims + strategy + personalisation + STAR stories
  *                              + legitimacy (JSON), grounded in the stage-2
  *                              evidence table + calibration from similar past
@@ -29,7 +30,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { stackMismatchCap, seniorityCaps, languageMismatchCap } from './fit-rules.mjs';
+import { stackMismatchCap, seniorityCaps, languageMismatchCap, looksMultiPosting, strengthFrom } from './fit-rules.mjs';
 import {
   cleanCvForPrompt, cleanJd, extractSalary, parseCompTargets,
   compScoreFromSalary, buildCompBlock,
@@ -196,11 +197,17 @@ const STAGE2_SCHEMA = {
       type: 'object',
       properties: {
         req:      { type: 'integer', minimum: 1 },
-        strength: { type: 'string', enum: ['Strong', 'Partial', 'Gap'] },
-        pick:     { type: 'string', enum: ['A', 'B', 'C', 'none'] },
-        note:     { type: 'string' },
+        // `pick` first so the model commits to a piece of evidence before it
+        // judges it — the axes are then about a fixed line, not a moving target.
+        pick:          { type: 'string', enum: ['A', 'B', 'C', 'none'] },
+        same_activity: { type: 'boolean' },
+        // Three-way, not boolean: plenty of requirements name no technology at
+        // all (a degree, communication, mentoring). Forcing a yes/no there made
+        // the model answer "no" and silently cost a full match 40% of its weight.
+        same_tooling:  { type: 'string', enum: ['same', 'different', 'not_applicable'] },
+        note:          { type: 'string' },
       },
-      required: ['req', 'strength', 'pick', 'note'],
+      required: ['req', 'pick', 'same_activity', 'same_tooling', 'note'],
     } },
   },
   required: ['matches'],
@@ -211,11 +218,18 @@ async function stage2Evidence(requirements, args) {
   const reqTexts = requirements.map(r => r.text);
   const reqVecs = await embed(reqTexts, { ollamaUrl: args.ollamaUrl });
 
+  // Measured: topK 6 / 320-char slice cut retrieval starvation hard (pick:"none"
+  // 33 -> 21 rows, Gap-despite-tech-in-CV 7 -> 3) but made the model MORE GENEROUS
+  // overall — rho 0.522 -> 0.468, pairAcc 78.9% -> 75.7%, mis-grounded 6.3% -> 7.6%,
+  // one atom answering 5 of 12 requirements on #34, and #53 overflowed stage 3.
+  // More candidates gave it more rope to find a plausible-looking line for every
+  // requirement. Kept at 3 deliberately. See batch/bench/retr6.
   const candidates = reqVecs.map(v => topK(v, cvIndex, 3));
+  const LETTERS = 'ABC';
 
   const lines = requirements.map((r, i) => {
     const cands = candidates[i]
-      .map((c, j) => `   ${'ABC'[j]}) ${c.text.slice(0, 200)}`)
+      .map((c, j) => `   ${LETTERS[j]}) ${c.text.slice(0, 200)}`)
       .join('\n');
     return `R${i + 1} (${r.must_have ? 'MUST' : 'nice-to-have'}): ${r.text}\n${cands}`;
   }).join('\n\n');
@@ -223,10 +237,23 @@ async function stage2Evidence(requirements, args) {
   const system = [
     'You grade how well a candidate\'s CV evidence covers each job requirement.',
     'For each requirement R1..Rn, the top candidate CV lines (A/B/C, retrieved by semantic similarity) are shown.',
+    'You answer TWO independent questions per requirement. You do NOT rate strength — the system computes that from your answers.',
     'Rules:',
-    '- `strength`: Strong = the picked evidence directly demonstrates the requirement; Partial = adjacent/transferable; Gap = none of the candidates actually covers it.',
-    '- `pick`: the single best evidence line (A/B/C), or "none" for a Gap.',
-    '- Similarity retrieval can surface superficially-similar lines — judge the CONTENT, not the wording. A requirement for "Kubernetes internals" is NOT covered by a line that merely lists Kubernetes as a tool.',
+    '- `pick`: the single best evidence line (A/B/C), or "none" if not one of them is about this requirement at all.',
+    '- `same_activity`: is the picked line the SAME KIND OF WORK as the requirement — would you reach for the same mental model and the same debugging steps? Sharing a buzzword ("performance", "scale", "pipeline", "distributed") is NOT enough. Different problem shape or different domain = false.',
+    '- `same_tooling`: "same" if the picked line uses the specific technology the requirement names; "different" if it is another tool for the same job; "not_applicable" if the requirement names no technology at all (a degree, communication skills, mentoring, stakeholder management, ways of working).',
+    '- Only "different" costs the candidate credit. Do NOT answer "different" just because a requirement has no technology in it — that is what "not_applicable" is for.',
+    '- The two fields are independent. Same work with another tool is the normal, useful case: same_activity true, same_tooling "different".',
+    '',
+    'Worked examples:',
+    '- Req "Build REST APIs in Go" vs evidence "built REST APIs in Node.js" → same_activity TRUE, same_tooling "different". (Same work, another language.)',
+    '- Req "Strong written and verbal communication skills" vs evidence "Spanish: Fluent (B2 certified)" → same_activity TRUE, same_tooling "not_applicable". (No technology is named; this is a full match, not a partial one.)',
+    '- Req "Degree in Computer Science or related discipline" vs evidence "BSc Computer Science" → same_activity TRUE, same_tooling "not_applicable".',
+    '- Req "PySpark tuning: data skew, Catalyst optimizer" vs evidence "lock-free ring buffer, zero-copy frames" → same_activity FALSE. (Distributed shuffle optimisation vs single-process memory layout share the word "performance" and nothing else.)',
+    '- Req "Kubernetes internals" vs evidence "Skills — Kubernetes (working knowledge)" → same_activity FALSE. (Listing a tool is not working on its internals.)',
+    '- Req "Delta Lake / Iceberg lakehouse migration" vs evidence "CQRS with denormalised read views" → same_activity FALSE. (Architectural pattern in common, storage-layer migration work absent.)',
+    '',
+    '- Similarity retrieval surfaces superficially-similar lines on purpose — it is your job to reject them. When the candidates are all off-topic, "none" is the correct answer, not the closest one.',
     '- `note`: one short clause (max 15 words) justifying the grade.',
     '- Output exactly one entry per requirement, req numbered from 1.',
   ].join('\n');
@@ -242,13 +269,18 @@ async function stage2Evidence(requirements, args) {
     if (m.req >= 1 && m.req <= requirements.length && !byReq.has(m.req)) byReq.set(m.req, m);
   }
   return requirements.map((r, i) => {
-    const m = byReq.get(i + 1) || { strength: 'Gap', pick: 'none', note: 'no grade returned' };
-    const pickIdx = 'ABC'.indexOf(m.pick);
+    const m = byReq.get(i + 1) || { pick: 'none', same_activity: false, same_tooling: 'not_applicable', note: 'no grade returned' };
+    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling);
+    // A Gap has no evidence to show even when the model picked a line — showing
+    // the rejected candidate would read as support for the requirement.
+    const pickIdx = strength === 'Gap' ? -1 : LETTERS.indexOf(m.pick);
     const atom = pickIdx >= 0 ? candidates[i][pickIdx] : null;
     return {
       requirement: r.text,
       must_have: r.must_have,
-      strength: ['Strong', 'Partial', 'Gap'].includes(m.strength) ? m.strength : 'Gap',
+      strength,
+      same_activity: m.same_activity === true,
+      same_tooling: m.same_tooling,
       evidence: atom ? atom.text : '—',
       sim: atom ? +atom.sim.toFixed(3) : null,
       note: m.note || '',
@@ -257,8 +289,12 @@ async function stage2Evidence(requirements, args) {
 }
 
 function coverageMetric(evidence) {
-  const w = { Strong: 1, Partial: 0.5, Gap: 0 };
-  const avg = pool => pool.reduce((a, e) => a + w[e.strength], 0) / pool.length;
+  // Transferable = same work, different tool. 0.6 is the "how much do I discount
+  // a stack I haven't used?" dial — raise it to chase adjacent stacks, lower it
+  // to hold out for exact-stack roles. `?? 0` keeps a legacy grade from an older
+  // eval turning the whole average into NaN.
+  const w = { Strong: 1, Transferable: 0.6, Gap: 0 };
+  const avg = pool => pool.reduce((a, e) => a + (w[e.strength] ?? 0), 0) / pool.length;
   const must = evidence.filter(e => e.must_have);
   const nice = evidence.filter(e => !e.must_have);
   if (!evidence.length) return { coverage: 0, mustCount: 0 };
@@ -294,18 +330,6 @@ const STAGE3_SCHEMA = {
       required: ['section', 'current', 'proposed', 'why'],
     } },
     linkedin:        { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 3 },
-    stories:         { type: 'array', minItems: 3, maxItems: 5, items: {
-      type: 'object',
-      properties: {
-        requirement: { type: 'string' },
-        story:       { type: 'string' },
-        situation:   { type: 'string' },
-        task:        { type: 'string' },
-        action:      { type: 'string' },
-        result:      { type: 'string' },
-      },
-      required: ['requirement', 'story', 'situation', 'task', 'action', 'result'],
-    } },
     hard_questions:  { type: 'array', minItems: 2, maxItems: 3, items: {
       type: 'object',
       properties: { q: { type: 'string' }, a: { type: 'string' } },
@@ -315,6 +339,7 @@ const STAGE3_SCHEMA = {
     legitimacy_reason: { type: 'string' },
     final_decision:    { type: 'string', enum: ['Apply', 'Research first', 'Consider', 'Skip'] },
     notes:             { type: 'string' },
+    // `stories` is injected per offer by storiesSchema().
   },
   required: ['cv_match', 'north_star', 'red_flags_score', 'archetype', 'hard_stops',
              'soft_gaps', 'top_strengths', 'strategy', 'personalisation', 'linkedin',
@@ -322,10 +347,56 @@ const STAGE3_SCHEMA = {
              'final_decision', 'notes'],
 };
 
-async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, salary, cv, profile, args }) {
+/**
+ * STAR targets are chosen by CODE, not by the model: `req` is an index into the
+ * eligible list, so a story about a requirement the CV does not cover is not
+ * merely discouraged — it cannot be encoded.
+ *
+ * The old schema asked for a free-text `requirement` with minItems 3, while the
+ * prompt pointed at "the hardest requirements" — which are exactly the ones
+ * graded Gap. That made fabrication the only grammatically valid output, and it
+ * duly produced Databricks/PySpark/Delta Lake stories for a CV with none of them.
+ * When nothing is covered, an empty Block F is the honest answer.
+ */
+function storiesSchema(eligibleRows) {
+  if (!eligibleRows.length) return { type: 'array', maxItems: 0, items: { type: 'object' } };
+  return {
+    type: 'array',
+    minItems: Math.min(3, eligibleRows.length),
+    maxItems: Math.min(5, eligibleRows.length),
+    items: {
+      type: 'object',
+      properties: {
+        // An enum of the allowed evidence-table row numbers. Same grammar-level
+        // guarantee as a bounded integer, but it indexes the table the prompt
+        // already contains — so the targets need not be re-listed.
+        req:       { type: 'integer', enum: eligibleRows },
+        story:     { type: 'string' },
+        situation: { type: 'string' },
+        task:      { type: 'string' },
+        action:    { type: 'string' },
+        result:    { type: 'string' },
+      },
+      required: ['req', 'story', 'situation', 'task', 'action', 'result'],
+    },
+  };
+}
+
+/** Shared prompt fragments — both calls read the same evidence table. */
+function stageContext({ evidence, calibration }) {
   const evidenceTable = evidence.map((e, i) =>
     `${i + 1}. [${e.strength}${e.must_have ? ', MUST' : ''}] ${e.requirement}\n   evidence: ${e.evidence.slice(0, 180)}${e.note ? `\n   note: ${e.note}` : ''}`
   ).join('\n');
+
+  // Only requirements with real retrieved evidence can host a STAR story.
+  // Row numbers into the evidence table above, not a second copy of it. Re-listing
+  // each target with its evidence cost ~1500-2000 chars of pure duplication, and
+  // on the longest JD (#53, prompt 6757) that squeezed the output budget until the
+  // eval failed.
+  const eligibleRows = evidence.map((e, i) => (e.strength === 'Gap' ? 0 : i + 1)).filter(Boolean);
+  const targetLines = eligibleRows.length
+    ? `Requirements ${eligibleRows.join(', ')} (numbered as in the evidence table above). No others have supporting CV evidence.`
+    : '(none — no requirement has supporting CV evidence, so write no stories)';
 
   const calibLines = calibration.length
     ? calibration.map(c =>
@@ -333,17 +404,41 @@ async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, sal
       ).join('\n')
     : '(none available)';
 
+  return { evidenceTable, eligibleRows, targetLines, calibLines };
+}
+
+// ── Stage 3: judgment ─────────────────────────────────────────────────────────
+
+// Scoring and the content blocks stay in ONE call. Splitting them (dims first,
+// prose second) was measured over 18 hand-labelled offers and collapsed rank
+// agreement from 0.578 to 0.101 — and 0.018 when the CV was also withheld. The
+// dims decode before any story token exists, so this is not the prose leaking
+// into the scores; committing to justify the score with specific CV lines and
+// real projects appears to be what keeps the score honest. Do not split it again
+// without re-running batch/eval-harness against the labels.
+async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, salary, cv, profile, args }) {
+  const { evidenceTable, eligibleRows, targetLines, calibLines } = stageContext({ evidence, calibration });
+
   const system = [
     'You are a job-offer evaluator for a software engineering candidate. A pre-verified evidence table (each JD requirement graded against real CV lines) is provided — treat it as ground truth for what the candidate does and does not have. Never invent experience.',
     '',
     'Scoring (integers 1-5, commit — no hedging toward 3):',
-    '- cv_match: 5 = nearly every requirement Strong; 4 = most Strong, 1-2 minor gaps; 3 = about half covered; 2 = a minority covered; 1 = different stack/domain. Must be CONSISTENT with the evidence table — do not score 4-5 while MUST requirements sit at Gap.',
+    '- The evidence table grades each requirement Strong (same work, same tools), Transferable (same work, different tools — real but partial credit) or Gap (the candidate does not have this).',
+    '- cv_match: 5 = nearly every requirement Strong; 4 = most Strong, 1-2 minor gaps; 3 = about half covered, or broad Transferable coverage with few Strong; 2 = a minority covered; 1 = different stack/domain. Must be CONSISTENT with the evidence table — do not score 4-5 while MUST requirements sit at Gap, and never describe a Gap or Transferable requirement as experience the candidate has.',
     '- north_star: 5 = squarely a primary archetype from the profile at a reachable seniority; 3 = adjacent archetype or seniority stretch; 1 = outside all targets.',
     '- red_flags_score: start at 5, subtract 1 per deal-breaker from the profile that ACTUALLY applies (informational — not scored).',
     '- The SYSTEM computes the composite and applies seniority caps in code; your job is honest dimensions.',
     '- Similar past offers (with the candidate\'s own scores/ratings) are calibration anchors: a materially better fit than a past 3.3 should score above 3.3, a similar one should land nearby. Where a real outcome is given it outranks the past model score: similar offers that were rejected argue for scoring lower; ones that reached interview validate the fit.',
     '',
-    'Content blocks: strategy (positioning without overpromising), personalisation (specific CV changes for THIS role, referencing real CV content), stories (STAR mapped to the hardest requirements, from real CV projects), hard_questions (likely tough interview questions with grounded answers), legitimacy (is this POSTING genuine and well-specified — description quality, realistic requirements, transparency? It is NOT about candidate fit; a poor fit at a legitimate company is still "High Confidence". Judge ONLY from the JD itself — never invent hiring freezes or company signals).',
+    '- archetype / hard_stops / soft_gaps / top_strengths: short factual phrases drawn from the evidence table, not prose.',
+    '',
+    'Content blocks: strategy (positioning without overpromising), personalisation (specific CV changes for THIS role, referencing real CV content), linkedin (headline/summary tweaks), hard_questions (tough interview questions with grounded answers — `a` must be an ANSWER the candidate can give, never another question), legitimacy (is this POSTING genuine and well-specified — description quality, realistic requirements, transparency? It is NOT about candidate fit; a poor fit at a legitimate company is still "High Confidence". Judge ONLY from the JD itself — never invent hiring freezes or company signals).',
+    '',
+    'STAR stories — the strictest rule here:',
+    '- `req` is the NUMBER of a target from the "Story targets" list. That list is the complete set of requirements you may write a story about. Requirements missing from it have no supporting CV evidence.',
+    '- Build each story from the evidence shown for that target and from the CV. Do NOT introduce a technology, platform or tool that is absent from the CV — not in situation, task, action or result, and not as something the candidate "would apply".',
+    '- Do NOT invent numbers. Percentages, counts and outcomes must appear in the CV; if none is given, describe the result without inventing a metric.',
+    '- If the JD demands a technology the candidate lacks, that belongs in soft_gaps or hard_stops. It must never appear inside a story as work they did.',
   ].join('\n');
 
   const user = [
@@ -359,23 +454,46 @@ async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, sal
     '',
     `Coverage of must-have requirements: ${(coverage.coverage * 100).toFixed(0)}%`,
     '',
+    `## Story targets`,
+    targetLines,
+    '',
     `## Similar past offers (calibration anchors)`,
     calibLines,
     '',
     `## Candidate profile (archetypes, framing, deal-breakers)`,
     profile || '(no profile)',
     '',
-    `## Candidate CV (for content blocks — cite real lines only)`,
+    `## Candidate CV (cite real lines only)`,
     cv,
     '',
     `## JD excerpt (context)`,
     cleanJd(jd, 2500),
   ].join('\n');
 
-  return ollamaJson({
+  const schema = {
+    ...STAGE3_SCHEMA,
+    properties: { ...STAGE3_SCHEMA.properties, stories: storiesSchema(eligibleRows) },
+  };
+
+  // Stage 3 emits every content block at once and was running right at the old
+  // 3000-token ceiling (#39 landed at 2633, #38 truncated at 3000 twice and lost
+  // the eval). 4096 leaves real headroom; num_ctx 12288 keeps prompt+output
+  // inside the window — the pipeline already runs 12k elsewhere, and q8_0 KV
+  // makes the extra ~200 MiB fit.
+  const out = await ollamaJson({
     baseUrl: args.ollamaUrl, model: args.model, system, user,
-    schema: STAGE3_SCHEMA, numPredict: 3000, timeoutMs: args.timeout, temperature: 0.2,
+    // 0.1 to match stages 1 and 2 — the 0.2 here was inherited, and this call's
+    // primary output is a 1-5 judgment, not prose. Lower temperature also shrinks
+    // run-to-run variance, which is what makes an 18-offer benchmark readable.
+    schema, numPredict: 5120, numCtx: 12288, timeoutMs: args.timeout, temperature: 0,
   });
+
+  // Resolve target numbers back to requirement text so report assembly is
+  // unchanged. Out-of-range indices are dropped rather than rendered.
+  out.stories = (out.stories || [])
+    .filter(s => eligibleRows.includes(s.req))
+    .map(s => ({ ...s, requirement: evidence[s.req - 1].requirement }));
+  return out;
 }
 
 // ── Report assembly (all markdown written by code) ────────────────────────────
@@ -405,7 +523,7 @@ function assembleReport({ args, today, parsed, evidence, coverage, judgment, sal
   md.push('');
 
   md.push('## B) CV Match', '');
-  md.push(`_Evidence retrieved semantically from cv.md and graded by the model. Requirement coverage (75% must / 25% nice-to-have): **${(coverage.coverage * 100).toFixed(0)}%**._`, '');
+  md.push(`_Evidence retrieved semantically from cv.md. **Strong** = same work, same tools · **Transferable** = same work, different tools · **Gap** = not demonstrated. Requirement coverage (75% must / 25% nice-to-have, Transferable counts 0.6): **${(coverage.coverage * 100).toFixed(0)}%**._`, '');
   md.push('| JD Requirement | Candidate evidence | Strength |');
   md.push('|----------------|-------------------|----------|');
   for (const e of evidence) {
@@ -420,34 +538,45 @@ function assembleReport({ args, today, parsed, evidence, coverage, judgment, sal
   md.push('## C) Level & Strategy', '');
   md.push(`**JD seniority level:** ${parsed.seniority_level}`);
   md.push(`**Candidate natural level:** early-career engineer with production track record`, '');
-  md.push('**Strategy to position without overpromising:**');
-  for (const s of judgment.strategy) md.push(`- ${s}`);
-  md.push('', '**If downlevelled:** accept if comp is fair; set a written 6-month review criteria.', '');
+  if (judgment.strategy.length) {
+    md.push('**Strategy to position without overpromising:**');
+    for (const s of judgment.strategy) md.push(`- ${s}`);
+    md.push('');
+  }
+  md.push('**If downlevelled:** accept if comp is fair; set a written 6-month review criteria.', '');
 
   md.push(buildCompBlock(salary, compDim, compTargets));
 
   md.push('## E) Personalisation Plan', '');
-  md.push('Top CV changes for this specific role:', '');
-  md.push('| # | Section | Current | Proposed change | Why |');
-  md.push('|---|---------|---------|-----------------|-----|');
-  judgment.personalisation.forEach((p, i) => {
-    const c = s => String(s).replace(/\|/g, '/');
-    md.push(`| ${i + 1} | ${c(p.section)} | ${c(p.current)} | ${c(p.proposed)} | ${c(p.why)} |`);
-  });
-  md.push('', 'Top LinkedIn changes:');
-  judgment.linkedin.forEach((l, i) => md.push(`${i + 1}. ${l}`));
-  md.push('');
+  {
+    md.push('Top CV changes for this specific role:', '');
+    md.push('| # | Section | Current | Proposed change | Why |');
+    md.push('|---|---------|---------|-----------------|-----|');
+    judgment.personalisation.forEach((p, i) => {
+      const c = s => String(s).replace(/\|/g, '/');
+      md.push(`| ${i + 1} | ${c(p.section)} | ${c(p.current)} | ${c(p.proposed)} | ${c(p.why)} |`);
+    });
+    md.push('', 'Top LinkedIn changes:');
+    judgment.linkedin.forEach((l, i) => md.push(`${i + 1}. ${l}`));
+    md.push('');
+  }
 
   md.push('## F) Interview Prep', '');
-  md.push('STAR stories mapped to JD requirements:', '');
-  md.push('| # | JD Requirement | Story | S | T | A | R |');
-  md.push('|---|----------------|-------|---|---|---|---|');
-  judgment.stories.forEach((s, i) => {
-    const c = v => String(v).replace(/\|/g, '/');
-    md.push(`| ${i + 1} | ${c(s.requirement)} | ${c(s.story)} | ${c(s.situation)} | ${c(s.task)} | ${c(s.action)} | ${c(s.result)} |`);
-  });
-  md.push('', '**Likely hard questions:**');
-  judgment.hard_questions.forEach((q, i) => md.push(`${i + 1}. Q: "${q.q}" → A: ${q.a}`));
+  if (!judgment.stories.length) {
+    md.push('_No STAR stories: no JD requirement has supporting evidence in cv.md. Inventing one here would put experience you do not have in front of an interviewer._', '');
+  } else {
+    md.push('STAR stories mapped to JD requirements:', '');
+    md.push('| # | JD Requirement | Story | S | T | A | R |');
+    md.push('|---|----------------|-------|---|---|---|---|');
+    judgment.stories.forEach((s, i) => {
+      const c = v => String(v).replace(/\|/g, '/');
+      md.push(`| ${i + 1} | ${c(s.requirement)} | ${c(s.story)} | ${c(s.situation)} | ${c(s.task)} | ${c(s.action)} | ${c(s.result)} |`);
+    });
+  }
+  if (judgment.hard_questions.length) {
+    md.push('', '**Likely hard questions:**');
+    judgment.hard_questions.forEach((q, i) => md.push(`${i + 1}. Q: "${q.q}" → A: ${q.a}`));
+  }
   md.push('');
 
   md.push('## G) Posting Legitimacy', '');
@@ -550,7 +679,9 @@ async function main() {
   // Deterministic junk-input guard: a hiring thread, blog page, or homepage is
   // not an evaluable posting — a capable model happily "matches" the candidate
   // against garbage (measured: HN thread scored 4.0 without this cap).
-  if (parsed.is_single_posting === false) {
+  // Either signal trips it: the model's flag, or the JD advertising several jobs
+  // in plain text (the model missed that on #38 six times out of six).
+  if (parsed.is_single_posting === false || looksMultiPosting(jd)) {
     cvBlend = Math.min(cvBlend, 2);
     nsDim = Math.min(nsDim, 2);
     judgment.legitimacy_tier = 'Suspicious';
