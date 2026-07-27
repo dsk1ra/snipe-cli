@@ -202,7 +202,7 @@ work with smaller models — override with `--phase2-model` and friends.
 ## Tests
 
 ```bash
-node test-all.mjs   # 269 checks, must stay green
+node test-all.mjs   # 277 checks, must stay green
 ```
 
 ## Data & privacy
