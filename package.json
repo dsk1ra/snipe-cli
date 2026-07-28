@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Local job search pipeline - TUI over a three-phase Ollama evaluator, no cloud LLM calls",
   "private": true,
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "typecheck": "tsc",
     "verify": "node tracker/verify-pipeline.mjs",
