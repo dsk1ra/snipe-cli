@@ -60,8 +60,13 @@ npm install
 cp config/profile.example.yml config/profile.yml   # your comp/location/scoring policy
 cp config/profile.template.md  config/profile.md    # your archetypes + narrative
 cp templates/portals.example.yml portals.yml        # portals to scan (optional)
-# add your cv.md at the project root
+cp .env.example .env                                # API keys (optional)
+# add your cv.md at the project root (article-digest.md too, if you have one)
 ```
+
+`.env` only matters for portal scanning: `APIFY_API_KEY` unlocks the Apify-backed
+providers (LinkedIn, Indeed, Glassdoor). Without it those are skipped and every
+other provider — and the whole pipeline — still runs.
 
 Build the four Ollama models once from the Modelfiles:
 
@@ -199,15 +204,34 @@ Developed on an RTX 3060 6 GB + 30 GB RAM. Phases 1 and 3 fit fully on GPU; the
 30B MoE evaluator auto-splits between GPU and RAM. Smaller or CPU-only setups
 work with smaller models — override with `--phase2-model` and friends.
 
+## Tracker
+
+`data/applications.md` is the source of truth for everything you've evaluated,
+applied to, or skipped. Runs merge into it automatically; the FOLLOW-UPS tab
+reads its cadence from there.
+
+```bash
+node tracker/verify-pipeline.mjs    # health check — reports, links, statuses
+```
+
+Never hand-add rows — drop a TSV in `batch/tracker-additions/` and let
+`tracker/merge-tracker.mjs` merge it. Editing an existing row's status or note is
+fine. `tracker/tracker.mjs` keeps an optional SQLite index (Node ≥ 22.5) that is
+safe to delete; it regenerates.
+
 ## Tests
 
 ```bash
-node test-all.mjs   # full suite, must stay green
+node test-all.mjs      # full suite, must stay green
+npm run typecheck      # tsc over the JSDoc types, also in CI
 ```
 
 ## Data & privacy
 
-`cv.md`, `config/profile.*`, `portals.yml`, `data/`, `reports/`, `output/`, and
-`interview-prep/` hold your personal data and are gitignored. Only the system
-layer (scripts, modes, templates) is tracked. Full architecture and the data
-contract live in [`CLAUDE.md`](CLAUDE.md) and [`docs/`](docs/).
+`cv.md`, `article-digest.md`, `config/profile.*`, `portals.yml`, `.env`, `data/`,
+`reports/`, `output/`, and `interview-prep/` hold your personal data and are
+gitignored. Only the system layer (scripts, modes, templates) is tracked.
+
+Deeper reading: [`CLAUDE.md`](CLAUDE.md) for the data contract ·
+[`docs/SETUP.md`](docs/SETUP.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
+[`docs/CUSTOMIZATION.md`](docs/CUSTOMIZATION.md) · [`docs/SCRIPTS.md`](docs/SCRIPTS.md)
