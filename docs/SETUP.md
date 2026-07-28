@@ -2,8 +2,9 @@
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) 22.5+ — `tracker/tracker.mjs` uses the built-in
-  `node:sqlite`, which lands in 22.5
+- [Node.js](https://nodejs.org) 18+ — 22.5+ only for the optional SQLite tracker
+  index (`tracker/tracker.mjs` uses the built-in `node:sqlite`, which lands in
+  22.5; it's a lazy import, so everything else runs on 18)
 - [Ollama](https://ollama.com) with a GPU (see Hardware in `CLAUDE.md`)
 - ~28 GB free disk for the four models
 
