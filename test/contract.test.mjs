@@ -141,6 +141,20 @@ if (shared.includes('config/profile.md')) {
 }
 
 
+// Stage-3 grammar ceiling. llama.cpp expands `maxLength: N` into N nested
+// optional char rules and stops compiling between 1800 and 2000 — the call then
+// fails with HTTP 400 "failed to parse grammar", killing the whole evaluation.
+// Offline guard, so it runs in CI without Ollama.
+const staged = readFile('batch/staged-evaluator.mjs');
+const overCap = [...staged.matchAll(/maxLength:\s*(\d+)/g)]
+  .map(m => Number(m[1]))
+  .filter(n => n > 1500);
+if (overCap.length === 0) {
+  pass('staged-evaluator maxLength caps stay under the grammar ceiling');
+} else {
+  fail(`staged-evaluator has maxLength ${overCap.join(', ')} — over the 1500 ceiling, grammar will not compile`);
+}
+
 // ── 11. CLAUDE.md INTEGRITY ─────────────────────────────────────
 
 console.log('\n11. CLAUDE.md integrity');
