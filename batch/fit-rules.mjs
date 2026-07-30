@@ -24,9 +24,59 @@ const ECOSYSTEM_PATTERNS = {
   'cpp':        /c\+\+/gi,
 };
 
+// Named technologies that are NOT programming languages, so ECOSYSTEM_PATTERNS
+// above does not cover them. Used only to check claims about the candidate
+// against cv.md — keep it to things a CV would name explicitly.
+const TOOL_PATTERNS = {
+  'azure':      /\bazure\b/gi,
+  'gcp':        /\b(gcp|google cloud)\b/gi,
+  'aws':        /\baws\b/gi,
+  'kubernetes': /\b(kubernetes|k8s)\b/gi,
+  'terraform':  /\bterraform\b/gi,
+  'flask':      /\bflask\b/gi,
+  'pytorch':    /\bpytorch\b/gi,
+  'tensorflow': /\btensorflow\b/gi,
+  'spark':      /\b(apache\s+)?spark\b/gi,
+  'databricks': /\bdatabricks\b/gi,
+  'kafka':      /\bkafka\b/gi,
+  'elasticsearch': /\belasticsearch\b/gi,
+  'snowflake':  /\bsnowflake\b/gi,
+  'airflow':    /\bairflow\b/gi,
+};
+
 function countMatches(text, re) {
   const m = String(text || '').match(re);
   return m ? m.length : 0;
+}
+
+/**
+ * Drop claims about the candidate that name a technology `cv.md` never mentions.
+ *
+ * `top_strengths` is the one field where the pipeline asserts something on the
+ * candidate's *behalf*, and it fabricates: measured over 115 offers, 3.7% of the
+ * strengths that named a technology named one the CV does not contain — usually
+ * a neighbour of something it does (a sibling cloud provider, another framework
+ * in the same family). Unlike a wrong gap, a wrong strength can reach an
+ * application, so this is a hard filter rather than a prompt instruction.
+ *
+ * Only technologies in ECOSYSTEM_PATTERNS/TOOL_PATTERNS are checked — a claim
+ * naming nothing checkable is left alone.
+ *
+ * @param {string[]} claims
+ * @param {string} cvText
+ * @returns {{kept: string[], dropped: string[]}}
+ */
+export function verifyAgainstCv(claims, cvText) {
+  const all = { ...ECOSYSTEM_PATTERNS, ...TOOL_PATTERNS };
+  const kept = [], dropped = [];
+  for (const claim of Array.isArray(claims) ? claims : []) {
+    const named = Object.entries(all)
+      .filter(([, re]) => countMatches(claim, re) > 0)
+      .map(([name]) => name);
+    const absent = named.filter(n => countMatches(cvText, all[n]) === 0);
+    (absent.length ? dropped : kept).push(claim);
+  }
+  return { kept, dropped };
 }
 
 /** Ecosystems the candidate clearly has, parsed from cv.md text. */
@@ -219,6 +269,21 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(strengthFrom('A', false, 'different')      === 'Gap',          'different work = Gap');
   assert(strengthFrom('A', false, 'same')           === 'Gap',          'tooling match cannot rescue a different activity');
   assert(strengthFrom('none', true, 'same')         === 'Gap',          'no evidence picked outranks both axes');
+
+  // verifyAgainstCv: a strength may only name technology the CV actually has.
+  // Fictional skills line, like the profile above — the assertions only need
+  // 'a technology the CV lists' and 'one it does not'.
+  const cvTech = 'Skills: Ruby, Rails, Elasticsearch, GCP, Docker';
+  let v = verifyAgainstCv([
+    'Ruby on Rails services backed by Elasticsearch',   // both present  -> keep
+    'Strong communication with non-technical stakeholders', // names nothing -> keep
+    'Built and tuned Spark batch jobs',                 // Spark absent  -> drop
+    'Deployed containers to Azure App Service',         // Azure absent  -> drop
+  ], cvTech);
+  assert(v.kept.length === 2, 'two verifiable strengths kept');
+  assert(v.dropped.length === 2, 'two fabricated strengths dropped');
+  assert(v.kept.some(s => /non-technical/.test(s)), 'claim naming no technology is left alone');
+  assert(verifyAgainstCv([], cvTech).kept.length === 0, 'empty input is safe');
 
   // looksMultiPosting: the model called offer #38 a single posting 6/6 times.
   assert(looksMultiPosting('40+ top trading firms seeking exceptional engineers. Multiple immediate openings.'), 'aggregator advert detected');
