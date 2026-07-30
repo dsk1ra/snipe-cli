@@ -270,11 +270,13 @@ async function stage2Evidence(requirements, args) {
   }
   return requirements.map((r, i) => {
     const m = byReq.get(i + 1) || { pick: 'none', same_activity: false, same_tooling: 'not_applicable', note: 'no grade returned' };
-    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling);
+    const pickIdx = LETTERS.indexOf(m.pick);
+    const atomText = pickIdx >= 0 ? candidates[i][pickIdx].text : '';
+    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling, r.text, atomText);
     // A Gap has no evidence to show even when the model picked a line — showing
     // the rejected candidate would read as support for the requirement.
-    const pickIdx = strength === 'Gap' ? -1 : LETTERS.indexOf(m.pick);
-    const atom = pickIdx >= 0 ? candidates[i][pickIdx] : null;
+    const shownIdx = strength === 'Gap' ? -1 : pickIdx;
+    const atom = shownIdx >= 0 ? candidates[i][shownIdx] : null;
     return {
       requirement: r.text,
       must_have: r.must_have,
@@ -674,6 +676,18 @@ async function main() {
   // Stage 3 — judgment
   const judgment = await stage3Judgment({ jd, parsed, evidence, coverage, calibration, salary, cv, profile, args })
     .catch(e => fatal(`stage3 (judgment) failed: ${e.message}`));
+
+  // `top_strengths` is the one field asserting something on the candidate's
+  // behalf, and it is the one that reaches an application. Phase 1 has filtered
+  // it since ollama-scorer.mjs:408; the staged Phase 2 — the default path — never
+  // did, so a strength naming a technology absent from cv.md shipped straight
+  // into the report. Measured over the stored evals: ~1% of strengths, every one
+  // a neighbour swap (a sibling cloud provider, another tool in the same family).
+  const strengths = verifyAgainstCv(judgment.top_strengths || [], cv);
+  judgment.top_strengths = strengths.kept;
+  if (strengths.dropped.length) {
+    process.stderr.write(`[staged-evaluator] dropped ${strengths.dropped.length} unverifiable strength(s): ${strengths.dropped.join(' | ')}\n`);
+  }
 
   // ── Score computed in code ──────────────────────────────────────────────────
   const modelCv = clampDim(judgment.cv_match) ?? 1;
