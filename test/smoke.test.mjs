@@ -60,3 +60,85 @@ for (const { name, allowFail } of scripts) {
 }
 
 
+
+// ── 3. TUI RETRY/DEBUG MAPPING ──────────────────────────────────
+
+// A failed row's phase decides which input "debug" opens and whether "retry" is
+// offered at all. Both are silent when wrong: the wrong input hides the file the
+// user came to edit, and a retry on an expired posting queues a run that changes
+// nothing.
+console.log('\n3. TUI retry/debug mapping (snipe-tui.mjs --retry-plan)');
+
+const retryCases = [
+  { row: ['score_failed', '-', '-', '-'], phase: 'p1', retryable: true,
+    debug: ['batch/jds/7.txt', 'batch/scores/7.json'] },
+  { row: ['unavailable', '-', '-', '-'], phase: 'p1', retryable: false,
+    debug: ['batch/jds/7.txt', 'batch/scores/7.json'] },
+  { row: ['scored', 'eval_failed', '-', '103'], phase: 'p2', retryable: true,
+    debug: ['batch/jds/7.txt', 'batch/evals/7.json'] },
+  // rnum 999 has no report on disk (reports/*.md is gitignored, so a fresh
+  // checkout has none) — keeps the expectation the same everywhere
+  { row: ['scored', 'evaled', 'pdf_failed', '999'], phase: 'p3', retryable: true,
+    debug: ['batch/logs/pdf-999-7.log'] },
+  { row: ['scored', 'evaled', 'completed', '103'], phase: null },
+  // `evaled` with no report number: a failed eval back-filled as a success. Has
+  // no report for Phase 3 and no failure status for --retry-failed's entry
+  // filter, so before this it rendered as "pending" against an empty queue.
+  { row: ['scored', 'evaled', '-', '-'], phase: 'p2', retryable: true,
+    debug: ['batch/jds/7.txt', 'batch/evals/7.json'] },
+  // eval died before a report number existed — the JD is still the input to fix
+  { row: ['scored', 'eval_failed', '-', '-'], phase: 'p2', retryable: true,
+    debug: ['batch/jds/7.txt', 'batch/evals/7.json'] },
+];
+
+for (const c of retryCases) {
+  const out = run(NODE, ['snipe-tui.mjs', '--retry-plan', ...c.row, '7'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const label = c.row.join('/');
+  if (out === null) { fail(`--retry-plan ${label} crashed`); continue; }
+  let got;
+  try { got = JSON.parse(out); } catch { fail(`--retry-plan ${label} printed non-JSON`); continue; }
+  if (got.phase !== c.phase) { fail(`--retry-plan ${label}: phase ${got.phase} != ${c.phase}`); continue; }
+  if (c.phase === null) { pass(`${label} offers no retry`); continue; }
+  if (got.retryable !== c.retryable) {
+    fail(`--retry-plan ${label}: retryable ${got.retryable} != ${c.retryable}`);
+  } else if (JSON.stringify(got.debug) !== JSON.stringify(c.debug)) {
+    fail(`--retry-plan ${label}: debug ${got.debug.join(', ')} != ${c.debug.join(', ')}`);
+  } else {
+    pass(`${label} → ${c.phase}${c.retryable ? '' : ' (no retry)'}, debug ${c.debug[0]}`);
+  }
+}
+
+// ── 4. PHASE 2 BACK-FILL GUARD ──────────────────────────────────
+
+// local-runner.sh reconciles a row to `evaled` from batch/evals/<id>.json. A
+// FAILED eval writes its fatal() JSON to that same path ({error,status}, no
+// report_num), so the file merely existing is not evidence of success. Treating
+// it as such marked rows `evaled` with rnum "-", which made Phase 2 skip and
+// Phase 3 fail forever hunting a report nobody wrote — unreachable by any retry
+// that does not override the phase guards.
+console.log('\n4. Phase 2 back-fill guard (local-runner.sh)');
+
+const GUARD = '.status == "evaled" and (.report_num // "-") != "-"';
+const evalDir = mkdtempSync(join(tmpdir(), 'snipe-backfill-'));
+const backfills = (label, payload) => {
+  const f = join(evalDir, 'e.json');
+  writeFileSync(f, JSON.stringify(payload));
+  return run('jq', ['-e', GUARD, f], { stdio: ['pipe', 'pipe', 'pipe'] }) !== null;
+};
+
+const guardCases = [
+  ['a successful eval', { status: 'evaled', report_num: '114' }, true],
+  ['a failed eval (fatal JSON)', { status: 'eval_failed', error: 'stage3 failed' }, false],
+  ['status evaled but no report_num', { status: 'evaled' }, false],
+  ['status evaled with rnum "-"', { status: 'evaled', report_num: '-' }, false],
+];
+for (const [label, payload, want] of guardCases) {
+  if (backfills(label, payload) === want) pass(`back-fill ${want ? 'accepts' : 'rejects'} ${label}`);
+  else fail(`back-fill guard wrong for ${label}: expected ${want}`);
+}
+
+// The guard must match what local-runner.sh actually runs.
+if (readFile('batch/local-runner.sh').includes(GUARD)) pass('guard expression matches local-runner.sh');
+else fail('guard expression drifted from local-runner.sh');
+
+rmSync(evalDir, { recursive: true, force: true });
