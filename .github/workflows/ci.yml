@@ -18,4 +18,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: node test-all.mjs
+      - run: npm run coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/lcov.info
+          # a Codecov outage must never block a merge
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
