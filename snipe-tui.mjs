@@ -6,8 +6,12 @@
 //
 // Keys: ←→ or 1/2/3 switch tabs · ↑↓ walk every element top-to-bottom (tab
 //       level → list → JD → URL → Add; ↑ past the top returns to tab level;
-//       → hops JD → ▶) · on a selected list row with a link, → focuses the
-//       link and Enter opens it in the browser (← back to the row) · Tab/
+//       → hops JD → ▶) · → on a selected list row walks its inline actions and
+//       Enter fires the focused one (← walks back, then switches tab): the link
+//       on a normal row, see error / retry / debug on a failed one (which ends
+//       at debug and shows no link) · see error is a file:// hyperlink to
+//       batch/errors/<id>.txt, retry re-runs all three phases, debug opens the
+//       JD that phase read so it can be edited before the retry · Tab/
 //       Shift-Tab still cycles input ↔ ▶ ↔ list · Enter loops JD → URL → Add
 //       to queue (enqueues) · o open result folder · a mark applied ✉ ·
 //       x mark skip ⊘ (mutually exclusive) ·
@@ -22,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn, execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import React from 'react';
 import { render, Box, Text, measureElement } from 'ink';
 
@@ -35,6 +39,9 @@ const STATE_FILE = path.join(BATCH, 'local-state.tsv');
 const LOCK_FILE = path.join(BATCH, 'local-runner.pid');
 const SCORES_DIR = path.join(BATCH, 'scores');
 const EVALS_DIR = path.join(BATCH, 'evals');
+const LOGS_DIR = path.join(BATCH, 'logs');
+const ERRORS_DIR = path.join(BATCH, 'errors');
+const RUNNER = path.join(BATCH, 'local-runner.sh');
 const OUTPUT_DIR = path.join(ROOT, 'output');
 const SNIPE = path.join(ROOT, 'snipe');
 
@@ -256,7 +263,65 @@ function poll() {
   };
   S.applied = readMarkMap(APPLIED_FILE);
   S.skipped = readMarkMap(SKIPPED_FILE);
+  for (const [id, row] of rows) if (failedPhase(row)) writeErrorFile(id, row);
   if (S.tab === 'activity') S.act = activityBuckets();
+}
+
+// Which phase a failed row died in — drives the retry flags, the error text and
+// the debug target. Null when the row did not fail.
+const failedPhase = row =>
+  row.p1s === 'score_failed' || row.p1s === 'unavailable' ? 'p1'
+  : row.p2s === 'eval_failed' ? 'p2'
+  // `evaled` with no report number is a failed eval wearing a success label. It
+  // has no report for Phase 3 to find and no failure status for --retry-failed
+  // to match, so left uncalled it renders as "pending (press ▶)" against an
+  // empty queue — a row the UI offers no way to act on.
+  : row.p2s === 'evaled' && (!row.rnum || row.rnum === '-') ? 'p2'
+  : row.p3s === 'pdf_failed' ? 'p3'
+  : null;
+
+const NO_REPORT = 'eval recorded no report number — needs a full re-run';
+
+// A corrupted `evaled` row carries no error text: it was written as a success.
+// Name the condition rather than showing a bare "failed".
+const rowError = row =>
+  row.err && row.err !== '-' ? row.err
+  : row.p2s === 'evaled' && (!row.rnum || row.rnum === '-') ? NO_REPORT
+  : 'failed';
+
+const PHASE_NAME = { p1: 'Phase 1 (scoring)', p2: 'Phase 2 (evaluation)', p3: 'Phase 3 (CV tailoring)' };
+
+// The full failure text. The state row truncates its error at 200 chars, so
+// prefer the fatal() JSON the scorer and evaluator write to stdout — which
+// local-runner.sh captures into scores/<id>.json and evals/<id>.json (:462,
+// :570), sending only stderr to the log. Phase 3 is the reverse: its log is the
+// whole artifact, and every score and eval log on disk is 0 bytes.
+function errorTextFor(id, row) {
+  const phase = failedPhase(row);
+  const stateErr = rowError(row);
+  if (phase === 'p3') {
+    if (!row.rnum || row.rnum === '-') return stateErr;
+    try { return fs.readFileSync(path.join(LOGS_DIR, `pdf-${row.rnum}-${id}.log`), 'utf8').trim() || stateErr; }
+    catch { return stateErr; }
+  }
+  const payload = readJsonCached(path.join(phase === 'p1' ? SCORES_DIR : EVALS_DIR, `${id}.json`));
+  return (payload && payload.error) || stateErr;
+}
+
+// "see error" is a real terminal hyperlink, so the file has to exist before the
+// row renders — not when the action fires. Written from poll() on the tick that
+// first sees the failure, and rewritten only when the text actually changed,
+// since a failed row re-renders every second.
+function writeErrorFile(id, row) {
+  const file = path.join(ERRORS_DIR, `${id}.txt`);
+  const body = `snipe offer #${id} — ${labelFor(id)}\n`
+    + `failed in ${PHASE_NAME[failedPhase(row)]}\n\n${errorTextFor(id, row)}\n`;
+  try { if (fs.readFileSync(file, 'utf8') === body) return file; } catch {}
+  try {
+    fs.mkdirSync(ERRORS_DIR, { recursive: true });
+    fs.writeFileSync(file, body);
+  } catch { return null; }
+  return file;
 }
 
 function itemInfo(id) {
@@ -264,9 +329,16 @@ function itemInfo(id) {
   const evalJson = readJsonCached(path.join(EVALS_DIR, `${id}.json`));
   const score = evalJson && typeof evalJson.score === 'number' ? evalJson.score : null;
   const base = { label: labelFor(id), score };
-  if (row && (row.p1s === 'score_failed' || row.p1s === 'unavailable'
-    || row.p2s === 'eval_failed' || row.p3s === 'pdf_failed')) {
-    return { ...base, kind: 'failed', err: row.err && row.err !== '-' ? row.err : 'failed' };
+  const failed = row && failedPhase(row);
+  if (failed) {
+    return {
+      ...base, kind: 'failed', failPhase: failed, rnum: row.rnum,
+      // 'unavailable' = expired/blocked posting. local-runner.sh refuses to retry
+      // those, so offering the action would spawn a run that changes nothing.
+      retryable: row.p1s !== 'unavailable',
+      err: rowError(row),
+      errorFile: path.join(ERRORS_DIR, `${id}.txt`), // written by poll()
+    };
   }
   if (row && row.p3s === 'completed') return { ...base, kind: 'done', resultDir: resultDirFor(row.rnum) };
   if (row && row.p3s === 'skipped') {
@@ -353,6 +425,94 @@ function startDrain(bump) {
   S.drainActive = true;
   setMsg('Pipeline running…');
   bump();
+}
+
+// ── retry / debug a failed row ────────────────────────────────────────────────
+
+// What "debug" opens: the input that phase read, so it can be edited in place
+// before the retry reads it back. Phases 1-2 consume the fetched JD, Phase 3 the
+// Phase 2 report. Best first — the fatal() payload is the fallback for when the
+// input never landed on disk, which is itself the diagnosis. ("see error" already
+// covers the error text, so debug does not repeat it.)
+function debugCandidates(id, info) {
+  const rnum = info.rnum && info.rnum !== '-' ? info.rnum : null;
+  if (info.failPhase === 'p3') {
+    let report = null;
+    try { report = fs.readdirSync(path.join(ROOT, 'reports')).find(f => f.startsWith(`${rnum}-`)); } catch {}
+    return [
+      ...(report ? [path.join(ROOT, 'reports', report)] : []),
+      ...(rnum ? [path.join(LOGS_DIR, `pdf-${rnum}-${id}.log`)] : []),
+    ];
+  }
+  return [
+    path.join(BATCH, 'jds', `${id}.txt`),
+    path.join(info.failPhase === 'p1' ? SCORES_DIR : EVALS_DIR, `${id}.json`),
+  ];
+}
+
+const nonEmpty = f => { try { return fs.statSync(f).size > 0; } catch { return false; } };
+
+// Re-runs the offer through all three phases with --retry-failed, overwriting
+// whatever the last attempt left. Not a plain re-queue: `drain_queue` (snipe:59)
+// runs `local-runner.sh --only-id N` with no flags, and every phase guard keys
+// off the stored p1/p2/p3 status — so a row that is `scored` + `evaled` but has
+// no report skips Phases 1 and 2 and fails Phase 3 forever. --retry-failed
+// overrides all three guards, which is the only way out of a state like that,
+// and it also clears the MAX_RETRIES gate on score_failed rows.
+//
+// The cost is a fresh report number per attempt (eval_offer always calls
+// next_report_num_unlocked), so a retried Phase 3 failure orphans its old
+// report. Acceptable: a full redo is what retry now promises.
+function retryItem(bump) {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  const info = itemInfo(id);
+  if (info.kind !== 'failed') { setMsg('Nothing to retry — this item did not fail', true); return; }
+  if (!info.retryable) { setMsg('Posting is expired or blocked — retrying cannot recover it', true); return; }
+  // Same guard as startDrain: two runners race over local-state.tsv and the
+  // report-number allocator.
+  if (S.drainActive || S.snap.runner) { setMsg('A run is active — retry when it finishes', true); return; }
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  const fd = fs.openSync(path.join(LOGS_DIR, 'snipe-tui-drain.log'), 'a');
+  const child = spawn('bash', [RUNNER, '--only-id', id, '--retry-failed'],
+    { detached: true, stdio: ['ignore', fd, fd] });
+  fs.closeSync(fd);
+  child.on('exit', code => {
+    S.drainActive = false;
+    setMsg(code === 0 ? `Retry of #${id} finished` : `Retry of #${id} exited with code ${code}`, code !== 0);
+    poll();
+    notifyDrainDone([id], code);
+    bump();
+  });
+  child.unref(); // survives TUI quit; state stays on disk
+  S.drainActive = true;
+  setMsg(`Retrying #${id} through all three phases…`);
+  bump();
+}
+
+// The row's "see error" already carries a file:// hyperlink for terminals that
+// honour OSC 8; this is the same target for Enter and for the ones that don't.
+function openError() {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  const info = itemInfo(id);
+  if (info.kind !== 'failed') { setMsg('No error — this item did not fail', true); return; }
+  spawn('xdg-open', [info.errorFile], { detached: true, stdio: 'ignore' }).unref();
+  setMsg(`Opened ${path.relative(ROOT, info.errorFile)}`);
+}
+
+// Opens the input file itself, not its folder: batch/jds/ holds every JD the
+// pipeline has ever fetched, so the folder would just make you hunt for <id>.txt.
+// xdg-open hands a .txt to the editor, which is where the fix happens anyway.
+function openDebug() {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  const info = itemInfo(id);
+  if (info.kind !== 'failed') { setMsg('Nothing to debug — this item did not fail', true); return; }
+  const file = debugCandidates(id, info).find(nonEmpty);
+  if (!file) { setMsg('No input on disk for this phase — retry refetches it', true); return; }
+  spawn('xdg-open', [file], { detached: true, stdio: 'ignore' }).unref();
+  setMsg(`Opened ${path.relative(ROOT, file)} — edit, then retry`);
 }
 
 // ── /scan command ────────────────────────────────────────────────────────────
@@ -618,7 +778,34 @@ function makeStdinHandler(bump, quit) {
     else if (S.focus === 'url') S.focus = 'add';
     else if (S.focus === 'add') enqueue(bump);
     else if (S.focus === 'play') startDrain(bump);
-    else if (S.focus === 'list') { S.rowFocus === 'link' ? openLink() : openResult(); }
+    else if (S.focus === 'list') {
+      if (S.rowFocus === 'link') openLink();
+      else if (S.rowFocus === 'error') openError();
+      else if (S.rowFocus === 'retry') retryItem(bump);
+      else if (S.rowFocus === 'debug') openDebug();
+      else openResult();
+    }
+  };
+
+  // ←→ inside the list walks the selected row's inline stops. A failed row ends
+  // at debug and carries no link — matching what it renders.
+  const rowStops = id => {
+    const info = id && itemInfo(id);
+    if (!info) return ['row'];
+    if (info.kind === 'failed') {
+      return ['row', 'error', ...(info.retryable ? ['retry'] : []), 'debug'];
+    }
+    return S.snap.urls.get(id) ? ['row', 'link'] : ['row'];
+  };
+
+  // False when ← runs off the left edge — the caller falls through to the tab
+  // switch, which is what a row with no inline actions did before.
+  const moveRowFocus = dir => {
+    const stops = rowStops(S.sessionIds[S.listIdx]);
+    const next = Math.max(0, stops.indexOf(S.rowFocus)) + dir;
+    if (next < 0) return false;
+    S.rowFocus = stops[Math.min(next, stops.length - 1)];
+    return true;
   };
 
   const TABS = ['stats', 'activity', 'followups'];
@@ -750,17 +937,14 @@ function makeStdinHandler(bump, quit) {
       if (rest.startsWith('\x1b[C')) {
         if (S.tab === 'activity' && S.gridSel) moveGridSel(1, 0);
         else if (inStats && S.focus === 'jd') S.focus = 'play';
-        else if (inStats && S.focus === 'list') {
-          const id = S.sessionIds[S.listIdx];
-          if (id && S.snap.urls.get(id)) S.rowFocus = 'link';
-        }
+        else if (inStats && S.focus === 'list') moveRowFocus(1);
         else if (!typing()) cycleTab(1);
         i += 3; continue;
       }
       if (rest.startsWith('\x1b[D')) {
         if (S.tab === 'activity' && S.gridSel) moveGridSel(-1, 0);
         else if (inStats && S.focus === 'play') { S.focus = 'jd'; S.lastInput = 'jd'; }
-        else if (inStats && S.focus === 'list' && S.rowFocus === 'link') S.rowFocus = 'row';
+        else if (inStats && S.focus === 'list' && moveRowFocus(-1)) { /* moved within the row */ }
         else if (!typing()) cycleTab(-1);
         i += 3; continue;
       }
@@ -906,10 +1090,33 @@ function QueueRow({ id, selected, width }) {
   if (info.kind === 'waiting') suffix.push(['  waiting', { dimColor: true }]);
   if (info.kind === 'pending') suffix.push(['  pending (press ▶)', { dimColor: true }]);
   if (info.note) suffix.push([`  ${info.note}`, { dimColor: true }]);
-  if (info.err) suffix.push([`  ${info.err.slice(0, 60)}`, { color: 'red' }]);
-  const url = S.snap.urls.get(id); // result folder stays on the o hotkey
+  // The error text lives in batch/errors/<id>.txt, reached through "see error" —
+  // the row shows the handle, not a 60-char slice of a 200-char message that
+  // truncated mid-word and ate the label's width.
+  if (info.kind === 'failed') {
+    suffix.push(['  ', {}]);
+    suffix.push([osc8('see error', pathToFileURL(info.errorFile).href),
+      { color: 'red', underline: true, inverse: sel && S.rowFocus === 'error' }, 'see error']);
+  }
+  // Always rendered, not just on the selected row: a failed row has to advertise
+  // that something can be done about it. Spaces stay outside the inverted spans.
+  if (info.kind === 'failed') {
+    suffix.push(['  ', {}]);
+    if (info.retryable) {
+      suffix.push(['retry', { color: 'yellow', inverse: sel && S.rowFocus === 'retry' }]);
+      suffix.push([' | ', { color: 'yellow' }]);
+    }
+    suffix.push(['debug', { color: 'yellow', inverse: sel && S.rowFocus === 'debug' }]);
+  }
+  // A failed row ends at debug: the posting is not what you act on next, and
+  // "see error" is already a link, so a second one competes with it. The URL is
+  // still one keystroke away — ← back to the row, then o, or the tracker.
+  const url = info.kind === 'failed' ? null : S.snap.urls.get(id); // result folder stays on the o hotkey
   const scoreLen = info.score != null ? 5 : 0; // '  X.X'
-  const suffixLen = scoreLen + suffix.reduce((a, [t]) => a + t.length, 0) + (url ? 6 : 9); // '  link' / '  no link'
+  // A hyperlinked entry carries its visible text third — its escape bytes occupy
+  // no columns, so measuring t.length would blow the reserved width apart.
+  const suffixLen = scoreLen + suffix.reduce((a, [t, , vis]) => a + (vis ?? t).length, 0)
+    + (info.kind === 'failed' ? 0 : url ? 6 : 9); // '  link' / '  no link'
   const avail = Math.max(4, width - 2 - suffixLen); // 2 = icon + leading space
   const label = info.label.length > avail ? info.label.slice(0, avail - 1) + '…' : info.label;
   return h(Box, { height: 1, overflow: 'hidden' },
@@ -918,7 +1125,8 @@ function QueueRow({ id, selected, width }) {
     info.score != null ? h(ScoreText, { score: info.score }) : null,
     ...suffix.map(([t, p], i) => h(Text, { key: i, ...p }, t)),
     // spaces outside the underlined span — underline starts at "link"
-    url ? h(Text, null, '  ', h(Text, { color: 'blueBright', underline: true, inverse: linkSel }, osc8('link', url)))
+    info.kind === 'failed' ? null
+      : url ? h(Text, null, '  ', h(Text, { color: 'blueBright', underline: true, inverse: linkSel }, osc8('link', url)))
         : h(Text, { dimColor: true }, '  no link'));
 }
 
@@ -1275,7 +1483,7 @@ function App() {
       : h(Box, { borderStyle: 'round', flexDirection: 'row', paddingX: 1, flexGrow: 1 },
           h(FollowupsTab));
   const hints = S.tab === 'stats'
-    ? '←→ tabs/link · ↑↓ navigate · Enter next/queue/run/link · o result · a applied · x skip · q quit'
+    ? '←→ tabs/row actions · ↑↓ navigate · Enter next/queue/run/retry/debug/link · o result · a applied · x skip · q quit'
     : S.tab === 'followups'
       ? '←→ tabs · ↑↓ navigate · Enter mark nudged · u undo · o report · q quit'
       : S.gridSel
@@ -1303,6 +1511,26 @@ if (process.argv.includes('--stats')) {
     ...stats,
     avg: lifetimeAvg(),
   }, null, 2));
+  process.exit(0);
+}
+
+if (process.argv.includes('--retry-plan')) {
+  // ponytail: self-check for the failure → (retryable, debug input) mapping —
+  // the one branch here that can silently do the wrong thing. Takes the row on
+  // argv, so it needs neither a TTY nor a local-state.tsv:
+  //   --retry-plan <p1_status> <p2_status> <p3_status> <report_num> <id>
+  const [p1s, p2s, p3s, rnum, id] = process.argv.slice(process.argv.indexOf('--retry-plan') + 1);
+  const phase = failedPhase({ p1s, p2s, p3s, rnum }); // same shape readStateRows builds
+  const info = { failPhase: phase, rnum, errorFile: path.join(ERRORS_DIR, `${id}.txt`) };
+  console.log(JSON.stringify(phase ? {
+    phase,
+    retryable: p1s !== 'unavailable',
+    // the link set, not what survives on disk: the naming and the per-phase
+    // membership are the logic worth pinning.
+    // candidates, not the resolved pick: the ordering is the logic worth pinning,
+    // and which one wins depends on what happens to be on disk.
+    debug: debugCandidates(id, info).map(f => path.relative(ROOT, f)),
+  } : { phase: null }));
   process.exit(0);
 }
 
