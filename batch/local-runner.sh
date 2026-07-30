@@ -40,6 +40,12 @@ PARALLEL_SCORE=1
 PARALLEL_EVAL=1
 PARALLEL_PDF=2
 THRESHOLD=""
+# Benchmarked over 115 offers with Phase 2 as reference (see
+# batch/PHASE1-EXPERIMENT-LEDGER.md): once the archetype enum landed, recall on good offers
+# (P2 >= 4.0) stays at 1.000 for every gate from 1.5 to 3.0, while the share of
+# genuine mismatches dropped nearly doubles at 2.5 (0.389 -> 0.722). 2.5 is the
+# safe end of that plateau. It was briefly lowered to 2.0 to compensate for the
+# old scorer collapsing good offers to 2.4; that scorer is gone, so it goes back.
 P1_THRESHOLD="2.5"
 LOCAL_CTX=8192
 OLLAMA_MODEL="snipe-screen"
@@ -486,7 +492,7 @@ score_offer() {
   local score archetype hard_stops
   score=$(jq -r '.score' "$score_file")
   archetype=$(jq -r '.archetype' "$score_file")
-  hard_stops=$(jq -r '.hard_stops | join(", ")' "$score_file")
+  hard_stops=$(jq -r '(.hard_stops // []) | join(", ")' "$score_file")
 
   update_state "$id" "$url" "scored" "$score" "$archetype" "-" "-" "-" "-" "0"
 

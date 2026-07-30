@@ -20,7 +20,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { stackMismatchCap, languageMismatchCap, seniorityCaps } from './fit-rules.mjs';
+import yaml from 'js-yaml';
+import { stackMismatchCap, languageMismatchCap, seniorityCaps, verifyAgainstCv } from './fit-rules.mjs';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -224,9 +225,50 @@ async function checkOllamaHealth(baseUrl, model, timeoutMs) {
   }
 }
 
+export const OUTSIDE_TARGETS = 'Outside targets';
+
+/**
+ * Archetype names from config/profile.yml, for the schema enum.
+ *
+ * As free text this field was the single biggest source of bad scores: 27% of a
+ * 144-offer corpus came back "Outside targets" (38 of those 39 with north_star
+ * 1-2, mean score 2.16 — i.e. straight into the P1 gate), including roles whose
+ * title matched a primary archetype almost word for word. profile.yml and
+ * profile.md may also punctuate the same archetype differently, so the model had
+ * no single list to match against and bailed out. The grammar now decides, and
+ * profile.yml is the one source — which makes any such drift harmless rather
+ * than something to fix in the user-owned profile.md.
+ *
+ * @returns {string[]|null} null when the profile is missing/unparseable, in
+ *   which case the caller leaves `archetype` as free text rather than
+ *   constraining it to a wrong list.
+ */
+function archetypeEnum() {
+  try {
+    const parsed = yaml.load(readFileSync(resolve(PROJECT_DIR, 'config/profile.yml'), 'utf8'));
+    const names = (parsed?.target_roles?.archetypes || [])
+      .map(a => (typeof a === 'string' ? a : a?.name))
+      .filter(Boolean);
+    return names.length ? [...names, OUTSIDE_TARGETS] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Schema-constrained decoding (Ollama `format`): the grammar guarantees valid
 // JSON with integer dimensions in [1,5] — no prose, no parse retries. `company`
 // and `role` are extracted here once so Phase 2 never regex-guesses them.
+//
+// `hard_stops` is deliberately NOT in this schema. When the model was asked for
+// it while the prompt carried the profile's deal-breaker checklist, 90% of the
+// hard stops it emitted (74/82) were verbatim copies of that checklist rather
+// than findings: a role-shape deal-breaker was stamped on 11 postings that
+// plainly were not that shape, and a salary-floor deal-breaker on postings
+// naming no salary at all. A small model completes a checklist it is shown
+// rather than testing it. It never fed the score (see validateScore), but it
+// came out of the same forward pass that sets the dimensions. The field still
+// exists on the output; it is filled from the deterministic gates in
+// fit-rules.mjs instead.
 const SCORE_SCHEMA = {
   type: 'object',
   properties: {
@@ -235,15 +277,20 @@ const SCORE_SCHEMA = {
     cv_match:        { type: 'integer', minimum: 1, maximum: 5 },
     north_star:      { type: 'integer', minimum: 1, maximum: 5 },
     red_flags_score: { type: 'integer', minimum: 1, maximum: 5 },
-    archetype:       { type: 'string' },
-    hard_stops:      { type: 'array', items: { type: 'string' } },
-    soft_gaps:       { type: 'array', items: { type: 'string' }, maxItems: 5 },
+    archetype:       { type: 'string' },  // enum injected in main() from profile.yml
+    // Each gap must carry the verbatim JD span that proves the requirement is
+    // real; verifyGaps() drops any whose quote is not in the JD.
+    soft_gaps:       { type: 'array', maxItems: 5, items: {
+      type: 'object',
+      properties: { requirement: { type: 'string' }, jd_quote: { type: 'string' } },
+      required: ['requirement', 'jd_quote'],
+    } },
     top_strengths:   { type: 'array', items: { type: 'string' }, maxItems: 3 },
     jd_summary:      { type: 'string' },
     confidence:      { type: 'string', enum: ['Low', 'Medium', 'High'] },
   },
   required: ['company', 'role', 'cv_match', 'north_star', 'red_flags_score',
-             'archetype', 'hard_stops', 'soft_gaps', 'top_strengths',
+             'archetype', 'soft_gaps', 'top_strengths',
              'jd_summary', 'confidence'],
 };
 
@@ -266,7 +313,10 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, timeoutMs) 
         stream: false,
         format: SCORE_SCHEMA,
         options: {
-          temperature: 0.1,
+          // Greedy. At 0.1 the run-to-run noise floor on this stack was 0.091
+          // with individual offers swinging up to 2.1 points, which makes a
+          // single-run A/B meaningless (see CLAUDE.md, benchmark rule 2).
+          temperature: 0,
           num_ctx: 12288,
         },
       }),
@@ -306,13 +356,39 @@ function extractJson(raw) {
   throw new Error('Could not extract JSON from model response. Raw: ' + raw.slice(0, 500));
 }
 
+/**
+ * Keep only gaps whose `jd_quote` really appears in the JD. Grounding by
+ * construction: the model can copy a span but cannot reliably invent one that
+ * survives a substring check, so a requirement the JD never states gets dropped
+ * here instead of reaching the report.
+ *
+ * Matching is whitespace- and case-insensitive because providers reflow text;
+ * a quote shorter than 12 chars is rejected outright (too easy to match by
+ * accident — "Python" appears in almost any JD).
+ * @returns {{gaps: string[], dropped: number}}
+ */
+function verifyGaps(rawGaps, jdText) {
+  const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const jd = norm(jdText);
+  const gaps = [];
+  let dropped = 0;
+  for (const g of Array.isArray(rawGaps) ? rawGaps : []) {
+    const requirement = typeof g === 'string' ? g : String(g?.requirement || '').trim();
+    const quote = norm(typeof g === 'string' ? '' : g?.jd_quote);
+    if (!requirement) continue;
+    if (quote.length >= 12 && jd.includes(quote)) gaps.push(requirement);
+    else dropped++;
+  }
+  return { gaps, dropped };
+}
+
 // Clamp a model-reported dimension to an integer in [1,5]; null if unparseable.
 function clampDim(v) {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : null;
 }
 
-function validateScore(parsed, { cvCap = 5, nsCap = 5 } = {}) {
+function validateScore(parsed, { cvCap = 5, nsCap = 5, jdText = '', cvText = '' } = {}) {
   let cv = clampDim(parsed.cv_match);
   let ns = clampDim(parsed.north_star);
   const rf = clampDim(parsed.red_flags_score) ?? 5;          // informational only — NOT scored
@@ -327,8 +403,13 @@ function validateScore(parsed, { cvCap = 5, nsCap = 5 } = {}) {
   if (cv === null || ns === null) {
     throw new Error(`Missing dimension scores (cv_match=${parsed.cv_match}, north_star=${parsed.north_star})`);
   }
+  // Verify once each — both the kept items and the dropped count are used below.
+  const gaps = verifyGaps(parsed.soft_gaps, jdText);
+  const strengths = verifyAgainstCv(parsed.top_strengths, cvText);
+
   // Caps (computed in main() from JD + cv.md): stack mismatch caps cv_match;
   // a required natural language the candidate lacks caps both dimensions.
+  const cvRaw = cv, nsRaw = ns;
   if (cvCap < 5) cv = Math.min(cv, cvCap);
   if (nsCap < 5) ns = Math.min(ns, nsCap);
   const score = Math.round((cv * 0.625 + ns * 0.375) * 10) / 10;
@@ -337,13 +418,27 @@ function validateScore(parsed, { cvCap = 5, nsCap = 5 } = {}) {
     score,
     cv_match: cv,
     north_star: ns,
+    // Pre-cap dimensions, kept for calibration work: the clamp is an attractor
+    // (42/115 offers land on the Senior cap's exact fixed point 3.4), and you
+    // cannot evaluate any alternative cap policy without the raw values.
+    cv_match_raw: cvRaw,
+    north_star_raw: nsRaw,
+    cv_cap: cvCap,
+    ns_cap: nsCap,
     red_flags_score: rf,
     company: String(parsed.company || '').trim() || 'unknown',
     role: String(parsed.role || '').trim() || 'unknown',
     archetype: String(parsed.archetype || 'Unknown'),
-    hard_stops: Array.isArray(parsed.hard_stops) ? parsed.hard_stops : [],
-    soft_gaps: Array.isArray(parsed.soft_gaps) ? parsed.soft_gaps : [],
-    top_strengths: Array.isArray(parsed.top_strengths) ? parsed.top_strengths : [],
+    // Code-owned: the model is not asked for these (see SCORE_SCHEMA). main()
+    // appends the deterministic ones from fit-rules.mjs.
+    hard_stops: [],
+    soft_gaps: gaps.gaps,
+    top_strengths: strengths.kept,
+    // Both are counts. The dropped items are fabrications by definition, and
+    // ollama-evaluator.mjs feeds score-file fields into Phase 2's context — so
+    // the payload records how many were discarded, never the invented text.
+    gaps_dropped_unverified: gaps.dropped,
+    strengths_dropped_unverified: strengths.dropped.length,
     jd_summary: String(parsed.jd_summary || ''),
     confidence: String(parsed.confidence || 'Medium'),
   };
@@ -374,6 +469,11 @@ async function main() {
   const config = readFileSafe(resolve(PROJECT_DIR, 'config/profile.yml'));
 
   if (!cv) fatal('cv.md not found or empty', resolve(PROJECT_DIR, 'cv.md'));
+
+  // Constrain `archetype` to the profile's actual archetypes. Mutating the
+  // module-level schema is fine here — this is a single-shot CLI.
+  const archetypes = archetypeEnum();
+  if (archetypes) SCORE_SCHEMA.properties.archetype = { type: 'string', enum: archetypes };
 
   // Fetch JD
   const jdTmpPath = `/tmp/batch-jd-${args.id}.txt`;
@@ -441,6 +541,8 @@ async function main() {
     scored = validateScore(parsed, {
       cvCap: Math.min(stackCap, langCap.cvCap, sen.cvCap),
       nsCap: Math.min(langCap.nsCap, sen.nsCap),
+      jdText,
+      cvText: cv,
     });
     if (sen.reason) {
       scored.soft_gaps = [...new Set([`Seniority cap applied: ${sen.reason}`, ...scored.soft_gaps])].slice(0, 5);
