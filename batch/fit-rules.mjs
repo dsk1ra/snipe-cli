@@ -10,7 +10,15 @@
 // Ecosystem → detection regex. Kept deliberately narrow to avoid false positives
 // (e.g. "go-live" must NOT count as the Go language).
 const ECOSYSTEM_PATTERNS = {
-  'c#/.net':    /\b(c#|\.net|dotnet|asp\.net|jscript\.net)\b/gi,
+  // `\b` cannot fence a token that starts or ends with punctuation: `\bc#\b`
+  // needs a word char right after the `#`, and `\b\.net` needs one right before
+  // the dot — so the old pattern matched NEITHER "C#" nor ".NET" in any real
+  // spelling, only "dotnet"/"asp.net". The ecosystem was therefore invisible on
+  // BOTH sides of every comparison: JDs demanding it, and a CV claiming it.
+  // Lookaround instead, and `c#(?:\.net)?` first so "C#.Net" counts once, not
+  // twice, against minMentions. The leading lookbehind is what keeps a ".net"
+  // TLD ("example.net") from reading as the ecosystem.
+  'c#/.net':    /(?<![a-z0-9])(?:c#(?:\.net)?|asp\.net|jscript\.net|dotnet|\.net)(?![a-z0-9])/gi,
   'java':       /\bjava\b(?!script)/gi,
   'go':         /\b(golang|go\s+(?:developer|engineer|programmer|programming)|written\s+in\s+go|microservices\s+in\s+go)\b/gi,
   'ruby':       /\b(ruby on rails|\bruby\b|\brails\b)\b/gi,
@@ -284,6 +292,19 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(v.dropped.length === 2, 'two fabricated strengths dropped');
   assert(v.kept.some(s => /non-technical/.test(s)), 'claim naming no technology is left alone');
   assert(verifyAgainstCv([], cvTech).kept.length === 0, 'empty input is safe');
+
+  // c#/.net: `\b` cannot fence `c#` or `.net`, so the old pattern matched neither
+  // in any spelling a JD actually uses. stackMismatchCap is the consumer.
+  const noDotnetCv = 'Skills: Ruby, Rails, Elasticsearch, GCP, Docker';
+  const capOf = jd => stackMismatchCap(jd, noDotnetCv);
+  assert(capOf('C#/OO software engineer. Strong C# required.').missing.includes('c#/.net'), 'bare C# is detected');
+  assert(capOf('We build in .NET 8 and ship .NET services daily.').missing.includes('c#/.net'), 'bare .NET is detected');
+  assert(capOf('ASP.NET Core and dotnet tooling throughout.').missing.includes('c#/.net'), 'asp.net/dotnet still detected');
+  // Counted once, not twice — otherwise a single "C#.Net" trips minMentions 2 alone.
+  assert(capOf('C#.Net is used here.').missing.length === 0, 'one C#.Net mention is below minMentions');
+  // A .net TLD is not an ecosystem.
+  assert(capOf('Apply at example.net or careers.foo.net today.').missing.length === 0, '.net TLD is not the ecosystem');
+  assert(capOf('We write C++ and Rust.').missing.includes('c#/.net') === false, 'C++ is not C#');
 
   // looksMultiPosting: the model called offer #38 a single posting 6/6 times.
   assert(looksMultiPosting('40+ top trading firms seeking exceptional engineers. Multiple immediate openings.'), 'aggregator advert detected');
