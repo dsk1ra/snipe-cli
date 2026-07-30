@@ -107,3 +107,38 @@ for (const c of retryCases) {
     pass(`${label} → ${c.phase}${c.retryable ? '' : ' (no retry)'}, debug ${c.debug[0]}`);
   }
 }
+
+// ── 4. PHASE 2 BACK-FILL GUARD ──────────────────────────────────
+
+// local-runner.sh reconciles a row to `evaled` from batch/evals/<id>.json. A
+// FAILED eval writes its fatal() JSON to that same path ({error,status}, no
+// report_num), so the file merely existing is not evidence of success. Treating
+// it as such marked rows `evaled` with rnum "-", which made Phase 2 skip and
+// Phase 3 fail forever hunting a report nobody wrote — unreachable by any retry
+// that does not override the phase guards.
+console.log('\n4. Phase 2 back-fill guard (local-runner.sh)');
+
+const GUARD = '.status == "evaled" and (.report_num // "-") != "-"';
+const evalDir = mkdtempSync(join(tmpdir(), 'snipe-backfill-'));
+const backfills = (label, payload) => {
+  const f = join(evalDir, 'e.json');
+  writeFileSync(f, JSON.stringify(payload));
+  return run('jq', ['-e', GUARD, f], { stdio: ['pipe', 'pipe', 'pipe'] }) !== null;
+};
+
+const guardCases = [
+  ['a successful eval', { status: 'evaled', report_num: '114' }, true],
+  ['a failed eval (fatal JSON)', { status: 'eval_failed', error: 'stage3 failed' }, false],
+  ['status evaled but no report_num', { status: 'evaled' }, false],
+  ['status evaled with rnum "-"', { status: 'evaled', report_num: '-' }, false],
+];
+for (const [label, payload, want] of guardCases) {
+  if (backfills(label, payload) === want) pass(`back-fill ${want ? 'accepts' : 'rejects'} ${label}`);
+  else fail(`back-fill guard wrong for ${label}: expected ${want}`);
+}
+
+// The guard must match what local-runner.sh actually runs.
+if (readFile('batch/local-runner.sh').includes(GUARD)) pass('guard expression matches local-runner.sh');
+else fail('guard expression drifted from local-runner.sh');
+
+rmSync(evalDir, { recursive: true, force: true });
