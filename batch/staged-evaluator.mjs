@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { stackMismatchCap, seniorityCaps, languageMismatchCap, looksMultiPosting, strengthFrom } from './fit-rules.mjs';
+import { stackMismatchCap, seniorityCaps, languageMismatchCap, looksMultiPosting, strengthFrom, verifyAgainstCv } from './fit-rules.mjs';
 import {
   cleanCvForPrompt, cleanJd, extractSalary, parseCompTargets,
   compScoreFromSalary, buildCompBlock,
@@ -554,7 +554,8 @@ function assembleReport({ args, today, parsed, evidence, coverage, judgment, sal
   }
   md.push('');
   md.push(`**Gaps:** ${judgment.soft_gaps.join('; ') || 'none identified'}`);
-  md.push(`**Top strengths:** ${judgment.top_strengths.join('; ')}`);
+  // Can now be empty: verifyAgainstCv drops strengths naming absent technology.
+  md.push(`**Top strengths:** ${judgment.top_strengths.join('; ') || 'none verifiable against cv.md'}`);
   md.push('');
 
   md.push('## C) Level & Strategy', '');
