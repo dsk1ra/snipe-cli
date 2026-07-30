@@ -407,11 +407,15 @@ reconcile_state() {
     local p2_status; p2_status=$(get_field "$id" "p2_status")
     if [[ "$p2_status" != "evaled" ]]; then
       local eval_file; eval_file=$(find_eval_file "$id")
-      if [[ -n "$eval_file" ]]; then
+      # A failed eval leaves its fatal() JSON at the same path ({error,status},
+      # no report_num), so the file existing is NOT evidence the eval succeeded.
+      # Back-filling on that marked the row evaled with rnum "-", which made
+      # Phase 2 skip and Phase 3 fail hunting a report that was never written.
+      if [[ -n "$eval_file" ]] && jq -e '.status == "evaled" and (.report_num // "-") != "-"' "$eval_file" >/dev/null 2>&1; then
         local p1_score p1_arch p2_rnum
         p1_score=$(get_field "$id" "p1_score")
         p1_arch=$(get_field "$id" "p1_archetype")
-        p2_rnum=$(jq -r '.report_num // "-"' "$eval_file" 2>/dev/null || echo "-")
+        p2_rnum=$(jq -r '.report_num' "$eval_file")
         update_state "$id" "$url" "scored" "$p1_score" "$p1_arch" "evaled" "$p2_rnum" "-" "-" "0"
         (( reconciled++ )) || true
       fi
@@ -933,12 +937,18 @@ main() {
   while IFS=$'\t' read -r id url p1s p1sc p1a p2s rnum p3s err ret; do
     [[ "$id" == "id" || -z "$id" ]] && continue
     [[ "$p2s" != "evaled" ]] && continue
-    [[ "$rnum" == "-" || -z "$rnum" ]] && continue
-    # Check if any report file exists for this report_num
+    # A successful eval always records a report number, so `evaled` with rnum "-"
+    # is a corrupted row — a failed eval back-filled as a success. Skipping it
+    # here (as this pass used to) left it unreachable: Phase 3 has no report to
+    # find, --retry-failed's entry filter sees no failure status, and the TUI
+    # renders it "pending" forever. Reset it like any other missing report.
     local report_exists=false
-    for rf in "$REPORTS_DIR"/${rnum}-*.md; do
-      [[ -f "$rf" ]] && { report_exists=true; break; }
-    done
+    if [[ "$rnum" != "-" && -n "$rnum" ]]; then
+      # Check if any report file exists for this report_num
+      for rf in "$REPORTS_DIR"/${rnum}-*.md; do
+        [[ -f "$rf" ]] && { report_exists=true; break; }
+      done
+    fi
     [[ "$report_exists" == "true" ]] && continue
     # Report missing — also check if eval metadata exists to recover from
     local ef; ef=$(find_eval_file "$id")
@@ -946,7 +956,9 @@ main() {
       # Eval metadata exists but report is gone — need re-eval
       echo "  WARN: #$id report $rnum: eval metadata found but report missing — will re-evaluate"
     fi
-    update_state "$id" "$url" "$p1s" "$p1sc" "$p1a" "eval_failed" "$rnum" "-" "report missing after eval" "$ret"
+    local why="report missing after eval"
+    [[ "$rnum" == "-" || -z "$rnum" ]] && why="eval recorded no report number"
+    update_state "$id" "$url" "$p1s" "$p1sc" "$p1a" "eval_failed" "$rnum" "-" "$why" "$ret"
   done < "$STATE_FILE"
 
   # ── Phase 2 ──────────────────────────────────────────────────────────────────
