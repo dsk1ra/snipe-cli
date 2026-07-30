@@ -33,6 +33,34 @@ snipe-tui.mjs (ink/react)
 `batch/local-runner.pid` causes queueing instead; `snipe --drain` processes
 the queue.
 
+A failed queue row renders as `✗ Company — Role  see error  retry | debug`
+(→ focuses each, Enter fires it). It ends at `debug` and drops the job link every
+other row carries — `see error` is already a link, and the posting is not what you
+act on next; `o` and the tracker still reach it:
+
+- **see error** — a `file://` hyperlink to `batch/errors/<id>.txt`, written by the
+  TUI's poll from the fullest source available. That is the `fatal()` JSON in
+  `batch/scores/<id>.json` / `batch/evals/<id>.json`, **not** the log: both
+  scripts write `fatal()` to stdout and only stderr to `batch/logs/`, so every
+  score and eval log is 0 bytes. Phase 3 is the reverse — its log is the whole
+  artifact. The state row's `error` column is truncated at 200 chars, so it is
+  only the fallback.
+- **retry** — re-runs the offer through all three phases with
+  `local-runner.sh --only-id N --retry-failed`, overwriting the last attempt.
+  Not a plain re-queue: `drain_queue` runs `--only-id N` with no flags, and the
+  three phase guards (`:899`, `:976`, `:1021`) all key off the stored status, so
+  a row that is `scored` + `evaled` with no report skips Phases 1–2 and fails
+  Phase 3 forever. `--retry-failed` overrides all three and clears the
+  `MAX_RETRIES` gate. Costs a fresh report number per attempt, orphaning the old
+  one. `unavailable` rows get no retry — the runner refuses expired postings.
+- **debug** — opens the *input* that phase read, to be edited in place before the
+  retry reads it back: the fetched JD (`batch/jds/<id>.txt`) for Phases 1–2, the
+  Phase 2 report for Phase 3. Falls back to the `score`/`eval` payload when the
+  input never landed, which is itself the diagnosis. The file, not its folder —
+  `batch/jds/` holds every JD ever fetched.
+
+Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
+
 ## The 3-phase pipeline (`batch/local-runner.sh`)
 
 | Phase | Script | Model | Output |
