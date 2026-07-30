@@ -308,37 +308,57 @@ function coverageMetric(evidence) {
 
 // ── Stage 3: judgment ─────────────────────────────────────────────────────────
 
+// Every free-text string is length-capped. `maxItems` alone does not bound the
+// output: the grammar happily decodes ONE string forever, and did — two offers
+// failed by looping inside a single `top_strengths` entry, comma-appending CV
+// skill fragments for 7128 of 21241 chars until num_predict ran out mid-string.
+// The truncated JSON then failed to parse and the whole evaluation was lost.
+// maxLength makes the sampler close the quote at the cap instead (verified: a
+// capped call returns done_reason=stop and valid JSON where the uncapped one
+// returns done_reason=length and a dangling string), so a verbose answer
+// degrades to a clipped sentence rather than a lost evaluation.
+//
+// Limits are ~1.5x the p95 measured over the stored evals and STAR rows, so
+// normal output is untouched; only the runaway case is cut. top_strengths is the
+// exception — its cap sits just above p95 and deliberately below the observed
+// max, because the prompt asks for "short factual phrases" there.
+//
+// ponytail: keep every cap <= 1500. llama.cpp expands maxLength into that many
+// nested optional char rules, and the grammar stops compiling somewhere between
+// 1800 and 2000 — the whole call then dies with HTTP 400 "failed to parse
+// grammar", which is a worse failure than the one this fixes. The limit is
+// per-field, not cumulative (a schema of 16 capped fields compiles fine).
 const STAGE3_SCHEMA = {
   type: 'object',
   properties: {
     cv_match:        { type: 'integer', minimum: 1, maximum: 5 },
     north_star:      { type: 'integer', minimum: 1, maximum: 5 },
     red_flags_score: { type: 'integer', minimum: 1, maximum: 5 },
-    archetype:       { type: 'string' },
-    hard_stops:      { type: 'array', items: { type: 'string' } },
-    soft_gaps:       { type: 'array', items: { type: 'string' }, maxItems: 5 },
-    top_strengths:   { type: 'array', items: { type: 'string' }, maxItems: 3 },
-    strategy:        { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 4 },
+    archetype:       { type: 'string', maxLength: 80 },
+    hard_stops:      { type: 'array', items: { type: 'string', maxLength: 200 }, maxItems: 6 },
+    soft_gaps:       { type: 'array', items: { type: 'string', maxLength: 240 }, maxItems: 5 },
+    top_strengths:   { type: 'array', items: { type: 'string', maxLength: 160 }, maxItems: 3 },
+    strategy:        { type: 'array', items: { type: 'string', maxLength: 400 }, minItems: 2, maxItems: 4 },
     personalisation: { type: 'array', minItems: 3, maxItems: 5, items: {
       type: 'object',
       properties: {
-        section:  { type: 'string' },
-        current:  { type: 'string' },
-        proposed: { type: 'string' },
-        why:      { type: 'string' },
+        section:  { type: 'string', maxLength: 80 },
+        current:  { type: 'string', maxLength: 400 },
+        proposed: { type: 'string', maxLength: 400 },
+        why:      { type: 'string', maxLength: 300 },
       },
       required: ['section', 'current', 'proposed', 'why'],
     } },
-    linkedin:        { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 3 },
+    linkedin:        { type: 'array', items: { type: 'string', maxLength: 300 }, minItems: 2, maxItems: 3 },
     hard_questions:  { type: 'array', minItems: 2, maxItems: 3, items: {
       type: 'object',
-      properties: { q: { type: 'string' }, a: { type: 'string' } },
+      properties: { q: { type: 'string', maxLength: 200 }, a: { type: 'string', maxLength: 800 } },
       required: ['q', 'a'],
     } },
     legitimacy_tier:   { type: 'string', enum: ['High Confidence', 'Proceed with Caution', 'Suspicious'] },
-    legitimacy_reason: { type: 'string' },
+    legitimacy_reason: { type: 'string', maxLength: 400 },
     final_decision:    { type: 'string', enum: ['Apply', 'Research first', 'Consider', 'Skip'] },
-    notes:             { type: 'string' },
+    notes:             { type: 'string', maxLength: 1500 },
     // `stories` is injected per offer by storiesSchema().
   },
   required: ['cv_match', 'north_star', 'red_flags_score', 'archetype', 'hard_stops',
@@ -371,11 +391,13 @@ function storiesSchema(eligibleRows) {
         // guarantee as a bounded integer, but it indexes the table the prompt
         // already contains — so the targets need not be re-listed.
         req:       { type: 'integer', enum: eligibleRows },
-        story:     { type: 'string' },
-        situation: { type: 'string' },
-        task:      { type: 'string' },
-        action:    { type: 'string' },
-        result:    { type: 'string' },
+        // Caps from the 417 stored STAR rows (p95 / observed max):
+        // story 857/1648 · situation 239/515 · task 162/209 · action 811/1316.
+        story:     { type: 'string', maxLength: 1200 },
+        situation: { type: 'string', maxLength: 400 },
+        task:      { type: 'string', maxLength: 300 },
+        action:    { type: 'string', maxLength: 1000 },
+        result:    { type: 'string', maxLength: 800 },
       },
       required: ['req', 'story', 'situation', 'task', 'action', 'result'],
     },
