@@ -486,7 +486,7 @@ score_offer() {
   local score archetype hard_stops
   score=$(jq -r '.score' "$score_file")
   archetype=$(jq -r '.archetype' "$score_file")
-  hard_stops=$(jq -r '.hard_stops | join(", ")' "$score_file")
+  hard_stops=$(jq -r '(.hard_stops // []) | join(", ")' "$score_file")
 
   update_state "$id" "$url" "scored" "$score" "$archetype" "-" "-" "-" "-" "0"
 
