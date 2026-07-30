@@ -10,6 +10,10 @@
 
 # snipe-cli
 
+[![CI](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
+
 Paste a job description and snipe scores it against your CV, writes a full fit
 report, and tailors a 2-page PDF for the roles worth applying to — all from a
 terminal cockpit, the **snipe TUI**.
@@ -231,6 +235,12 @@ npm run typecheck      # tsc over the JSDoc types, also in CI
 `cv.md`, `article-digest.md`, `config/profile.*`, `portals.yml`, `.env`, `data/`,
 `reports/`, `output/`, and `interview-prep/` hold your personal data and are
 gitignored. Only the system layer (scripts, modes, templates) is tracked.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
+
+---
 
 Deeper reading: [`CLAUDE.md`](CLAUDE.md) for the data contract ·
 [`docs/SETUP.md`](docs/SETUP.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
