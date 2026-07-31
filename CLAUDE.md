@@ -224,17 +224,30 @@ the whole problem:
 - **`SNIPE_PORTALS` + a temp cwd** — `scan.mjs` resolves its portal list from that
   env var and writes `data/` relative to the cwd, so a scan can run fully
   sandboxed. A `local-parser` portal makes it offline and deterministic.
+- **`SNIPE_HOME`** — `snipe-tui.mjs` splits its *data* root from its *code* root:
+  state, queue, applied/skipped, `batch-input.tsv`, `reports/`, `output/` and the
+  tracker all resolve from `SNIPE_HOME`, while the scripts it shells out to
+  (`local-runner.sh`, `scan.mjs`, `import-pipeline.mjs`) stay on the repo. The TUI
+  test builds its whole fixture in a temp home, so a run killed mid-test cannot
+  leave `#99000x` rows in the real queue — which is exactly what it used to do.
 - **`SNIPE_TRACKER`** — `tracker/paths.mjs` reads it before either default
   layout, so every tracker script can be pointed at a fixture `applications.md`
-  in a temp dir instead of the real one.
+  in a temp dir instead of the real one. `snipe-tui.mjs` honours it too, so the
+  TUI and the tracker scripts it spawns cannot disagree about which file is the
+  tracker. `SNIPE_ADDITIONS` is its sibling for `batch/tracker-additions/`, read
+  by both `merge-tracker.mjs` and `local-pdf-offer.mjs` — a fixture TSV left in
+  the real dir would otherwise be merged into the tracker by the next run.
 - **An injected `ctx`** — providers never call `fetch` themselves; they take
   `{ fetchJson, fetchText }`. A stub returning canned payloads reaches every
   parse and normalisation path with no server at all (`test/providers-http.mjs`).
   Only `euremotejobs` and `apify` bypass it, and both are driven by swapping
   `globalThis.fetch` and restoring it in a `finally`.
 
-Tests that write into the working tree (state files, embedding indexes, the
-tracker) snapshot what they touch with `preserve()` and restore in a `finally`;
+Prefer a temp root over `preserve()` where a seam exists: `preserve()` only
+restores if the `finally` actually runs, and a `SIGKILL`ed or crashed suite
+leaves whatever it wrote. What still writes into the working tree (the embedding
+indexes, Phase 1/2 JD and score artifacts) snapshots what it touches with
+`preserve()` and restores in a `finally`;
 `ensureUserLayer()` stands up a minimal `cv.md` / `config/profile.*` when the
 gitignored real ones are absent, and removes only what it created.
 
