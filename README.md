@@ -5,7 +5,7 @@
  ╚════██║██║╚██╗██║██║██╔═══╝ ██╔══╝
  ███████║██║ ╚████║██║██║     ███████╗
  ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝     ╚══════╝
-        local AI job search · driven from your terminal
+local AI job search · driven from your terminal
 ```
 
 # snipe-cli
