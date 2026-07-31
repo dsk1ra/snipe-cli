@@ -11,6 +11,7 @@
 # snipe-cli
 
 [![CI](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/dsk1ra/snipe-cli/graph/badge.svg)](https://codecov.io/gh/dsk1ra/snipe-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
 
@@ -102,9 +103,11 @@ The TUI is the front door. Launch it with:
 node snipe-tui.mjs        # or: npm run snipe-tui
 ```
 
-It's a pure consumer of on-disk state — it reads the queue, scores, evals, and
-output every second, so you can watch a run progress live while you keep adding
-jobs. Kick off a run and the pipeline keeps churning in the background.
+It re-reads on-disk state every second — the queue, scores, evals, and output —
+so you can watch a run progress live while you keep adding jobs. Kick off a run
+and the pipeline keeps churning in the background. It never edits pipeline state
+itself; the only files it writes are its own sidecars (`batch/applied.tsv`,
+`batch/skipped.tsv`, `batch/errors/<id>.txt`).
 
 ### The three tabs
 
@@ -148,6 +151,23 @@ cadence tracker. Press **↓** to enter the list, **Enter** to mark one nudged,
 Queueing is automatic: if a run is already active, new jobs wait and get picked
 up when it finishes — nothing is lost.
 
+### When a job fails
+
+A failed row carries its own actions — **→** focuses each, **Enter** fires it:
+
+```
+  ✗ Company — Role  see error  retry | debug
+```
+
+| Action | Does |
+|--------|------|
+| **see error** | Opens `batch/errors/<id>.txt` — the full, untruncated failure text (also a clickable `file://` link in terminals that support them) |
+| **retry** | Re-runs the offer through all three phases, overwriting the last attempt |
+| **debug** | Opens the *input* that phase read — the fetched JD, or the Phase 2 report — so you can fix it before retrying |
+
+The usual loop is **see error → debug → edit → retry**. Expired or blocked
+postings show no **retry**: re-running cannot recover them.
+
 ### Slash commands
 
 Type a command in the JD box (or just press **/** anywhere on the tab):
@@ -162,9 +182,9 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 |-----|--------|
 | **←/→** or **1/2/3** | Switch tabs |
 | **↑/↓** | Walk every element top-to-bottom (tab → list → JD → URL → Add); ↑ past the top returns to the tab bar |
-| **→** | Hop from the JD box to **▶**; on a list row with a link, focus the link |
+| **→** | Hop from the JD box to **▶**; on a list row, walk its inline actions (the link, or **see error · retry · debug** on a failed row) |
 | **Tab / Shift-Tab** | Cycle input ↔ ▶ ↔ list |
-| **Enter** | Advance the JD → URL → Add form (enqueues); on a focused link, open it in the browser |
+| **Enter** | Advance the JD → URL → Add form (enqueues); on a focused row action, fire it |
 | **o** | Open the result folder / report |
 | **a** | Mark the selected row **applied ✉** |
 | **x** | Mark the selected row **skip ⊘** (mutually exclusive with applied) |
@@ -228,13 +248,30 @@ safe to delete; it regenerates.
 ```bash
 node test-all.mjs      # full suite, must stay green
 npm run typecheck      # tsc over the JSDoc types, also in CI
+npm run coverage       # same suite under c8 → coverage/lcov.info
 ```
+
+Coverage counts every `.mjs` file, including ones the suite never loads — no
+exclusions to flatter the number. The Ollama-driven phases are covered by
+running them for real against a stand-in model server, the TUI by driving it
+headlessly, `scan.mjs` by scanning a sandboxed fixture portal, and the job-board
+providers by handing them a stub transport instead of the network — so no part
+of the pipeline needs a GPU, a terminal, or the network to be tested.
 
 ## Data & privacy
 
-`cv.md`, `article-digest.md`, `config/profile.*`, `portals.yml`, `.env`, `data/`,
-`reports/`, `output/`, and `interview-prep/` hold your personal data and are
-gitignored. Only the system layer (scripts, modes, templates) is tracked.
+Everything personal stays on your machine and is gitignored — only the system
+layer (scripts, modes, templates) is tracked:
+
+- **What you wrote** — `cv.md`, `article-digest.md`, `config/profile.*`,
+  `portals.yml`, `.env`
+- **What the pipeline produced** — `data/`, `reports/`, `output/`,
+  `interview-prep/`
+- **Working artifacts**, easy to overlook but just as personal: `batch/jds/`
+  (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
+  `batch/errors/`, `batch/logs/`, and `batch/local-state.tsv`
+
+Nothing leaves the machine: every model call goes to your local Ollama.
 
 ## License
 
