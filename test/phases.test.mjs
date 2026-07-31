@@ -377,7 +377,11 @@ try {
       '--report-path', reportPath, '--report-num', '901',
       '--jd-file', JD_TMP, '--eval-score', '4.2',
       '--company', 'Acme Corp', '--role', 'Senior Backend Engineer',
-      '--date', '2026-01-01', '--ollama-url', ollama.url], { timeout: 300_000 });
+      '--date', '2026-01-01', '--ollama-url', ollama.url],
+      // The addition TSV goes to the temp bench, not batch/tracker-additions —
+      // a run killed before the cleanup would otherwise leave a fixture row for
+      // the next real merge-tracker to sweep into the user's tracker.
+      { timeout: 300_000, env: { ...process.env, SNIPE_ADDITIONS: bench } });
     const s3 = envelope(p3, 'phase 3');
 
     // A missing Chromium is an environment gap, not a regression — the CV
@@ -394,14 +398,13 @@ try {
 
     // Whatever happened to the PDF, the tracker row is what reaches the user's
     // application log, and it must be well-formed (9 columns, no raw pipes).
-    const tsv = join(ROOT, 'batch/tracker-additions', `${ID}.tsv`);
+    const tsv = join(bench, `${ID}.tsv`);
     if (existsSync(tsv)) {
       const cols = readFileSync(tsv, 'utf8').trim().split('\t');
       if (cols.length === 9) pass('phase 3 tracker TSV has the required 9 columns');
       else fail(`phase 3 tracker TSV has ${cols.length} columns, expected 9`);
       if (cols[4] === 'Evaluated') pass('phase 3 writes a canonical status in the TSV');
       else fail(`phase 3 TSV status "${cols[4]}" is not canonical`);
-      strays.push(tsv);
     } else fail('phase 3 wrote no tracker TSV');
 
     if (s3?.pdf) strays.push(join(ROOT, s3.pdf, '..'));
