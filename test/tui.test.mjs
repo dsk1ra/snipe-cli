@@ -1,0 +1,508 @@
+// Rendering and key-handling coverage for snipe-tui.mjs. Run standalone with:
+// node test/tui.test.mjs
+//
+// The TUI is a pure consumer of on-disk state, so a fixture state file plus the
+// headless driver in test/tui-driver.mjs is enough to assert what it draws for
+// each row shape — including the failed-row actions, which are the part with
+// real logic behind them. State files are swapped out and restored so the
+// developer's own queue is never touched.
+import {
+  pass, fail, warn, ROOT, join, runNodeAsync, preserve,
+  existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, tmpdir,
+} from './harness.mjs';
+
+console.log('\n16. TUI rendering and row actions');
+
+const STATE_FILES = [
+  'batch/local-state.tsv', 'batch/snipe-queue.txt',
+  'batch/applied.tsv', 'batch/skipped.tsv',
+  // The job link on a row comes from batch-input.tsv, not the state row — a row
+  // whose id is absent from it renders with no link at all.
+  'batch/batch-input.tsv',
+  // Marking a row applied/skipped syncs the row's status into the tracker, and
+  // the Follow-ups tab is computed from it. Both are replaced by a two-row
+  // fixture so those paths are deterministic, and both are restored in the
+  // finally — they are user-layer files, so nothing here may outlive the test.
+  'data/applications.md', 'data/follow-ups.md',
+];
+
+// Ids high enough that the fixture's own errors/ and scores/ sidecars cannot
+// collide with a real offer's.
+const IDS = { done: '990001', gated: '990002', scoreFail: '990003', evalFail: '990004', noReport: '990005', gone: '990006' };
+
+const HEADER = 'id\turl\tp1_status\tp1_score\tp1_archetype\tp2_status\tp2_report_num\tp3_status\terror\tretries';
+const ROWS = [
+  // A finished offer: score shown, job link on the row.
+  [IDS.done, 'https://example.com/jobs/done', 'scored', '4.2', 'Backend Engineer', 'evaled', '801', 'completed', '-', '0'],
+  // Below the P1 threshold — never reached Phase 2.
+  [IDS.gated, 'https://example.com/jobs/gated', 'scored', '1.9', 'Outside targets', 'p1-gated', '-', 'skipped', 'p1-gated(threshold=2.5)', '0'],
+  // Phase 1 failure.
+  [IDS.scoreFail, 'https://example.com/jobs/scorefail', 'score_failed', '-', '-', '-', '-', '-', 'Ollama API call failed', '0'],
+  // Phase 2 failure.
+  [IDS.evalFail, 'https://example.com/jobs/evalfail', 'scored', '3.4', 'Backend Engineer', 'eval_failed', '-', '-', 'stage3 (judgment) failed', '1'],
+  // "evaled" with no report number — a failed eval wearing a success label.
+  [IDS.noReport, 'https://example.com/jobs/noreport', 'scored', '3.8', 'Backend Engineer', 'evaled', '-', '-', '-', '0'],
+  // Expired posting: not retryable at all.
+  [IDS.gone, 'https://example.com/jobs/gone', 'unavailable', '-', '-', '-', '-', '-', 'posting expired', '0'],
+];
+
+/**
+ * The last complete frame, with ANSI SGR/CSI and OSC-8 hyperlink wrappers
+ * stripped. Concatenating every frame would count each row once per repaint, so
+ * "how many rows show X" has to be asked of one frame. The final chunk is just
+ * the cursor-restore escape, hence the search for the last one with a tab bar.
+ */
+function visible(frames) {
+  const clean = s => s
+    .replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b[()][B0]/g, '');
+  const full = frames.map(clean).filter(s => s.includes('1 QUEUE'));
+  return full.length ? full[full.length - 1] : frames.map(clean).join('');
+}
+
+const tmp = mkdtempSync(join(tmpdir(), 'snipe-tui-'));
+let frameNo = 0;
+
+// The TUI's "open" actions shell out to xdg-open, and a finished drain fires
+// notify-send. Left alone a test run would throw the developer's editor and
+// desktop notifications at them, so both are replaced by loggers on PATH —
+// which also turns "what did it open?" into a file the assertions can read.
+const BIN = join(tmp, 'bin');
+const RUNNER_BIN = join(tmp, 'runner-bin');
+const OPENED = join(tmp, 'opened.log');
+mkdirSync(BIN, { recursive: true });
+mkdirSync(RUNNER_BIN, { recursive: true });
+const stub = (dir, name) => {
+  const p = join(dir, name);
+  writeFileSync(p, `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >> "$SNIPE_TEST_OPENED"\n`, { mode: 0o755 });
+};
+stub(BIN, 'xdg-open');
+stub(BIN, 'notify-send');
+// retryItem spawns `bash batch/local-runner.sh --only-id N --retry-failed`,
+// which is a real three-phase pipeline run. Only the drive that exercises retry
+// gets this second directory, so a stubbed bash cannot silently swallow any
+// other shell-out the TUI grows later.
+stub(RUNNER_BIN, 'bash');
+
+const opened = () => (existsSync(OPENED) ? readFileSync(OPENED, 'utf8') : '');
+
+/** Drive the TUI with a key sequence and return its raw frames. */
+async function driveRaw(...keys) {
+  const out = join(tmp, `frames-${frameNo++}.json`);
+  const path = [...(driveRaw.extraPath ? [driveRaw.extraPath] : []), BIN, process.env.PATH].join(':');
+  const res = await runNodeAsync(['test/tui-driver.mjs', out, ...keys], {
+    timeout: 60_000,
+    env: { ...process.env, TUI_COLS: '160', TUI_ROWS: '40', PATH: path, SNIPE_TEST_OPENED: OPENED },
+  });
+  if (!existsSync(out)) {
+    fail(`TUI driver produced no frames (exit ${res.code}): ${res.err.slice(0, 200)}`);
+    return [];
+  }
+  return JSON.parse(readFileSync(out, 'utf8'));
+}
+driveRaw.extraPath = null;
+
+/** Drive the TUI and return the last complete frame as plain text. */
+async function drive(...keys) {
+  return visible(await driveRaw(...keys));
+}
+
+// A live run owns these files; rewriting them under it would corrupt real state.
+if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
+  warn('TUI tests skipped — a pipeline run is active and owns batch/local-state.tsv');
+} else {
+  const restore = preserve(STATE_FILES);
+  const errorFiles = Object.values(IDS).map(id => join(ROOT, 'batch/errors', `${id}.txt`));
+  try {
+    mkdirSync(join(ROOT, 'batch'), { recursive: true });
+    writeFileSync(join(ROOT, 'batch/local-state.tsv'),
+      [HEADER, ...ROWS.map(r => r.join('\t'))].join('\n') + '\n', 'utf8');
+    // The list is `recentIds()`: queued ids plus anything with a JD or eval
+    // touched in the last 24h. Queueing the fixture ids is what puts them on
+    // screen without planting files in batch/jds/.
+    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
+    rmSync(join(ROOT, 'batch/applied.tsv'), { force: true });
+    rmSync(join(ROOT, 'batch/skipped.tsv'), { force: true });
+
+    // Appended, not replaced: the real file is the pipeline's input list, and
+    // the fixture only needs its own ids to resolve to a link.
+    const inputFile = join(ROOT, 'batch/batch-input.tsv');
+    const inputHead = existsSync(inputFile) ? readFileSync(inputFile, 'utf8').trimEnd() : 'id\turl';
+    writeFileSync(inputFile,
+      [inputHead, ...ROWS.map(r => `${r[0]}\t${r[1]}`)].join('\n') + '\n', 'utf8');
+
+    // Company, role and score come from the eval payload, not the state row —
+    // without one a finished offer renders as a bare "#<id>".
+    mkdirSync(join(ROOT, 'batch/evals'), { recursive: true });
+    writeFileSync(join(ROOT, 'batch/evals', `${IDS.done}.json`), JSON.stringify({
+      status: 'evaled', id: IDS.done, company: 'Fixture Corp', role: 'Backend Engineer',
+      score: 4.2, report_num: '801',
+    }), 'utf8');
+
+    // A two-row tracker: #801 is the row toggleMark's syncTracker rewrites (it
+    // has to read "Evaluated" for the flip to be allowed), #555 is an Applied
+    // row old enough to be overdue, which is what puts an entry on the
+    // Follow-ups tab. Both files are restored in the finally.
+    const dayKey = d => d.toISOString().slice(0, 10);
+    const daysAgo = n => dayKey(new Date(Date.now() - n * 86_400_000));
+    mkdirSync(join(ROOT, 'data'), { recursive: true });
+    writeFileSync(join(ROOT, 'data/applications.md'), [
+      '# Applications Tracker',
+      '',
+      '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
+      '|---|------|---------|------|-------|--------|-----|--------|-------|',
+      `| 801 | ${daysAgo(1)} | Fixture Corp | Backend Engineer | 4.2/5 | Evaluated | Y | [801](../reports/801-fixture-corp-${daysAgo(1)}.md) | fixture |`,
+      `| 555 | ${daysAgo(20)} | Overdue Ltd | Platform Engineer | 4.5/5 | Applied | Y | [555](../reports/555-overdue-ltd-${daysAgo(20)}.md) | fixture |`,
+      '',
+    ].join('\n'), 'utf8');
+    writeFileSync(join(ROOT, 'data/follow-ups.md'),
+      '# Follow-ups Log\n\n| # | App | Date | Company | Role | Channel | Contact | Notes |\n|---|-----|------|---------|------|---------|---------|-------|\n', 'utf8');
+
+    // ── First paint ──────────────────────────────────────────────────────────
+
+    const home = await drive();
+    if (/1 QUEUE/.test(home) && /2 ACTIVITY/.test(home) && /3 FOLLOW-UPS/.test(home)) {
+      pass('TUI paints all three tab labels');
+    } else fail('TUI first paint is missing the tab bar');
+
+    if (/Paste the Job Description/.test(home)) pass('TUI paints the JD input placeholder');
+    else fail('TUI did not paint the input area');
+
+    if (/Add to queue/.test(home)) pass('TUI paints the Add to queue button');
+    else fail('TUI did not paint the Add to queue button');
+
+    if (/Stats/.test(home) && /Queue/.test(home)) pass('TUI paints the stats panel beside the queue list');
+    else fail('TUI did not paint the stats panel');
+
+    // ── Row shapes ───────────────────────────────────────────────────────────
+
+    // Anchored to the row, not the page: "P1-gated" is also a stats-panel label
+    // and "debug" is in the hint line, so a bare page-wide match proves nothing.
+    // A row with no eval payload renders as "#<id>", which makes a stable anchor.
+    const rowFor = id => home.split('\n').find(l => l.includes(`#${id}`)) || '';
+
+    const doneRow = home.split('\n').find(l => l.includes('Fixture Corp')) || '';
+    if (/✓/.test(doneRow) && /4\.2/.test(doneRow)) pass('a completed row shows its company, role and score');
+    else fail(`completed row rendered: ${doneRow.trim().slice(0, 100) || '(not found)'}`);
+
+    const gatedRow = rowFor(IDS.gated);
+    if (/P1-gated \(no Phase 2\)/.test(gatedRow)) pass('a below-threshold row is labelled P1-gated (no Phase 2)');
+    else fail(`P1-gated row rendered: ${gatedRow.trim().slice(0, 100) || '(not found)'}`);
+
+    // Every failed row carries its actions unconditionally — they are not gated
+    // on selection, which was the bug the feature shipped to fix. Counted on a
+    // single frame, so a repaint cannot inflate the number.
+    const failedRows = [IDS.scoreFail, IDS.evalFail, IDS.noReport].map(rowFor);
+    const withActions = failedRows.filter(l => /✗/.test(l) && /see error {2}retry \| debug/.test(l));
+    if (withActions.length === 3) pass('all three failed rows render "see error  retry | debug" unselected');
+    else fail(`only ${withActions.length}/3 failed rows carry the full action set: ${failedRows.map(l => l.trim().slice(0, 60))}`);
+
+    // The row ends at debug — no job link, unlike every other row.
+    if (failedRows.every(l => !/\blink\b/.test(l))) pass('a failed row drops the job link and ends at debug');
+    else fail('a failed row still renders the job link after debug');
+
+    // An expired posting cannot be recovered by re-running, so it gets debug and
+    // no retry — the row ends "see error  debug", never "retry | debug".
+    const goneRow = rowFor(IDS.gone);
+    if (/debug/.test(goneRow) && !/retry/.test(goneRow)) {
+      pass('an unavailable row offers debug but not retry');
+    } else fail(`unavailable row rendered: ${goneRow.trim().slice(0, 120) || '(row not found)'}`);
+
+    // ── Error sidecars ───────────────────────────────────────────────────────
+
+    // poll() writes one file per failed row so "see error" always has a target.
+    const written = errorFiles.filter(existsSync).length;
+    if (written >= 3) pass(`poll() wrote an error file for each failed row (${written})`);
+    else fail(`expected 3+ error sidecars, found ${written}`);
+
+    const noReportErr = join(ROOT, 'batch/errors', `${IDS.noReport}.txt`);
+    if (existsSync(noReportErr) && /no report number/i.test(readFileSync(noReportErr, 'utf8'))) {
+      pass('an "evaled" row with no report number is reported as a failure, not left pending');
+    } else fail('the evaled-without-report row produced no explanatory error file');
+
+    // ── Navigation ───────────────────────────────────────────────────────────
+
+    const activity = await drive('2');
+    if (/y\/m\/d|period|type/.test(activity)) pass('key "2" switches to the Activity tab');
+    else fail('key "2" did not reach the Activity tab');
+
+    const followups = await drive('3');
+    if (/mark nudged|report/.test(followups)) pass('key "3" switches to the Follow-ups tab');
+    else fail('key "3" did not reach the Follow-ups tab');
+
+    const back = await drive('2', '1');
+    if (/Paste the Job Description/.test(back)) pass('key "1" returns to the Queue tab');
+    else fail('key "1" did not return to the Queue tab');
+
+    const arrows = await drive('RIGHT', 'RIGHT', 'LEFT');
+    if (arrows.length > 0) pass('←/→ tab switching runs without crashing');
+    else fail('arrow-key tab switching produced no output');
+
+    // ── Typing into the JD box ───────────────────────────────────────────────
+
+    // "/" jumps straight into the JD box from anywhere on the tab.
+    const typed = await drive('/', 'hello world');
+    if (/12 chars — \/hello world/.test(typed)) pass('"/" enters the JD box and typing lands in it');
+    else fail('typing after "/" did not reach the JD box');
+
+    const cleared = await drive('/', 'hello', 'ESC');
+    if (/Paste the Job Description/.test(cleared)) pass('Esc clears the JD box back to the placeholder');
+    else fail('Esc did not clear the JD box');
+
+    // ── Row selection and its actions ────────────────────────────────────────
+
+    // Tab cycles input → ▶ → list, and entering the list selects the most recent
+    // row — the fixture's unavailable one. → then walks its inline actions, and
+    // the focused action is drawn inverse (\x1b[7m), which is what proves the
+    // walk landed rather than just repainting.
+    // Chalk emits one escape per style, so between the inverse marker and the
+    // label there can be a colour and an underline as well as the OSC-8 wrapper
+    // ("see error" is a hyperlink). Drop everything except inverse on/off and
+    // the pairing becomes a plain match.
+    const inverseOn = (frames, token) => frames
+      .map(f => f
+        .replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[(?!7m|27m)[0-9;]*m/g, ''))
+      .some(f => new RegExp(`\\x1b\\[7m\\s*${token}`).test(f));
+
+    const walk1 = await driveRaw('TAB', 'TAB', 'TAB', 'RIGHT');
+    if (inverseOn(walk1, 'see error')) pass('→ on a failed row focuses "see error" first');
+    else fail('→ did not focus "see error" on the selected failed row');
+
+    const walk2 = await driveRaw('TAB', 'TAB', 'TAB', 'RIGHT', 'RIGHT');
+    if (inverseOn(walk2, 'debug')) pass('→ again focuses "debug" — the unavailable row has no retry stop between them');
+    else fail('a second → did not reach "debug" on the unavailable row');
+
+    // Only an evaluated row can be marked, so walk up from the last row to the
+    // one with an eval payload — five rows above it.
+    const TO_DONE = ['TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'UP', 'UP'];
+
+    // 'a' marks the selected row applied; the sidecar is the observable effect.
+    await drive(...TO_DONE, 'a');
+    const applied = join(ROOT, 'batch/applied.tsv');
+    if (existsSync(applied) && readFileSync(applied, 'utf8').includes(IDS.done)) {
+      pass('"a" marks the evaluated row applied and writes batch/applied.tsv');
+    } else fail('"a" did not write an applied sidecar for the evaluated row');
+
+    // 'x' is mutually exclusive with applied — marking skip clears the ✉.
+    await drive(...TO_DONE, 'x');
+    const skipped = join(ROOT, 'batch/skipped.tsv');
+    if (existsSync(skipped) && readFileSync(skipped, 'utf8').includes(IDS.done)) {
+      pass('"x" marks the evaluated row skipped and writes batch/skipped.tsv');
+    } else fail('"x" did not write a skipped sidecar for the evaluated row');
+    if (!existsSync(applied) || !readFileSync(applied, 'utf8').includes(IDS.done)) {
+      pass('marking skip clears the applied mark — the two are mutually exclusive');
+    } else fail('a row is marked both applied and skipped');
+
+    // A row with no eval payload cannot be marked at all.
+    await drive('TAB', 'TAB', 'TAB', 'a');
+    const appliedAfter = existsSync(applied) ? readFileSync(applied, 'utf8') : '';
+    if (!appliedAfter.includes(IDS.gone)) pass('"a" refuses to mark a row that was never evaluated');
+    else fail('"a" marked an unevaluated row applied');
+
+    // Marking applied flips the tracker row's Status cell, and only that cell.
+    const trackerAfter = readFileSync(join(ROOT, 'data/applications.md'), 'utf8');
+    const row801 = trackerAfter.split('\n').find(l => l.includes('| 801 |')) || '';
+    if (!/\| Evaluated \|/.test(row801)) pass('marking a row syncs the matching tracker row out of Evaluated');
+    else fail(`tracker row 801 still reads Evaluated: ${row801.slice(0, 120)}`);
+    if (/Fixture Corp/.test(row801) && /\[801\]/.test(row801)) {
+      pass('the tracker sync rewrites only the Status cell, leaving the rest of the row intact');
+    } else fail(`tracker sync damaged row 801: ${row801.slice(0, 120)}`);
+
+    // ── Opening things (xdg-open is stubbed onto PATH) ───────────────────────
+
+    // "see error" on the selected row opens its sidecar rather than the log.
+    rmSync(OPENED, { force: true });
+    await drive('TAB', 'TAB', 'TAB', 'RIGHT', 'ENTER');
+    if (new RegExp(`xdg-open .*batch/errors/${IDS.gone}\\.txt`).test(opened())) {
+      pass('Enter on "see error" opens that row\'s error sidecar');
+    } else fail(`"see error" opened: ${opened().trim() || '(nothing)'}`);
+
+    // "debug" opens the *input* the phase read — the fetched JD, in place.
+    mkdirSync(join(ROOT, 'batch/jds'), { recursive: true });
+    writeFileSync(join(ROOT, 'batch/jds', `${IDS.gone}.txt`), 'fixture job description\n', 'utf8');
+    rmSync(OPENED, { force: true });
+    await drive('TAB', 'TAB', 'TAB', 'RIGHT', 'RIGHT', 'ENTER');
+    if (new RegExp(`xdg-open .*batch/jds/${IDS.gone}\\.txt`).test(opened())) {
+      pass('Enter on "debug" opens the fetched JD, not its folder');
+    } else fail(`"debug" opened: ${opened().trim() || '(nothing)'}`);
+
+    // With no input on disk, debug says so — that absence is itself the diagnosis.
+    rmSync(OPENED, { force: true });
+    const noInput = await drive('TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'RIGHT', 'RIGHT', 'RIGHT', 'ENTER');
+    if (/No input on disk for this phase/.test(noInput)) {
+      pass('debug reports a missing input rather than opening nothing');
+    } else fail('debug did not report the missing phase input');
+    if (!opened().includes('xdg-open')) pass('debug opens nothing when the input never landed');
+    else fail(`debug opened something for a row with no input: ${opened().trim()}`);
+
+    // A row that finished carries a job link as its only inline stop.
+    rmSync(OPENED, { force: true });
+    await drive(...TO_DONE, 'RIGHT', 'ENTER');
+    if (/xdg-open https:\/\/example\.com\/jobs\/done/.test(opened())) {
+      pass('Enter on a finished row\'s link opens the posting');
+    } else fail(`the job link opened: ${opened().trim() || '(nothing)'}`);
+
+    // 'o' opens the output folder — the fixture has none, so it must say so.
+    const noResult = await drive(...TO_DONE, 'o');
+    if (/No result folder for this item/.test(noResult)) pass('"o" reports a missing output folder');
+    else fail('"o" did not report the missing output folder');
+
+    // ── Retry ────────────────────────────────────────────────────────────────
+
+    // Third row up from the end is the Phase 1 failure: retryable, so its stops
+    // are row → error → retry → debug.
+    rmSync(OPENED, { force: true });
+    driveRaw.extraPath = RUNNER_BIN;
+    const retried = await drive('TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'RIGHT', 'RIGHT', 'ENTER');
+    driveRaw.extraPath = null;
+    // The stubbed runner exits at once, so the last message is the completion
+    // one rather than "Retrying …" — either proves the retry ran.
+    if (new RegExp(`Retry(ing)? (of )?#${IDS.scoreFail}`).test(retried)) pass('Enter on "retry" starts a retry of that row');
+    else fail('retry did not announce itself');
+    if (new RegExp(`bash .*local-runner\\.sh --only-id ${IDS.scoreFail} --retry-failed`).test(opened())) {
+      pass('retry runs local-runner.sh with --retry-failed, not a plain re-queue');
+    } else fail(`retry invoked: ${opened().trim() || '(nothing)'}`);
+    if (/notify-send snipe/.test(opened())) pass('a finished retry fires one desktop notification');
+    else fail('the finished retry sent no notification');
+
+    // ── The queue / drain button ─────────────────────────────────────────────
+
+    // Tab twice reaches ▶; with nothing queued it must refuse rather than spawn.
+    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), '', 'utf8');
+    const emptyDrain = await drive('TAB', 'TAB', 'ENTER');
+    if (/Queue is empty/.test(emptyDrain)) pass('▶ refuses to start a run with an empty queue');
+    else fail('▶ did not refuse on an empty queue');
+    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
+
+    // ── Slash commands and the JD box ────────────────────────────────────────
+
+    // Enter walks jd → url → add → submit, so three of them submit what is typed.
+    const unknownCmd = await drive('/', 'nope', 'ENTER', 'ENTER', 'ENTER');
+    if (/Unknown command: \/nope/.test(unknownCmd)) pass('an unrecognised slash command is named back, not run');
+    else fail('an unknown slash command was not rejected by name');
+
+    const emptySubmit = await drive('/', 'ESC', 'ENTER', 'ENTER', 'ENTER');
+    if (/Paste a job description first/.test(emptySubmit)) pass('submitting an empty JD box asks for a JD');
+    else fail('an empty submit was not rejected');
+
+    const backspaced = await drive('/', 'abc', '\x7f');
+    if (/3 chars — \/ab/.test(backspaced)) pass('backspace deletes the last character of the JD box');
+    else fail('backspace did not shorten the JD box');
+
+    // Bracketed paste is handled off the raw stream so a pasted JD can never
+    // trigger key handlers — 'q' inside a paste must not quit.
+    const PASTE = t => `\x1b[200~${t}\x1b[201~`;
+    const pasted = await drive(PASTE('a quick job description'));
+    if (/23 chars — a quick job description/.test(pasted)) pass('a bracketed paste lands in the JD box verbatim');
+    else fail('bracketed paste did not reach the JD box');
+
+    const pastedUrl = await drive('/', 'ESC', 'ENTER', PASTE('  https://example.com/x  '));
+    if (/https:\/\/example\.com\/x/.test(pastedUrl)) pass('a paste into the URL field is whitespace-collapsed');
+    else fail('paste did not reach the URL field');
+
+    const pasteElsewhere = await drive('2', PASTE('some jd'));
+    if (/Switch to the Queue tab/.test(pasteElsewhere)) pass('pasting outside the Queue tab says where to paste instead');
+    else fail('a paste on another tab was silently swallowed');
+
+    // ── Activity tab ─────────────────────────────────────────────────────────
+
+    const year = await drive('2', 'y');
+    if (year.includes('1 QUEUE')) pass('"y" selects the year view without crashing');
+    else fail('"y" broke the Activity grid');
+
+    const month = await drive('2', 'm', '>', '<', ',', '.');
+    if (month.includes('1 QUEUE')) pass('‹ › step the period in the month view');
+    else fail('period stepping broke the Activity grid');
+
+    const day = await drive('2', 'd', 'TAB', 'RIGHT', 'LEFT', 'UP', 'DOWN');
+    if (day.includes('1 QUEUE')) pass('the day view\'s hourly cursor moves with the arrows');
+    else fail('the day-view cursor broke the Activity grid');
+
+    const typeToggle = await drive('2', 'j', 'k');
+    if (typeToggle.includes('1 QUEUE')) pass('"j"/"k" toggle the Activity type between scans and apps');
+    else fail('the Activity type toggle broke the grid');
+
+    const gridEsc = await drive('2', 'DOWN', 'DOWN', 'UP', 'ENTER', 'ESC');
+    if (gridEsc.includes('1 QUEUE')) pass('Esc leaves the Activity grid cursor');
+    else fail('Esc broke the Activity grid');
+
+    const legacyTabs = await drive('l', 'l', 'h');
+    if (legacyTabs.includes('1 QUEUE')) pass('"h"/"l" still cycle tabs as ←/→ aliases');
+    else fail('the h/l tab aliases stopped working');
+
+    // ── Follow-ups tab ───────────────────────────────────────────────────────
+
+    const fu = await drive('3');
+    if (/Overdue Ltd/.test(fu)) {
+      pass('the Follow-ups tab lists the overdue application from the tracker');
+
+      const nudged = await drive('3', 'DOWN', 'ENTER');
+      const log = readFileSync(join(ROOT, 'data/follow-ups.md'), 'utf8');
+      if (/Overdue Ltd/.test(nudged) && /nudged/.test(nudged)) pass('Enter on a follow-up records a nudge');
+      else fail('Enter on a follow-up did not report a nudge');
+      if (/\| 1 \| 555 \|/.test(log)) pass('a nudge appends one row to data/follow-ups.md');
+      else fail(`follow-ups.md after a nudge: ${log.slice(-120)}`);
+
+      const undone = await drive('3', 'DOWN', 'u');
+      if (/Rolled back last nudge/.test(undone)) pass('"u" peels the latest nudge back off');
+      else fail('"u" did not roll the nudge back');
+      if (!/\| 1 \| 555 \|/.test(readFileSync(join(ROOT, 'data/follow-ups.md'), 'utf8'))) {
+        pass('the rolled-back nudge is gone from data/follow-ups.md');
+      } else fail('"u" left the nudge row in follow-ups.md');
+
+      const undoneAgain = await drive('3', 'DOWN', 'u');
+      if (/No nudges recorded/.test(undoneAgain)) pass('"u" with nothing to undo says so');
+      else fail('"u" on an un-nudged entry did not report it');
+
+      rmSync(OPENED, { force: true });
+      const noRep = await drive('3', 'DOWN', 'o');
+      if (/No report found/.test(noRep)) pass('"o" reports a follow-up whose report file is missing');
+      else fail('"o" did not report the missing follow-up report');
+    } else {
+      fail('the Follow-ups tab did not list the fixture application');
+    }
+
+    const fuNav = await drive('3', 'DOWN', 'j', 'k', 'ESC', 'TAB');
+    if (fuNav.includes('1 QUEUE')) pass('j/k/Esc/Tab navigate the Follow-ups list without crashing');
+    else fail('Follow-ups navigation crashed');
+
+    // ── Paging and quitting ──────────────────────────────────────────────────
+
+    const paged = await drive('TAB', 'TAB', 'TAB', '\x1b[5~', '\x1b[6~');
+    if (paged.includes('1 QUEUE')) pass('PgUp/PgDn page the queue list');
+    else fail('PgUp/PgDn broke the queue list');
+
+    const ctrlC = await drive('\x03');
+    if (ctrlC.length > 0) pass('Ctrl-C exits without losing the frame buffer');
+    else fail('Ctrl-C lost the rendered output');
+
+    // 'q' quits cleanly — the driver only captures frames if the exit path ran.
+    const quit = await drive('q');
+    if (quit.length > 0) pass('"q" exits without losing the frame buffer');
+    else fail('"q" lost the rendered output — the quit path did not flush');
+
+    // ── --stats self-check ───────────────────────────────────────────────────
+
+    const stats = await runNodeAsync(['snipe-tui.mjs', '--stats']);
+    let parsed = null;
+    try { parsed = JSON.parse(stats.out); } catch {}
+    if (parsed && typeof parsed.queue === 'number') pass('--stats emits parseable JSON without a TTY');
+    else fail(`--stats did not emit JSON: ${stats.out.slice(0, 120)}`);
+    if (parsed && parsed.active === 0) pass('--stats reports no active run when the pid file is absent');
+    else fail(`--stats active was ${parsed?.active}, expected 0`);
+
+    // Without a TTY and without --stats it must refuse rather than render junk.
+    const noTty = await runNodeAsync(['snipe-tui.mjs']);
+    if (noTty.code === 1 && /interactive terminal/.test(noTty.err)) {
+      pass('the TUI refuses to start without a TTY and says why');
+    } else fail(`no-TTY guard did not fire (exit ${noTty.code})`);
+  } finally {
+    restore();
+    for (const f of errorFiles) rmSync(f, { force: true });
+    rmSync(join(ROOT, 'batch/evals', `${IDS.done}.json`), { force: true });
+    rmSync(join(ROOT, 'batch/jds', `${IDS.gone}.txt`), { force: true });
+    rmSync(tmp, { force: true, recursive: true });
+  }
+}

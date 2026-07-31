@@ -1,0 +1,6 @@
+{
+  "all": true,
+  "include": ["**/*.mjs"],
+  "exclude": ["test/**", "test-all.mjs", "node_modules/**", "coverage/**", "batch/bench-tools/**"],
+  "reporter": ["text-summary", "lcov"]
+}
