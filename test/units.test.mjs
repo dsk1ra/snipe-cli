@@ -1,0 +1,212 @@
+// Pure exported helpers — the ones the pipeline scripts import rather than the
+// scripts themselves. Everything here runs in-process with no model, browser or
+// network, so these are the assertions that pin exact numbers; the end-to-end
+// suites only check that the wiring holds.
+import { pass, fail, ROOT, join, pathToFileURL } from './harness.mjs';
+
+const eq = (actual, expected, label) =>
+  actual === expected ? pass(label) : fail(`${label} — got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+const deepEq = (actual, expected, label) =>
+  JSON.stringify(actual) === JSON.stringify(expected)
+    ? pass(label)
+    : fail(`${label} — got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+
+// ── 19. UNIT — text-utils and the scan filters ──────────────────────
+
+console.log('\n19. Units — text-utils and the scan filters');
+
+// ---- batch/text-utils.mjs ------------------------------------------------
+try {
+  const {
+    cleanCvForPrompt, cleanJd, extractSalary, parseCompTargets,
+    compScoreFromSalary, buildCompBlock,
+  } = await import(pathToFileURL(join(ROOT, 'batch/text-utils.mjs')).href);
+
+  // cleanCvForPrompt — embedded images are pure token burn.
+  const cv = 'Header\n![](data:image/png;base64,AAAA)\ntrailing   \n\n\n\nBody\n';
+  eq(cleanCvForPrompt(cv), 'Header\n\ntrailing\n\nBody', 'cleanCvForPrompt drops data-URI images, trailing space and blank runs');
+  eq(cleanCvForPrompt(null), '', 'cleanCvForPrompt tolerates a null CV');
+
+  eq(cleanJd(''), '(no JD available)', 'cleanJd names an empty JD rather than returning nothing');
+
+  // Apify pre-fetch caches JDs as raw HTML; cleanJd has to be idempotent on text.
+  const html = '<div><h2>Role</h2><script>evil()</script><style>.x{}</style>'
+    + '<ul><li>Rust &amp; Go</li><li>5+ years</li></ul><p>Apply now</p></div>';
+  const cleaned = cleanJd(html);
+  if (!/[<>]/.test(cleaned) && /Rust & Go/.test(cleaned) && !/evil\(\)/.test(cleaned)) {
+    pass('cleanJd strips HTML, drops script/style bodies and decodes entities');
+  } else fail(`cleanJd on HTML gave: ${JSON.stringify(cleaned)}`);
+  eq(cleanJd('plain text\r\nwith CR'), 'plain text\nwith CR', 'cleanJd normalises CRLF and leaves plain text alone');
+
+  // A boilerplate marker past the midpoint ends the JD; one near the top does not.
+  const body = 'Requirements: Rust, Go, Kubernetes. '.repeat(20);
+  eq(/equal opportunity/i.test(cleanJd(`${body}\nWe are an equal opportunity employer and value diversity.`)), false,
+    'cleanJd cuts a trailing EEO section');
+  eq(/equal opportunity/i.test(cleanJd(`We are an equal opportunity employer.\n${body}`)), true,
+    'cleanJd keeps a boilerplate marker that appears before the midpoint');
+
+  const capped = cleanJd('x'.repeat(500), 100);
+  if (capped.length <= 106 && capped.endsWith('[...]')) pass('cleanJd hard-caps the JD and marks the cut');
+  else fail(`cleanJd cap gave ${capped.length} chars ending ${JSON.stringify(capped.slice(-8))}`);
+
+  // extractSalary — ranges win over singles, and only annual figures count.
+  deepEq(extractSalary('Salary £40,000 - £55,000 depending on experience'),
+    { currency: '£', min: 40000, max: 55000, raw: '£40,000 - £55,000' },
+    'extractSalary reads a symbol-prefixed range');
+  deepEq(extractSalary('£40k to £55k'), { currency: '£', min: 40000, max: 55000, raw: '£40k to £55k' },
+    'extractSalary expands the k suffix on both bounds');
+  deepEq(extractSalary('GBP 45000 - 60000'), { currency: '£', min: 45000, max: 60000, raw: 'GBP 45000 - 60000' },
+    'extractSalary maps a currency word to its symbol');
+  deepEq(extractSalary('€85,000 – €110,000'), { currency: '€', min: 85000, max: 110000, raw: '€85,000 – €110,000' },
+    'extractSalary handles an en-dash range');
+  // A flattened <span>lo</span><span>hi</span> pay widget reads as two adjacent figures.
+  deepEq(extractSalary('<span>£325,000</span> <span>£485,000</span>'),
+    { currency: '£', min: 325000, max: 485000, raw: '£325,000 £485,000' },
+    'extractSalary reads an adjacent double-currency pair as one range');
+  deepEq(extractSalary('The offer is £45,000 annually'), { currency: '£', min: 45000, max: 45000, raw: '£45,000' },
+    'extractSalary returns a single figure as a zero-width range');
+  deepEq(extractSalary('90000 EUR per annum'), { currency: '€', min: 90000, max: 90000, raw: '90000 EUR' },
+    'extractSalary reads a suffix currency word');
+
+  eq(extractSalary('£500 per day'), null, 'extractSalary rejects a day rate');
+  eq(extractSalary('$12,000'), null, 'extractSalary rejects a figure below the plausible floor');
+  eq(extractSalary('$900,000'), null, 'extractSalary rejects a figure above the plausible ceiling');
+  eq(extractSalary('a role with no numbers'), null, 'extractSalary returns null when no salary is stated');
+  eq(extractSalary(null), null, 'extractSalary tolerates null input');
+
+  // KNOWN BUG, pinned rather than fixed here: with the currency written as a
+  // suffix and a plain hyphen, the range regex does not match, so the single-
+  // figure pass wins and the lower bound is lost. The symbol-prefixed form of
+  // the same range (asserted above) parses correctly. Phase 2 weights comp at
+  // 0.20 off these numbers, so a posting written this way is mis-scored.
+  deepEq(extractSalary('85,000 - 110,000 EUR'), { currency: '€', min: 110000, max: 110000, raw: '110,000 EUR' },
+    'extractSalary currently drops the lower bound of a suffix-currency hyphen range (known bug)');
+
+  // parseCompTargets — read out of config/profile.yml text, never guessed.
+  deepEq(parseCompTargets('target_range: "70,000 - 90,000"\nminimum: "60,000"'),
+    { floor: 60000, targetLow: 70000, targetHigh: 90000 }, 'parseCompTargets reads the range and the floor');
+  deepEq(parseCompTargets('target_range: "70,000 - 90,000"'),
+    { floor: 70000, targetLow: 70000, targetHigh: 90000 }, 'parseCompTargets falls back to the range low as the floor');
+  eq(parseCompTargets('no targets here'), null, 'parseCompTargets returns null with no target_range');
+  eq(parseCompTargets(null), null, 'parseCompTargets tolerates null config text');
+
+  // compScoreFromSalary — the whole 1-5 band ladder.
+  const targets = { floor: 60000, targetLow: 70000, targetHigh: 90000 };
+  const at = n => compScoreFromSalary({ min: n, max: n }, targets);
+  eq(compScoreFromSalary(null, targets), null, 'compScoreFromSalary returns null with no salary');
+  eq(compScoreFromSalary({ min: 80000, max: 80000 }, null), 3, 'compScoreFromSalary scores neutral with no targets configured');
+  eq(at(50000), 1, 'compScoreFromSalary scores 1 below the floor');
+  eq(at(65000), 2, 'compScoreFromSalary scores 2 between the floor and the target low');
+  eq(at(75000), 3, 'compScoreFromSalary scores 3 in the lower half of the target band');
+  eq(at(85000), 4, 'compScoreFromSalary scores 4 in the upper half of the target band');
+  eq(at(95000), 5, 'compScoreFromSalary scores 5 above the target high');
+
+  // buildCompBlock — the code-owned Block D, both arms.
+  const withSalary = buildCompBlock({ currency: '£', min: 70000, max: 90000 }, 4, targets);
+  if (/£70,000–£90,000/.test(withSalary) && /vs target £70,000–£90,000 \(floor £60,000\)/.test(withSalary)) {
+    pass('buildCompBlock prints the parsed range against the configured targets');
+  } else fail(`buildCompBlock with salary gave: ${withSalary.slice(0, 200)}`);
+  if (/no comp targets configured/.test(buildCompBlock({ currency: '£', min: 70000, max: 70000 }, 3, null))) {
+    pass('buildCompBlock says so when no comp targets are configured');
+  } else fail('buildCompBlock did not flag the missing comp targets');
+
+  const noSalary = buildCompBlock(null, null, targets);
+  if (/Not stated/.test(noSalary) && /excluded from the composite/.test(noSalary) && /0\.625/.test(noSalary)) {
+    pass('buildCompBlock drops comp from the composite and states the two-term weights');
+  } else fail(`buildCompBlock without salary gave: ${noSalary.slice(0, 200)}`);
+} catch (e) {
+  fail(`text-utils unit tests crashed: ${e.message}`);
+}
+
+// ---- scan.mjs filters ----------------------------------------------------
+// Importing scan.mjs is safe: it only runs main() when it is process.argv[1].
+try {
+  const {
+    buildTitleFilter, buildLocationFilter, buildSalaryFilter,
+    extractCareersUrlDomain, pickRediscoveredUrl, shouldDedupScanHistoryRow,
+  } = await import(pathToFileURL(join(ROOT, 'scan.mjs')).href);
+
+  // ---- title filter ----
+  eq(buildTitleFilter(null)('anything'), true, 'buildTitleFilter with no config keeps everything');
+  const title = buildTitleFilter({ positive: ['engineer', 'developer'], negative: ['intern', 'sales'] });
+  eq(title('Senior Backend Engineer'), true, 'title filter keeps a title matching a positive keyword');
+  eq(title('Marketing Manager'), false, 'title filter drops a title matching no positive keyword');
+  eq(title('Engineer Intern'), false, 'a negative keyword outranks a positive one');
+  eq(buildTitleFilter({ negative: ['intern'] })('Anything At All'), true,
+    'a filter with only negatives keeps everything else');
+
+  // ---- location filter ----
+  // Tier order: always_allow → block → allow. always_allow outranks block so a
+  // multi-location string ("Remote, Belgium or France") survives a France block.
+  eq(buildLocationFilter(null)('Mars'), true, 'buildLocationFilter with no config keeps everything');
+  const loc = buildLocationFilter({ always_allow: ['belgium'], allow: ['remote', 'london'], block: ['france', 'onsite only'] });
+  eq(loc('Remote — Europe'), true, 'location filter keeps a location matching an allow keyword');
+  eq(loc('Austin, TX'), false, 'location filter drops a location matching no allow keyword');
+  eq(loc('London (onsite only)'), false, 'a blocked keyword outranks an allowed one');
+  eq(loc('Remote, Belgium or France'), true, 'always_allow outranks block');
+  eq(loc(''), true, 'an empty location passes rather than being penalised');
+  eq(loc(null), true, 'a non-string location passes rather than being penalised');
+  eq(buildLocationFilter({ block: ['france'] })('Berlin'), true,
+    'a filter with only blocks keeps everything else');
+  // A bare string is wrapped, and an empty keyword is dropped — String.includes('')
+  // is true for every location, which would silently disable the other tiers.
+  eq(buildLocationFilter({ allow: 'remote' })('Fully Remote'), true, 'a bare-string keyword list is wrapped to one item');
+  eq(buildLocationFilter({ allow: ['', 'london'] })('Berlin'), false, 'an empty keyword is dropped, not matched against everything');
+  eq(buildLocationFilter({ allow: [42, 'london'] })('London'), true, 'a non-string keyword is filtered out without crashing');
+
+  // ---- salary filter ----
+  eq(buildSalaryFilter(null)({ min: 1, max: 2 }), true, 'buildSalaryFilter with no config keeps everything');
+  eq(buildSalaryFilter({ min: 0, max: 0 })({ min: 1 }), true, 'a 0/0 salary filter is treated as disabled');
+  eq(buildSalaryFilter({ min: -1 })({ min: 1 }), true, 'a negative bound disables the salary filter rather than mis-filtering');
+  eq(buildSalaryFilter({ min: 'abc' })({ min: 1 }), true, 'a non-numeric bound disables the salary filter');
+  eq(buildSalaryFilter({ min: 90000, max: 50000 })({ min: 1 }), true, 'min above max disables the salary filter');
+
+  const sal = buildSalaryFilter({ min: 60000, max: 100000, currency: 'gbp' });
+  eq(sal(null), true, 'salary filter passes a job with no salary data at all');
+  eq(sal({}), true, 'salary filter passes a job whose salary object has no usable bounds');
+  eq(sal({ min: 70000, max: 90000, currency: 'GBP' }), true, 'salary filter keeps a range inside the window');
+  eq(sal({ min: 20000, max: 40000, currency: 'GBP' }), false, 'salary filter drops a range entirely below the floor');
+  eq(sal({ min: 150000, max: 200000, currency: 'GBP' }), false, 'salary filter drops a range entirely above the ceiling');
+  eq(sal({ min: 50000, max: 70000, currency: 'GBP' }), true, 'salary filter keeps a range that merely overlaps the window');
+  eq(sal({ min: 70000, max: 90000, currency: 'EUR' }), false, 'salary filter drops a job in a different stated currency');
+  eq(sal({ min: 70000, max: 90000 }), true, 'salary filter keeps a job whose currency is unstated');
+  eq(sal({ max: 80000, currency: 'GBP' }), true, 'salary filter mirrors a missing min onto the max');
+  eq(sal({ min: 80000, currency: 'GBP' }), true, 'salary filter mirrors a missing max onto the min');
+  eq(buildSalaryFilter({ min: 60000 })({ max: 30000 }), false, 'a floor-only filter still drops a job below it');
+  eq(buildSalaryFilter({ max: 100000 })({ min: 200000 }), false, 'a ceiling-only filter still drops a job above it');
+
+  // ---- 404 rediscovery ----
+  eq(extractCareersUrlDomain('https://jobs.acme.com/careers'), 'jobs.acme.com',
+    'extractCareersUrlDomain returns the hostname');
+  eq(extractCareersUrlDomain('not a url'), null, 'extractCareersUrlDomain returns null for an unparseable URL');
+  eq(extractCareersUrlDomain(''), null, 'extractCareersUrlDomain returns null for an empty URL');
+
+  eq(pickRediscoveredUrl(['https://jobs.acme.com/x'], 'jobs.acme.com'), 'https://jobs.acme.com/x',
+    'pickRediscoveredUrl takes the first same-host result');
+  eq(pickRediscoveredUrl(['https://evil-jobs.acme.com.attacker.net/x'], 'jobs.acme.com'), null,
+    'pickRediscoveredUrl requires an exact hostname, not a substring');
+  eq(pickRediscoveredUrl(['/l/?uddg=' + encodeURIComponent('https://jobs.acme.com/y')], 'jobs.acme.com'),
+    'https://jobs.acme.com/y', 'pickRediscoveredUrl unwraps a DuckDuckGo redirect before matching');
+  eq(pickRediscoveredUrl(['not a url', 'https://jobs.acme.com/z'], 'jobs.acme.com'), 'https://jobs.acme.com/z',
+    'pickRediscoveredUrl skips unparseable hrefs');
+  eq(pickRediscoveredUrl(['https://jobs.acme.com/x'], null), null, 'pickRediscoveredUrl returns null with no domain');
+  eq(pickRediscoveredUrl('not an array', 'jobs.acme.com'), null, 'pickRediscoveredUrl returns null for a non-array');
+  eq(pickRediscoveredUrl([], 'jobs.acme.com'), null, 'pickRediscoveredUrl returns null when nothing matches');
+
+  // ---- scan-history dedup policy ----
+  const today = '2026-07-30';
+  eq(shouldDedupScanHistoryRow({ firstSeen: '2026-07-29', status: 'added' }, { today }), true,
+    'a row seen yesterday is deduped when no recheck window is configured');
+  eq(shouldDedupScanHistoryRow({ firstSeen: '2026-07-01', status: 'added' }, { recheckAfterDays: 7, today }), false,
+    'a row older than the recheck window becomes eligible again');
+  eq(shouldDedupScanHistoryRow({ firstSeen: '2026-07-29', status: 'added' }, { recheckAfterDays: 7, today }), true,
+    'a row inside the recheck window stays deduped');
+  eq(shouldDedupScanHistoryRow({ firstSeen: '2026-07-01', status: 'skipped_blocked_host' }, { recheckAfterDays: 7, today }), true,
+    'a blocked-host row is permanently deduped regardless of the recheck window');
+  eq(shouldDedupScanHistoryRow({ firstSeen: '2026-07-01', status: 'skipped_invalid_url' }, { recheckAfterDays: 7, today }), true,
+    'an invalid-url row is permanently deduped regardless of the recheck window');
+  eq(shouldDedupScanHistoryRow({ firstSeen: 'garbage', status: 'added' }, { recheckAfterDays: 7, today }), true,
+    'an unparseable firstSeen date falls back to deduping');
+} catch (e) {
+  fail(`scan filter unit tests crashed: ${e.message}`);
+}

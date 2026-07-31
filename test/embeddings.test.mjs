@@ -68,3 +68,88 @@ else fail(`modelFingerprint() collapsed both bases to "${fpA}"`);
 const offline = await modelFingerprint({ model: 'snipe-embed', ollamaUrl: 'http://127.0.0.1:1' });
 if (offline === 'snipe-embed') pass('modelFingerprint() falls back to the tag when Ollama is unreachable');
 else fail(`modelFingerprint() offline fallback → "${offline}", expected "snipe-embed"`);
+
+// ── JD index and past-offer retrieval ───────────────────────────────
+//
+// loadJdIndex/similarPastOffers are the calibration RAG: they embed every
+// cached JD once, then join the nearest past offers to their eval payloads,
+// the labels file and the tracker's real-world outcome. All three joins are
+// silent on a miss, so only a fixture with known ids proves they happen.
+// Driven against the fake embedder — no model, and the real index is restored.
+{
+  const { startFakeOllama } = await import('./fake-ollama.mjs');
+  const { loadJdIndex, similarPastOffers, loadOutcomes } = await import(
+    pathToFileURL(join(ROOT, 'batch/embeddings.mjs')).href
+  );
+  const { preserve, writeFileSync, mkdirSync, rmSync } = await import('./harness.mjs');
+
+  const IDS = ['998001', '998002'];
+  const restore = preserve(['batch/jd-index.json']);
+  const planted = [];
+  const plant = (rel, body) => {
+    const p = join(ROOT, rel);
+    mkdirSync(join(ROOT, rel.slice(0, rel.lastIndexOf('/'))), { recursive: true });
+    writeFileSync(p, body, 'utf8');
+    planted.push(p);
+  };
+  const server = await startFakeOllama();
+
+  try {
+    plant(`batch/jds/${IDS[0]}.txt`, 'Senior Rust engineer building distributed payment infrastructure. '.repeat(20));
+    plant(`batch/jds/${IDS[1]}.txt`, 'Frontend React designer working on marketing landing pages. '.repeat(20));
+    plant(`batch/evals/${IDS[0]}.json`, JSON.stringify({
+      status: 'evaled', id: IDS[0], company: 'Past Corp', role: 'Rust Engineer',
+      score: 4.4, final_decision: 'Apply', report_num: 991,
+    }));
+    // No eval payload for IDS[1] — an indexed JD with nothing to learn from must
+    // be skipped rather than returned with an undefined score.
+    plant('batch/labels.tsv', `${IDS[0]}\t4.5\n`);
+
+    const opts = { model: 'snipe-embed', ollamaUrl: server.url };
+    const entries = await loadJdIndex(opts);
+    const ids = new Set(entries.map(e => e.id));
+    if (IDS.every(id => ids.has(id))) pass('loadJdIndex embeds every cached JD it has not seen before');
+    else fail(`loadJdIndex indexed ${entries.length} JDs but missed the fixtures`);
+
+    // Second call must hit the on-disk index rather than re-embedding.
+    const before = server.calls.filter(c => c.path === '/api/embed').length;
+    await loadJdIndex(opts);
+    if (server.calls.filter(c => c.path === '/api/embed').length === before) {
+      pass('loadJdIndex is incremental — a second call embeds nothing');
+    } else fail('loadJdIndex re-embedded JDs that were already in the index');
+
+    const near = await similarPastOffers('Rust distributed payments platform', IDS[1], 3, opts);
+    if (near.some(o => o.id === IDS[0])) pass('similarPastOffers returns a past offer with its eval score');
+    else fail(`similarPastOffers returned ${JSON.stringify(near.map(o => o.id))}`);
+    if (!near.some(o => o.id === IDS[1])) pass('similarPastOffers excludes the offer being scored');
+    else fail('similarPastOffers returned the offer it was asked to exclude');
+
+    const hit = near.find(o => o.id === IDS[0]);
+    if (hit && hit.score === 4.4 && hit.company === 'Past Corp' && hit.decision === 'Apply') {
+      pass('similarPastOffers joins the eval payload onto each hit');
+    } else fail(`the joined eval payload was ${JSON.stringify(hit)}`);
+    if (hit && hit.user_label === 4.5) pass('similarPastOffers joins the user label from labels.tsv');
+    else fail(`user_label was ${JSON.stringify(hit?.user_label)}, expected 4.5`);
+
+    // Outcomes are joined live from the tracker at query time, never baked into
+    // the index — a status change has to show up without a rebuild.
+    const trackerFixture = join(ROOT, 'batch/.outcomes-fixture.md');
+    plant('batch/.outcomes-fixture.md', [
+      '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
+      '| 991 | 2026-07-01 | Past Corp | Rust Engineer | 4.4/5 | Interview | Y | [991](x) | — |',
+      '| 992 | 2026-07-01 | Other | Role | 3.0/5 | Evaluated | N | [992](x) | — |',
+    ].join('\n'));
+    const outcomes = loadOutcomes(trackerFixture);
+    if (outcomes.get(991) === 'reached interview') pass('loadOutcomes maps a tracker status to its outcome phrase');
+    else fail(`loadOutcomes gave ${JSON.stringify(outcomes.get(991))} for an Interview row`);
+    if (!outcomes.has(992)) pass('loadOutcomes treats "Evaluated" as no outcome yet');
+    else fail('loadOutcomes invented an outcome for an un-actioned row');
+    if (loadOutcomes(join(ROOT, 'batch/.does-not-exist.md')).size === 0) {
+      pass('loadOutcomes returns an empty map when the tracker is absent');
+    } else fail('loadOutcomes did not tolerate a missing tracker');
+  } finally {
+    await server.close();
+    for (const p of planted) rmSync(p, { force: true });
+    restore();
+  }
+}

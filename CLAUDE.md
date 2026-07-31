@@ -192,14 +192,56 @@ dedup: `tracker/dedup-tracker.mjs`
 
 ## Tests
 
-`node test-all.mjs` — 281 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 795 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
 
 `npm run typecheck` — `tsc --noEmit` over the JSDoc types, also green, also in CI.
+`npm run coverage` — the same suite under c8 (~89% lines, ~75% branches); CI uploads
+`coverage/lcov.info` to Codecov. `all: true` in `.c8rc.json` counts never-loaded
+files, so the number stays honest rather than flattered by exclusions.
 `checkJs` is off in `tsconfig.json`: a file opts in by starting with `// @ts-check`
 (24 do today), so adding a new one is a per-file decision rather than a repo-wide
 gate. `providers/_types.js` is the shared type catalog.
+
+### Testing things that need a model, a TTY, or the network
+
+Three seams carry most of the suite, and reaching for the right one is usually
+the whole problem:
+
+- **`test/fake-ollama.mjs`** — an HTTP stand-in for Ollama. `/api/chat` and
+  `/api/generate` read the JSON Schema the caller passes as `format` and
+  synthesise a conforming answer, so it needs no per-stage knowledge and does not
+  drift when a schema changes; `onChat` overrides it wholesale (the classic
+  evaluator wants `<REPORT>`/`<SUMMARY>` prose, not JSON). Every phase script
+  takes `--ollama-url`, so pointing it at the fake runs the real code end to end.
+  Spawn the script — c8 works through `NODE_V8_COVERAGE`, so a subprocess counts.
+  Use `runNodeAsync` from the harness, never `run()`: `execSync` blocks the event
+  loop and the fake server never answers.
+- **`test/tui-driver.mjs`** — fakes both TTYs, feeds key bytes, and captures the
+  frames. It sets `FORCE_COLOR` because chalk's level is decided off a pipe as 0,
+  which would erase the `inverse` that marks the focused row.
+- **`SNIPE_PORTALS` + a temp cwd** — `scan.mjs` resolves its portal list from that
+  env var and writes `data/` relative to the cwd, so a scan can run fully
+  sandboxed. A `local-parser` portal makes it offline and deterministic.
+- **`SNIPE_TRACKER`** — `tracker/paths.mjs` reads it before either default
+  layout, so every tracker script can be pointed at a fixture `applications.md`
+  in a temp dir instead of the real one.
+- **An injected `ctx`** — providers never call `fetch` themselves; they take
+  `{ fetchJson, fetchText }`. A stub returning canned payloads reaches every
+  parse and normalisation path with no server at all (`test/providers-http.mjs`).
+  Only `euremotejobs` and `apify` bypass it, and both are driven by swapping
+  `globalThis.fetch` and restoring it in a `finally`.
+
+Tests that write into the working tree (state files, embedding indexes, the
+tracker) snapshot what they touch with `preserve()` and restore in a `finally`;
+`ensureUserLayer()` stands up a minimal `cv.md` / `config/profile.*` when the
+gitignored real ones are absent, and removes only what it created.
+
+Anything the TUI shells out to (`xdg-open`, `notify-send`, and the runner's
+`bash` for retry) is stubbed onto `PATH` for the driven process — otherwise a
+test run throws the developer's editor at them and a "retry" assertion starts a
+real three-phase pipeline run.
 
 ## Conventions
 

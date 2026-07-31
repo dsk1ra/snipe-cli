@@ -5,10 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# A new push supersedes the run it interrupted — nothing here needs the old one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     env:
+      # Skips playwright's postinstall, which would pull all three browsers.
+      # Chromium is installed on its own below — it is the only one used.
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
@@ -17,5 +24,19 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Without a browser the PDF render checks degrade to warnings, and
+      # warnings do not fail the suite — CI would report green on an untested
+      # Phase 3. The install CLI ignores the skip env var above.
+      - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
-      - run: node test-all.mjs
+      - run: npm run coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/lcov.info
+          # A silent upload failure is worse than a rare Codecov outage: the
+          # badge read "unknown" for the life of this branch while every run
+          # was green.
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
