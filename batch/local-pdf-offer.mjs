@@ -25,7 +25,12 @@ const PROJECT    = resolve(__dirname, '..');
 // Prefer a gitignored personal override (real metrics) if present; else the shipped generic prompt
 const PROMPT_LOCAL = resolve(__dirname, 'local-tailor-prompt.local.md');
 const PROMPT_TPL = existsSync(PROMPT_LOCAL) ? PROMPT_LOCAL : resolve(__dirname, 'local-tailor-prompt.md');
-const TRACKER_DIR= resolve(__dirname, 'tracker-additions');
+// SNIPE_ADDITIONS mirrors merge-tracker's override: the tests point it at a temp
+// dir so a killed run cannot leave a fixture TSV that the next real run merges
+// into the user's tracker.
+const TRACKER_DIR= process.env.SNIPE_ADDITIONS
+  ? resolve(process.env.SNIPE_ADDITIONS)
+  : resolve(__dirname, 'tracker-additions');
 const REPORTS_DIR= resolve(PROJECT, 'reports');
 const APPS_FILE  = resolve(PROJECT, 'data/applications.md');
 

@@ -33,7 +33,13 @@ import { render, Box, Text, measureElement } from 'ink';
 const h = React.createElement;
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BATCH = path.join(ROOT, 'batch');
+// Where the *data* lives. Defaults to the repo, but SNIPE_HOME moves every file
+// this TUI reads or writes — state, queue, tracker, reports, output — somewhere
+// else. The test suite points it at a temp dir so a driven run cannot touch the
+// developer's real queue even if it is killed mid-test. Scripts the TUI shells
+// out to stay on ROOT: they are code, not data.
+const HOME = process.env.SNIPE_HOME ? path.resolve(process.env.SNIPE_HOME) : ROOT;
+const BATCH = path.join(HOME, 'batch');
 const QUEUE_FILE = path.join(BATCH, 'snipe-queue.txt');
 const STATE_FILE = path.join(BATCH, 'local-state.tsv');
 const LOCK_FILE = path.join(BATCH, 'local-runner.pid');
@@ -41,8 +47,8 @@ const SCORES_DIR = path.join(BATCH, 'scores');
 const EVALS_DIR = path.join(BATCH, 'evals');
 const LOGS_DIR = path.join(BATCH, 'logs');
 const ERRORS_DIR = path.join(BATCH, 'errors');
-const RUNNER = path.join(BATCH, 'local-runner.sh');
-const OUTPUT_DIR = path.join(ROOT, 'output');
+const RUNNER = path.join(ROOT, 'batch', 'local-runner.sh');
+const OUTPUT_DIR = path.join(HOME, 'output');
 const SNIPE = path.join(ROOT, 'snipe');
 
 // ── disk readers ─────────────────────────────────────────────────────────────
@@ -167,8 +173,8 @@ function labelFor(id) {
 
 const APPLIED_FILE = path.join(BATCH, 'applied.tsv');
 const SKIPPED_FILE = path.join(BATCH, 'skipped.tsv'); // reviewed, decided not to apply
-const TRACKER_FILE = path.join(ROOT, 'data', 'applications.md');
-const FOLLOWUPS_FILE = path.join(ROOT, 'data', 'follow-ups.md');
+const TRACKER_FILE = process.env.SNIPE_TRACKER || path.join(HOME, 'data', 'applications.md');
+const FOLLOWUPS_FILE = path.join(HOME, 'data', 'follow-ups.md');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -438,9 +444,9 @@ function debugCandidates(id, info) {
   const rnum = info.rnum && info.rnum !== '-' ? info.rnum : null;
   if (info.failPhase === 'p3') {
     let report = null;
-    try { report = fs.readdirSync(path.join(ROOT, 'reports')).find(f => f.startsWith(`${rnum}-`)); } catch {}
+    try { report = fs.readdirSync(path.join(HOME, 'reports')).find(f => f.startsWith(`${rnum}-`)); } catch {}
     return [
-      ...(report ? [path.join(ROOT, 'reports', report)] : []),
+      ...(report ? [path.join(HOME, 'reports', report)] : []),
       ...(rnum ? [path.join(LOGS_DIR, `pdf-${rnum}-${id}.log`)] : []),
     ];
   }
@@ -498,7 +504,7 @@ function openError() {
   const info = itemInfo(id);
   if (info.kind !== 'failed') { setMsg('No error — this item did not fail', true); return; }
   spawn('xdg-open', [info.errorFile], { detached: true, stdio: 'ignore' }).unref();
-  setMsg(`Opened ${path.relative(ROOT, info.errorFile)}`);
+  setMsg(`Opened ${path.relative(HOME, info.errorFile)}`);
 }
 
 // Opens the input file itself, not its folder: batch/jds/ holds every JD the
@@ -512,7 +518,7 @@ function openDebug() {
   const file = debugCandidates(id, info).find(nonEmpty);
   if (!file) { setMsg('No input on disk for this phase — retry refetches it', true); return; }
   spawn('xdg-open', [file], { detached: true, stdio: 'ignore' }).unref();
-  setMsg(`Opened ${path.relative(ROOT, file)} — edit, then retry`);
+  setMsg(`Opened ${path.relative(HOME, file)} — edit, then retry`);
 }
 
 // ── /scan command ────────────────────────────────────────────────────────────
@@ -541,7 +547,7 @@ function runScan(bump) {
     S.scanActive = false;
     if (code !== 0) { setMsg(`Scan exited with code ${code} — see batch/logs/snipe-tui-scan.log`, true); bump(); return; }
     const before = maxBatchId();
-    execFile('node', [path.join(BATCH, 'import-pipeline.mjs')], ierr => {
+    execFile('node', [path.join(ROOT, 'batch', 'import-pipeline.mjs')], ierr => {
       if (ierr) { setMsg('Scan done but import failed — see batch/logs/snipe-tui-scan.log', true); bump(); return; }
       const ids = [];
       for (let id = before + 1; id <= maxBatchId(); id++) ids.push(String(id));
@@ -727,9 +733,9 @@ function openFuReport() {
   const e = S.followups?.entries?.[S.fuIdx];
   if (!e) return;
   let f = null;
-  try { f = fs.readdirSync(path.join(ROOT, 'reports')).find(x => x.startsWith(`${String(e.num).padStart(3, '0')}-`)); } catch {}
+  try { f = fs.readdirSync(path.join(HOME, 'reports')).find(x => x.startsWith(`${String(e.num).padStart(3, '0')}-`)); } catch {}
   if (f) {
-    spawn('xdg-open', [path.join(ROOT, 'reports', f)], { detached: true, stdio: 'ignore' }).unref();
+    spawn('xdg-open', [path.join(HOME, 'reports', f)], { detached: true, stdio: 'ignore' }).unref();
     setMsg(`Opened ${f}`);
   } else setMsg('No report found for this application', true);
 }
@@ -1529,7 +1535,7 @@ if (process.argv.includes('--retry-plan')) {
     // membership are the logic worth pinning.
     // candidates, not the resolved pick: the ordering is the logic worth pinning,
     // and which one wins depends on what happens to be on disk.
-    debug: debugCandidates(id, info).map(f => path.relative(ROOT, f)),
+    debug: debugCandidates(id, info).map(f => path.relative(HOME, f)),
   } : { phase: null }));
   process.exit(0);
 }
