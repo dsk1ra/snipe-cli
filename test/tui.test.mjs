@@ -7,24 +7,18 @@
 // real logic behind them. State files are swapped out and restored so the
 // developer's own queue is never touched.
 import {
-  pass, fail, warn, ROOT, join, runNodeAsync, preserve,
+  pass, fail, join, runNodeAsync,
   existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, tmpdir,
 } from './harness.mjs';
 
 console.log('\n16. TUI rendering and row actions');
 
-const STATE_FILES = [
-  'batch/local-state.tsv', 'batch/snipe-queue.txt',
-  'batch/applied.tsv', 'batch/skipped.tsv',
-  // The job link on a row comes from batch-input.tsv, not the state row — a row
-  // whose id is absent from it renders with no link at all.
-  'batch/batch-input.tsv',
-  // Marking a row applied/skipped syncs the row's status into the tracker, and
-  // the Follow-ups tab is computed from it. Both are replaced by a two-row
-  // fixture so those paths are deterministic, and both are restored in the
-  // finally — they are user-layer files, so nothing here may outlive the test.
-  'data/applications.md', 'data/follow-ups.md',
-];
+// Every file the TUI reads or writes — state, queue, applied/skipped marks,
+// batch-input, the tracker, the follow-ups log — is resolved from SNIPE_HOME, so
+// the whole fixture lives in a temp dir. Nothing here can reach the developer's
+// real queue or tracker, including when the run is killed before its cleanup.
+const tmp = mkdtempSync(join(tmpdir(), 'snipe-tui-'));
+const HOME = join(tmp, 'home');
 
 // Ids high enough that the fixture's own errors/ and scores/ sidecars cannot
 // collide with a real offer's.
@@ -61,7 +55,6 @@ function visible(frames) {
   return full.length ? full[full.length - 1] : frames.map(clean).join('');
 }
 
-const tmp = mkdtempSync(join(tmpdir(), 'snipe-tui-'));
 let frameNo = 0;
 
 // The TUI's "open" actions shell out to xdg-open, and a finished drain fires
@@ -87,13 +80,21 @@ stub(RUNNER_BIN, 'bash');
 
 const opened = () => (existsSync(OPENED) ? readFileSync(OPENED, 'utf8') : '');
 
+// SNIPE_HOME moves the TUI's own data root; SNIPE_TRACKER is what the tracker
+// scripts it shells out to (followup-cadence) read, and has to agree with it.
+const ENV = {
+  ...process.env,
+  SNIPE_HOME: HOME,
+  SNIPE_TRACKER: join(HOME, 'data/applications.md'),
+};
+
 /** Drive the TUI with a key sequence and return its raw frames. */
 async function driveRaw(...keys) {
   const out = join(tmp, `frames-${frameNo++}.json`);
   const path = [...(driveRaw.extraPath ? [driveRaw.extraPath] : []), BIN, process.env.PATH].join(':');
   const res = await runNodeAsync(['test/tui-driver.mjs', out, ...keys], {
     timeout: 60_000,
-    env: { ...process.env, TUI_COLS: '160', TUI_ROWS: '40', PATH: path, SNIPE_TEST_OPENED: OPENED },
+    env: { ...ENV, TUI_COLS: '160', TUI_ROWS: '40', PATH: path, SNIPE_TEST_OPENED: OPENED },
   });
   if (!existsSync(out)) {
     fail(`TUI driver produced no frames (exit ${res.code}): ${res.err.slice(0, 200)}`);
@@ -108,34 +109,28 @@ async function drive(...keys) {
   return visible(await driveRaw(...keys));
 }
 
-// A live run owns these files; rewriting them under it would corrupt real state.
-if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
-  warn('TUI tests skipped — a pipeline run is active and owns batch/local-state.tsv');
-} else {
-  const restore = preserve(STATE_FILES);
-  const errorFiles = Object.values(IDS).map(id => join(ROOT, 'batch/errors', `${id}.txt`));
+{
+  const errorFiles = Object.values(IDS).map(id => join(HOME, 'batch/errors', `${id}.txt`));
   try {
-    mkdirSync(join(ROOT, 'batch'), { recursive: true });
-    writeFileSync(join(ROOT, 'batch/local-state.tsv'),
+    mkdirSync(join(HOME, 'batch'), { recursive: true });
+    writeFileSync(join(HOME, 'batch/local-state.tsv'),
       [HEADER, ...ROWS.map(r => r.join('\t'))].join('\n') + '\n', 'utf8');
     // The list is `recentIds()`: queued ids plus anything with a JD or eval
     // touched in the last 24h. Queueing the fixture ids is what puts them on
     // screen without planting files in batch/jds/.
-    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
-    rmSync(join(ROOT, 'batch/applied.tsv'), { force: true });
-    rmSync(join(ROOT, 'batch/skipped.tsv'), { force: true });
+    writeFileSync(join(HOME, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
+    rmSync(join(HOME, 'batch/applied.tsv'), { force: true });
+    rmSync(join(HOME, 'batch/skipped.tsv'), { force: true });
 
-    // Appended, not replaced: the real file is the pipeline's input list, and
-    // the fixture only needs its own ids to resolve to a link.
-    const inputFile = join(ROOT, 'batch/batch-input.tsv');
-    const inputHead = existsSync(inputFile) ? readFileSync(inputFile, 'utf8').trimEnd() : 'id\turl';
-    writeFileSync(inputFile,
-      [inputHead, ...ROWS.map(r => `${r[0]}\t${r[1]}`)].join('\n') + '\n', 'utf8');
+    // The job link on a row comes from batch-input.tsv, not the state row — a
+    // row whose id is absent from it renders with no link at all.
+    writeFileSync(join(HOME, 'batch/batch-input.tsv'),
+      ['id\turl', ...ROWS.map(r => `${r[0]}\t${r[1]}`)].join('\n') + '\n', 'utf8');
 
     // Company, role and score come from the eval payload, not the state row —
     // without one a finished offer renders as a bare "#<id>".
-    mkdirSync(join(ROOT, 'batch/evals'), { recursive: true });
-    writeFileSync(join(ROOT, 'batch/evals', `${IDS.done}.json`), JSON.stringify({
+    mkdirSync(join(HOME, 'batch/evals'), { recursive: true });
+    writeFileSync(join(HOME, 'batch/evals', `${IDS.done}.json`), JSON.stringify({
       status: 'evaled', id: IDS.done, company: 'Fixture Corp', role: 'Backend Engineer',
       score: 4.2, report_num: '801',
     }), 'utf8');
@@ -143,11 +138,11 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     // A two-row tracker: #801 is the row toggleMark's syncTracker rewrites (it
     // has to read "Evaluated" for the flip to be allowed), #555 is an Applied
     // row old enough to be overdue, which is what puts an entry on the
-    // Follow-ups tab. Both files are restored in the finally.
+    // Follow-ups tab.
     const dayKey = d => d.toISOString().slice(0, 10);
     const daysAgo = n => dayKey(new Date(Date.now() - n * 86_400_000));
-    mkdirSync(join(ROOT, 'data'), { recursive: true });
-    writeFileSync(join(ROOT, 'data/applications.md'), [
+    mkdirSync(join(HOME, 'data'), { recursive: true });
+    writeFileSync(join(HOME, 'data/applications.md'), [
       '# Applications Tracker',
       '',
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
@@ -156,7 +151,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
       `| 555 | ${daysAgo(20)} | Overdue Ltd | Platform Engineer | 4.5/5 | Applied | Y | [555](../reports/555-overdue-ltd-${daysAgo(20)}.md) | fixture |`,
       '',
     ].join('\n'), 'utf8');
-    writeFileSync(join(ROOT, 'data/follow-ups.md'),
+    writeFileSync(join(HOME, 'data/follow-ups.md'),
       '# Follow-ups Log\n\n| # | App | Date | Company | Role | Channel | Contact | Notes |\n|---|-----|------|---------|------|---------|---------|-------|\n', 'utf8');
 
     // ── First paint ──────────────────────────────────────────────────────────
@@ -216,7 +211,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     if (written >= 3) pass(`poll() wrote an error file for each failed row (${written})`);
     else fail(`expected 3+ error sidecars, found ${written}`);
 
-    const noReportErr = join(ROOT, 'batch/errors', `${IDS.noReport}.txt`);
+    const noReportErr = join(HOME, 'batch/errors', `${IDS.noReport}.txt`);
     if (existsSync(noReportErr) && /no report number/i.test(readFileSync(noReportErr, 'utf8'))) {
       pass('an "evaled" row with no report number is reported as a failure, not left pending');
     } else fail('the evaled-without-report row produced no explanatory error file');
@@ -280,14 +275,14 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
 
     // 'a' marks the selected row applied; the sidecar is the observable effect.
     await drive(...TO_DONE, 'a');
-    const applied = join(ROOT, 'batch/applied.tsv');
+    const applied = join(HOME, 'batch/applied.tsv');
     if (existsSync(applied) && readFileSync(applied, 'utf8').includes(IDS.done)) {
       pass('"a" marks the evaluated row applied and writes batch/applied.tsv');
     } else fail('"a" did not write an applied sidecar for the evaluated row');
 
     // 'x' is mutually exclusive with applied — marking skip clears the ✉.
     await drive(...TO_DONE, 'x');
-    const skipped = join(ROOT, 'batch/skipped.tsv');
+    const skipped = join(HOME, 'batch/skipped.tsv');
     if (existsSync(skipped) && readFileSync(skipped, 'utf8').includes(IDS.done)) {
       pass('"x" marks the evaluated row skipped and writes batch/skipped.tsv');
     } else fail('"x" did not write a skipped sidecar for the evaluated row');
@@ -302,7 +297,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     else fail('"a" marked an unevaluated row applied');
 
     // Marking applied flips the tracker row's Status cell, and only that cell.
-    const trackerAfter = readFileSync(join(ROOT, 'data/applications.md'), 'utf8');
+    const trackerAfter = readFileSync(join(HOME, 'data/applications.md'), 'utf8');
     const row801 = trackerAfter.split('\n').find(l => l.includes('| 801 |')) || '';
     if (!/\| Evaluated \|/.test(row801)) pass('marking a row syncs the matching tracker row out of Evaluated');
     else fail(`tracker row 801 still reads Evaluated: ${row801.slice(0, 120)}`);
@@ -320,8 +315,8 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     } else fail(`"see error" opened: ${opened().trim() || '(nothing)'}`);
 
     // "debug" opens the *input* the phase read — the fetched JD, in place.
-    mkdirSync(join(ROOT, 'batch/jds'), { recursive: true });
-    writeFileSync(join(ROOT, 'batch/jds', `${IDS.gone}.txt`), 'fixture job description\n', 'utf8');
+    mkdirSync(join(HOME, 'batch/jds'), { recursive: true });
+    writeFileSync(join(HOME, 'batch/jds', `${IDS.gone}.txt`), 'fixture job description\n', 'utf8');
     rmSync(OPENED, { force: true });
     await drive('TAB', 'TAB', 'TAB', 'RIGHT', 'RIGHT', 'ENTER');
     if (new RegExp(`xdg-open .*batch/jds/${IDS.gone}\\.txt`).test(opened())) {
@@ -370,11 +365,11 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     // ── The queue / drain button ─────────────────────────────────────────────
 
     // Tab twice reaches ▶; with nothing queued it must refuse rather than spawn.
-    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), '', 'utf8');
+    writeFileSync(join(HOME, 'batch/snipe-queue.txt'), '', 'utf8');
     const emptyDrain = await drive('TAB', 'TAB', 'ENTER');
     if (/Queue is empty/.test(emptyDrain)) pass('▶ refuses to start a run with an empty queue');
     else fail('▶ did not refuse on an empty queue');
-    writeFileSync(join(ROOT, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
+    writeFileSync(join(HOME, 'batch/snipe-queue.txt'), Object.values(IDS).join('\n') + '\n', 'utf8');
 
     // ── Slash commands and the JD box ────────────────────────────────────────
 
@@ -439,7 +434,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
       pass('the Follow-ups tab lists the overdue application from the tracker');
 
       const nudged = await drive('3', 'DOWN', 'ENTER');
-      const log = readFileSync(join(ROOT, 'data/follow-ups.md'), 'utf8');
+      const log = readFileSync(join(HOME, 'data/follow-ups.md'), 'utf8');
       if (/Overdue Ltd/.test(nudged) && /nudged/.test(nudged)) pass('Enter on a follow-up records a nudge');
       else fail('Enter on a follow-up did not report a nudge');
       if (/\| 1 \| 555 \|/.test(log)) pass('a nudge appends one row to data/follow-ups.md');
@@ -448,7 +443,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
       const undone = await drive('3', 'DOWN', 'u');
       if (/Rolled back last nudge/.test(undone)) pass('"u" peels the latest nudge back off');
       else fail('"u" did not roll the nudge back');
-      if (!/\| 1 \| 555 \|/.test(readFileSync(join(ROOT, 'data/follow-ups.md'), 'utf8'))) {
+      if (!/\| 1 \| 555 \|/.test(readFileSync(join(HOME, 'data/follow-ups.md'), 'utf8'))) {
         pass('the rolled-back nudge is gone from data/follow-ups.md');
       } else fail('"u" left the nudge row in follow-ups.md');
 
@@ -485,7 +480,7 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
 
     // ── --stats self-check ───────────────────────────────────────────────────
 
-    const stats = await runNodeAsync(['snipe-tui.mjs', '--stats']);
+    const stats = await runNodeAsync(['snipe-tui.mjs', '--stats'], { env: ENV });
     let parsed = null;
     try { parsed = JSON.parse(stats.out); } catch {}
     if (parsed && typeof parsed.queue === 'number') pass('--stats emits parseable JSON without a TTY');
@@ -494,15 +489,12 @@ if (existsSync(join(ROOT, 'batch/local-runner.pid'))) {
     else fail(`--stats active was ${parsed?.active}, expected 0`);
 
     // Without a TTY and without --stats it must refuse rather than render junk.
-    const noTty = await runNodeAsync(['snipe-tui.mjs']);
+    const noTty = await runNodeAsync(['snipe-tui.mjs'], { env: ENV });
     if (noTty.code === 1 && /interactive terminal/.test(noTty.err)) {
       pass('the TUI refuses to start without a TTY and says why');
     } else fail(`no-TTY guard did not fire (exit ${noTty.code})`);
   } finally {
-    restore();
-    for (const f of errorFiles) rmSync(f, { force: true });
-    rmSync(join(ROOT, 'batch/evals', `${IDS.done}.json`), { force: true });
-    rmSync(join(ROOT, 'batch/jds', `${IDS.gone}.txt`), { force: true });
+    // The fixture home is inside tmp, so one removal is the whole cleanup.
     rmSync(tmp, { force: true, recursive: true });
   }
 }
