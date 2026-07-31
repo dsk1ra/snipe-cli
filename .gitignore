@@ -29,6 +29,9 @@ batch/tracker-additions/**/*.tsv
 batch/jds/
 batch/scores/
 batch/evals/
+batch/errors/
+coverage/
+.nyc_output/
 batch/cv-index.json
 batch/jd-index.json
 

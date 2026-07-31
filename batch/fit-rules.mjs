@@ -10,7 +10,15 @@
 // Ecosystem → detection regex. Kept deliberately narrow to avoid false positives
 // (e.g. "go-live" must NOT count as the Go language).
 const ECOSYSTEM_PATTERNS = {
-  'c#/.net':    /\b(c#|\.net|dotnet|asp\.net|jscript\.net)\b/gi,
+  // `\b` cannot fence a token that starts or ends with punctuation: `\bc#\b`
+  // needs a word char right after the `#`, and `\b\.net` needs one right before
+  // the dot — so the old pattern matched NEITHER "C#" nor ".NET" in any real
+  // spelling, only "dotnet"/"asp.net". The ecosystem was therefore invisible on
+  // BOTH sides of every comparison: JDs demanding it, and a CV claiming it.
+  // Lookaround instead, and `c#(?:\.net)?` first so "C#.Net" counts once, not
+  // twice, against minMentions. The leading lookbehind is what keeps a ".net"
+  // TLD ("example.net") from reading as the ecosystem.
+  'c#/.net':    /(?<![a-z0-9])(?:c#(?:\.net)?|asp\.net|jscript\.net|dotnet|\.net)(?![a-z0-9])/gi,
   'java':       /\bjava\b(?!script)/gi,
   'go':         /\b(golang|go\s+(?:developer|engineer|programmer|programming)|written\s+in\s+go|microservices\s+in\s+go)\b/gi,
   'ruby':       /\b(ruby on rails|\bruby\b|\brails\b)\b/gi,
@@ -24,9 +32,59 @@ const ECOSYSTEM_PATTERNS = {
   'cpp':        /c\+\+/gi,
 };
 
+// Named technologies that are NOT programming languages, so ECOSYSTEM_PATTERNS
+// above does not cover them. Used only to check claims about the candidate
+// against cv.md — keep it to things a CV would name explicitly.
+const TOOL_PATTERNS = {
+  'azure':      /\bazure\b/gi,
+  'gcp':        /\b(gcp|google cloud)\b/gi,
+  'aws':        /\baws\b/gi,
+  'kubernetes': /\b(kubernetes|k8s)\b/gi,
+  'terraform':  /\bterraform\b/gi,
+  'flask':      /\bflask\b/gi,
+  'pytorch':    /\bpytorch\b/gi,
+  'tensorflow': /\btensorflow\b/gi,
+  'spark':      /\b(apache\s+)?spark\b/gi,
+  'databricks': /\bdatabricks\b/gi,
+  'kafka':      /\bkafka\b/gi,
+  'elasticsearch': /\belasticsearch\b/gi,
+  'snowflake':  /\bsnowflake\b/gi,
+  'airflow':    /\bairflow\b/gi,
+};
+
 function countMatches(text, re) {
   const m = String(text || '').match(re);
   return m ? m.length : 0;
+}
+
+/**
+ * Drop claims about the candidate that name a technology `cv.md` never mentions.
+ *
+ * `top_strengths` is the one field where the pipeline asserts something on the
+ * candidate's *behalf*, and it fabricates: measured over 115 offers, 3.7% of the
+ * strengths that named a technology named one the CV does not contain — usually
+ * a neighbour of something it does (a sibling cloud provider, another framework
+ * in the same family). Unlike a wrong gap, a wrong strength can reach an
+ * application, so this is a hard filter rather than a prompt instruction.
+ *
+ * Only technologies in ECOSYSTEM_PATTERNS/TOOL_PATTERNS are checked — a claim
+ * naming nothing checkable is left alone.
+ *
+ * @param {string[]} claims
+ * @param {string} cvText
+ * @returns {{kept: string[], dropped: string[]}}
+ */
+export function verifyAgainstCv(claims, cvText) {
+  const all = { ...ECOSYSTEM_PATTERNS, ...TOOL_PATTERNS };
+  const kept = [], dropped = [];
+  for (const claim of Array.isArray(claims) ? claims : []) {
+    const named = Object.entries(all)
+      .filter(([, re]) => countMatches(claim, re) > 0)
+      .map(([name]) => name);
+    const absent = named.filter(n => countMatches(cvText, all[n]) === 0);
+    (absent.length ? dropped : kept).push(claim);
+  }
+  return { kept, dropped };
 }
 
 /** Ecosystems the candidate clearly has, parsed from cv.md text. */
@@ -161,10 +219,31 @@ export function stackMismatchCap(jdText, cvText, { cap = 3, minMentions = 2 } = 
  * compare. As a boolean it collapsed "no tooling involved" into "wrong tooling"
  * and quietly taxed every degree, communication and mentoring requirement 40%.
  * Only an explicit "different" costs credit.
+ *
+ * `requirement`/`evidence` are the grounding guard. `same_tooling` is the
+ * model's own opinion and it is optimistic: it grades a requirement Strong on a
+ * CV line that never mentions the technology the requirement names — a
+ * "5+ years of <language>" requirement matched to an education line, a
+ * "production <language>" one matched to an architecture bullet in a different
+ * language. Measured on an A/B over 10 offers, ~7% of Strong rows. A Strong row
+ * is also what feeds Phase 3's bullet selection, so an ungrounded one propagates
+ * into the tailored CV.
+ *
+ * Both default to '' so three-argument callers keep the old behaviour.
  */
-export function strengthFrom(pick, sameActivity, tooling) {
+export function strengthFrom(pick, sameActivity, tooling, requirement = '', evidence = '') {
   if (pick === 'none' || !sameActivity) return 'Gap';
-  return tooling === 'different' ? 'Transferable' : 'Strong';
+  if (tooling === 'different') return 'Transferable';
+  // Same catalog as verifyAgainstCv but the opposite quantifier: a *claim*
+  // naming two technologies asserts both, a *requirement* listing them ("AWS,
+  // Azure or GCP") accepts any one. Demote rather than Gap — the activity still
+  // matched, only the proof of the named technology is missing.
+  if (requirement) {
+    const all = { ...ECOSYSTEM_PATTERNS, ...TOOL_PATTERNS };
+    const named = Object.values(all).filter(re => countMatches(requirement, re) > 0);
+    if (named.length && !named.some(re => countMatches(evidence, re) > 0)) return 'Transferable';
+  }
+  return 'Strong';
 }
 
 // Every pattern must name the OPENINGS, never the employer's scale. A count of
@@ -220,6 +299,34 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(strengthFrom('A', false, 'same')           === 'Gap',          'tooling match cannot rescue a different activity');
   assert(strengthFrom('none', true, 'same')         === 'Gap',          'no evidence picked outranks both axes');
 
+  // verifyAgainstCv: a strength may only name technology the CV actually has.
+  // Fictional skills line, like the profile above — the assertions only need
+  // 'a technology the CV lists' and 'one it does not'.
+  const cvTech = 'Skills: Ruby, Rails, Elasticsearch, GCP, Docker';
+  let v = verifyAgainstCv([
+    'Ruby on Rails services backed by Elasticsearch',   // both present  -> keep
+    'Strong communication with non-technical stakeholders', // names nothing -> keep
+    'Built and tuned Spark batch jobs',                 // Spark absent  -> drop
+    'Deployed containers to Azure App Service',         // Azure absent  -> drop
+  ], cvTech);
+  assert(v.kept.length === 2, 'two verifiable strengths kept');
+  assert(v.dropped.length === 2, 'two fabricated strengths dropped');
+  assert(v.kept.some(s => /non-technical/.test(s)), 'claim naming no technology is left alone');
+  assert(verifyAgainstCv([], cvTech).kept.length === 0, 'empty input is safe');
+
+  // c#/.net: `\b` cannot fence `c#` or `.net`, so the old pattern matched neither
+  // in any spelling a JD actually uses. stackMismatchCap is the consumer.
+  const noDotnetCv = 'Skills: Ruby, Rails, Elasticsearch, GCP, Docker';
+  const capOf = jd => stackMismatchCap(jd, noDotnetCv);
+  assert(capOf('C#/OO software engineer. Strong C# required.').missing.includes('c#/.net'), 'bare C# is detected');
+  assert(capOf('We build in .NET 8 and ship .NET services daily.').missing.includes('c#/.net'), 'bare .NET is detected');
+  assert(capOf('ASP.NET Core and dotnet tooling throughout.').missing.includes('c#/.net'), 'asp.net/dotnet still detected');
+  // Counted once, not twice — otherwise a single "C#.Net" trips minMentions 2 alone.
+  assert(capOf('C#.Net is used here.').missing.length === 0, 'one C#.Net mention is below minMentions');
+  // A .net TLD is not an ecosystem.
+  assert(capOf('Apply at example.net or careers.foo.net today.').missing.length === 0, '.net TLD is not the ecosystem');
+  assert(capOf('We write C++ and Rust.').missing.includes('c#/.net') === false, 'C++ is not C#');
+
   // looksMultiPosting: the model called offer #38 a single posting 6/6 times.
   assert(looksMultiPosting('40+ top trading firms seeking exceptional engineers. Multiple immediate openings.'), 'aggregator advert detected');
   assert(looksMultiPosting("Ask HN: Who's hiring? (July 2026)"), 'hiring thread detected');
@@ -231,6 +338,26 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(!looksMultiPosting('Acme is Europe\'s leading freelance marketplace, connecting over 1,000,000 talented freelancers with 100,000+ companies.'), 'marketplace scale not flagged');
   assert(!looksMultiPosting('You will own the AWS business within a portfolio of over 1000 clients.'), 'client count not flagged');
   assert(!looksMultiPosting(''), 'empty JD not flagged');
+
+  // strengthFrom grounding guard. Fixtures are fictional.
+  const sf = (req, ev) => strengthFrom('A', true, 'same', req, ev);
+  assert(sf('5+ years of Java full stack', 'Awarded a departmental prize for the final-year project') === 'Transferable',
+    'Java requirement demoted when evidence never mentions Java');
+  assert(sf('Production-grade Rust experience', 'Designed the retry and compensation flow between two services') === 'Transferable',
+    'Rust requirement demoted on unrelated evidence');
+  assert(sf('Strong AWS and Linux expertise', 'Skills — Cloud: AWS (Lambda, S3); OS: Linux server administration') === 'Strong',
+    'grounded row stays Strong');
+  // Requirements naming nothing checkable must not be taxed.
+  assert(sf('Excellent written and verbal communication', 'Ran the weekly design review for the team') === 'Strong',
+    'non-technical requirement unaffected');
+  // One named technology present is enough — a list is a disjunction.
+  assert(sf('Cloud platforms such as AWS, Azure or GCP', 'Deployed the API on AWS Lambda') === 'Strong',
+    'partial match on an alternatives list stays Strong');
+  // The guard never rescues, never overrides the earlier two axes.
+  assert(strengthFrom('none', true, 'same', 'Java', 'Java everywhere') === 'Gap', 'guard does not rescue a Gap');
+  assert(strengthFrom('A', true, 'different', 'Java', 'Java everywhere') === 'Transferable', 'different tooling still Transferable');
+  // Three-argument callers keep the old behaviour.
+  assert(strengthFrom('A', true, 'same') === 'Strong', 'legacy 3-arg call unchanged');
 
   console.log('✓ fit-rules self-check passed');
 }
