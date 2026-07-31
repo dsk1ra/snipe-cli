@@ -36,6 +36,12 @@ process.stdout.rows = Number(process.env.TUI_ROWS || 34);
 // mark the focused row would vanish from the frames, which is precisely what
 // the focus assertions read.
 process.env.FORCE_COLOR = process.env.FORCE_COLOR || '3';
+// Same class of problem, one layer up: Ink asks is-in-ci whether it is
+// interactive, and under CI=1 it stops emitting dynamic frames entirely — only
+// static output and the final unmount. Locally that is invisible; on GitHub
+// Actions every "did it paint X" assertion sees an empty frame buffer.
+delete process.env.CI;
+delete process.env.CONTINUOUS_INTEGRATION;
 
 // Capture instead of print: the parent reads frames from the file, so stdout
 // staying clean keeps the driver usable from a test runner.
