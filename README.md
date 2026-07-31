@@ -15,14 +15,15 @@ local AI job search · driven from your terminal
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
 
-Paste a job description and snipe scores it against your CV, writes a full fit
-report, and tailors a 2-page PDF for the roles worth applying to — all from a
-terminal cockpit, the **snipe TUI**.
+Paste a job description. snipe scores it against your CV, writes a full fit
+report, and tailors a 2-page PDF for the roles worth your time. You drive all of
+it from the **snipe TUI**, a dashboard that lives in your terminal.
 
-**Everything runs locally against [Ollama](https://ollama.com). No cloud LLM
-calls in the pipeline.** Your CV, applications, and reports never leave the machine.
+Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
+applications and your reports never leave the machine.
 
-snipe drafts and fills applications — it never submits them. You send them.
+snipe drafts and fills applications. It never submits them; that part stays
+yours.
 
 ---
 
@@ -69,9 +70,9 @@ cp .env.example .env                                # API keys (optional)
 # add your cv.md at the project root (article-digest.md too, if you have one)
 ```
 
-`.env` only matters for portal scanning: `APIFY_API_KEY` unlocks the Apify-backed
-providers (LinkedIn, Indeed, Glassdoor). Without it those are skipped and every
-other provider — and the whole pipeline — still runs.
+`.env` only matters for portal scanning. `APIFY_API_KEY` unlocks the Apify-backed
+providers: LinkedIn, Indeed, Glassdoor. Without a key those three are skipped and
+everything else, the whole pipeline included, runs as normal.
 
 Build the four Ollama models once from the Modelfiles:
 
@@ -103,11 +104,11 @@ The TUI is the front door. Launch it with:
 node snipe-tui.mjs        # or: npm run snipe-tui
 ```
 
-It re-reads on-disk state every second — the queue, scores, evals, and output —
-so you can watch a run progress live while you keep adding jobs. Kick off a run
-and the pipeline keeps churning in the background. It never edits pipeline state
-itself; the only files it writes are its own sidecars (`batch/applied.tsv`,
-`batch/skipped.tsv`, `batch/errors/<id>.txt`).
+Once a second it re-reads what's on disk: the queue, the scores, the evals, the
+output. So you can start a run, watch it move, and keep adding jobs while it
+works. The TUI never edits pipeline state itself. The only files it writes are
+its own sidecars: `batch/applied.tsv`, `batch/skipped.tsv` and
+`batch/errors/<id>.txt`.
 
 ### The three tabs
 
@@ -145,11 +146,11 @@ cadence tracker. Press **↓** to enter the list, **Enter** to mark one nudged,
 2. Press **Enter** to walk the mini-form: **JD → URL → Add to queue**. Each Enter
    advances a step; "Add to queue" enqueues the job.
 3. Move focus to **▶** (with **→** from the JD box, or **Tab**) and press
-   **Enter** to run the queue. Jobs flow through all three phases; results land
-   in `reports/` and `output/` and the dashboard counters tick up live.
+   **Enter** to run the queue. Jobs flow through all three phases, results land
+   in `reports/` and `output/`, and the dashboard counters tick up as they land.
 
-Queueing is automatic: if a run is already active, new jobs wait and get picked
-up when it finishes — nothing is lost.
+Queueing is automatic. If a run is already active, new jobs wait their turn and
+get picked up when it finishes. Nothing is lost.
 
 ### When a job fails
 
@@ -163,10 +164,10 @@ A failed row carries its own actions — **→** focuses each, **Enter** fires i
 |--------|------|
 | **see error** | Opens `batch/errors/<id>.txt` — the full, untruncated failure text (also a clickable `file://` link in terminals that support them) |
 | **retry** | Re-runs the offer through all three phases, overwriting the last attempt |
-| **debug** | Opens the *input* that phase read — the fetched JD, or the Phase 2 report — so you can fix it before retrying |
+| **debug** | Opens the *input* that phase read (the fetched JD, or the Phase 2 report) so you can fix it before retrying |
 
-The usual loop is **see error → debug → edit → retry**. Expired or blocked
-postings show no **retry**: re-running cannot recover them.
+The usual loop is **see error → debug → edit → retry**. Expired and blocked
+postings show no **retry** at all, because re-running cannot recover them.
 
 ### Slash commands
 
@@ -192,8 +193,9 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |
 
-Run `node snipe-tui.mjs --stats` for a no-TTY self-check that prints the current
-pipeline stats and exits — handy in scripts or over SSH without a terminal.
+`node snipe-tui.mjs --stats` prints the current pipeline stats as JSON and exits,
+no terminal required. Useful in scripts, or over an SSH connection that has no
+TTY to render into.
 
 ---
 
@@ -224,9 +226,10 @@ See [`batch/README.md`](batch/README.md) for every flag.
 
 ## Hardware
 
-Developed on an RTX 3060 6 GB + 30 GB RAM. Phases 1 and 3 fit fully on GPU; the
-30B MoE evaluator auto-splits between GPU and RAM. Smaller or CPU-only setups
-work with smaller models — override with `--phase2-model` and friends.
+Developed on an RTX 3060 6 GB with 30 GB of RAM. Phases 1 and 3 fit entirely on
+the GPU; the 30B MoE evaluator auto-splits between GPU and RAM. Smaller and
+CPU-only setups work too — point the phases at lighter models with
+`--phase2-model` and friends.
 
 ## Tracker
 
@@ -238,10 +241,10 @@ reads its cadence from there.
 node tracker/verify-pipeline.mjs    # health check — reports, links, statuses
 ```
 
-Never hand-add rows — drop a TSV in `batch/tracker-additions/` and let
+Never hand-add rows. Drop a TSV in `batch/tracker-additions/` and let
 `tracker/merge-tracker.mjs` merge it. Editing an existing row's status or note is
 fine. `tracker/tracker.mjs` keeps an optional SQLite index (Node ≥ 22.5) that is
-safe to delete; it regenerates.
+safe to delete; it regenerates on the next sync.
 
 ## Tests
 
@@ -251,17 +254,18 @@ npm run typecheck      # tsc over the JSDoc types, also in CI
 npm run coverage       # same suite under c8 → coverage/lcov.info
 ```
 
-Coverage counts every `.mjs` file, including ones the suite never loads — no
-exclusions to flatter the number. The Ollama-driven phases are covered by
-running them for real against a stand-in model server, the TUI by driving it
-headlessly, `scan.mjs` by scanning a sandboxed fixture portal, and the job-board
-providers by handing them a stub transport instead of the network — so no part
-of the pipeline needs a GPU, a terminal, or the network to be tested.
+Coverage counts every `.mjs` file, including the ones the suite never loads. No
+exclusions to flatter the number.
+
+None of it needs a GPU, a terminal or the network. The Ollama-driven phases run
+for real against a stand-in model server. The TUI is driven headlessly through a
+fake TTY. `scan.mjs` scans a sandboxed fixture portal, and the job-board
+providers get a stub transport instead of a socket.
 
 ## Data & privacy
 
-Everything personal stays on your machine and is gitignored — only the system
-layer (scripts, modes, templates) is tracked:
+Everything personal stays on your machine and is gitignored. Only the system
+layer — scripts, modes, templates — is tracked:
 
 - **What you wrote** — `cv.md`, `article-digest.md`, `config/profile.*`,
   `portals.yml`, `.env`
@@ -271,7 +275,8 @@ layer (scripts, modes, templates) is tracked:
   (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
   `batch/errors/`, `batch/logs/`, and `batch/local-state.tsv`
 
-Nothing leaves the machine: every model call goes to your local Ollama.
+Outbound traffic is limited to the job boards and APIs you configure yourself.
+Every model call goes to Ollama on localhost.
 
 ## License
 
