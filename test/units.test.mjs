@@ -210,3 +210,39 @@ try {
 } catch (e) {
   fail(`scan filter unit tests crashed: ${e.message}`);
 }
+
+// ── 20. UNIT — Phase 3 tailoring-harness metrics ─────────────────────
+// These decide whether a benchmark says a change worked, so a silent break
+// here invalidates every comparison rather than failing loudly.
+try {
+  const h = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+
+  // numsOf: what counts as a "number the CV must contain"
+  deepEq([...h.numsOf('grew from 80 at launch to 170')], ['80', '170'],
+    'numsOf pulls plain integers');
+  deepEq([...h.numsOf('cut onboarding by 80% across 5 locations')], ['80%'],
+    'numsOf keeps the percent sign, so 80 and 80% are not interchangeable');
+  deepEq([...h.numsOf('serving 10,000+ users')], ['10,000+'],
+    'numsOf keeps thousands separators and the plus, so 10,000+ != 10000');
+  deepEq([...h.numsOf('no digits here')], [],
+    'numsOf returns nothing for prose');
+  deepEq([...h.numsOf('version 3 of 4')], [],
+    'numsOf drops single digits — too noisy to attribute to the CV');
+
+  // shingles: the example-copy detector
+  const sh = h.shingles('one two three four five six seven eight nine', 8);
+  eq(sh.size, 2, 'shingles yields (n - k + 1) windows');
+  eq(sh.has('one two three four five six seven eight'), true, 'shingles keeps word order');
+  eq(h.shingles('too short for a window', 8).size, 0,
+    'shingles yields nothing below the window size');
+  eq(h.shingles('ONE Two THREE four five six seven eight').has('one two three four five six seven eight'), true,
+    'shingles is case-insensitive, so recased copying is still caught');
+
+  // exampleShingles: reads the real prompt, so it breaks if the example moves
+  const ex = h.exampleShingles();
+  eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
+  eq([...ex].some(s => s.includes('membership platform')), true,
+    'exampleShingles covers the worked-example experience bullets');
+} catch (e) {
+  fail(`tailor-harness metric unit tests crashed: ${e.message}`);
+}
