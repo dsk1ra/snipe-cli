@@ -10,6 +10,7 @@
 import {
   pass, fail, warn, ROOT, join, runNodeAsync, preserve, ensureUserLayer,
   existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, tmpdir,
+  pathToFileURL,
 } from './harness.mjs';
 import { startFakeOllama } from './fake-ollama.mjs';
 
@@ -438,27 +439,24 @@ try {
 
       // The whole point of the fix: every employer in the CV comes back, once.
       const companies = (content.experience || []).map(e => e.company);
-      const cvCompanies = readFileSync(join(ROOT, 'cv.md'), 'utf8')
-        .split(/^## /m).find(s => s.startsWith('Experience'))
-        ?.split(/^### /m).slice(1)
-        .map(b => (b.split('\n').find(l => l.startsWith('**')) || '').match(/^\*\*(.+?)\*\*/)?.[1]?.trim())
-        .filter(Boolean) || [];
+      // Resolve employers exactly as the pipeline does. Rolling a regex here is
+      // what let the two definitions drift apart in the first place: the
+      // fixture CV puts the employer in the ### heading, which a bold-line
+      // match misses entirely.
+      const { cvCompanies } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+      const expected = cvCompanies(readFileSync(join(ROOT, 'cv.md'), 'utf8'));
 
-      if (cvCompanies.length && companies.length === cvCompanies.length) {
+      if (expected.length && companies.length === expected.length) {
         pass(`phase 3 returns one entry per CV employer (${companies.length})`);
-      } else fail(`phase 3 returned ${companies.length} entries for ${cvCompanies.length} CV employers: ${companies.join('|')}`);
+      } else fail(`phase 3 returned ${companies.length} entries for ${expected.length} CV employers: ${companies.join('|')}`);
 
       if (companies.length === new Set(companies).size) pass('phase 3 never repeats an employer');
       else fail(`phase 3 repeated an employer: ${companies.join('|')}`);
 
-      for (const c of cvCompanies) {
-        if (!companies.some(x => String(x).toLowerCase().includes(String(c).toLowerCase().slice(0, 8)))) {
-          fail(`phase 3 dropped the CV employer "${c}"`);
-        }
-      }
-      if (cvCompanies.every(c => companies.some(x => String(x).toLowerCase().includes(String(c).toLowerCase().slice(0, 8))))) {
-        pass('phase 3 keeps every CV employer by name');
-      }
+      const kept = c => companies.some(x => String(x).toLowerCase().includes(String(c).toLowerCase().slice(0, 8)));
+      const dropped = expected.filter(c => !kept(c));
+      if (!dropped.length) pass('phase 3 keeps every CV employer by name');
+      else fail(`phase 3 dropped CV employers: ${dropped.join(', ')}`);
 
       // No bullet may assert a figure the CV does not state.
       const nums = s => new Set((String(s).match(/\d[\d,.]*\+?%?/g) || [])
