@@ -39,7 +39,10 @@ Tailor the candidate's CV for a specific role. The full evaluation report is pro
 - For each category, set `items` to a comma-separated SUBSET of that category's CV items — keep only what is relevant to this JD, in priority order. Do not list every item; do not invent items. If unsure, keep the category's strongest 4–8 items.
 
 ### experience
-- ALL companies from the CV, KEEP THE GIVEN ORDER (reverse-chronological, most recent first) — do not reorder by relevance
+- Output EXACTLY these companies, one entry each, in this order: {{EXPERIENCE_COMPANIES}}
+- That list is complete and non-negotiable. Do not add, drop, merge, reorder or rename them.
+- One entry per company. NEVER repeat a company — two entries naming the same employer is a broken CV.
+- A project is NOT a company. Projects go in `projects`; only the employers listed above belong here.
 - Bullets reordered and lightly rephrased for keyword density (3–4 bullets per role)
 - Preserve the CV's numbers in every bullet that has one (`10,000+ users`, `80%`, `4 weeks`, `90%+ coverage`, `over 500 users`, `90%`) — lead with the metric where natural
 - Keep each bullet's business/outcome clause — the *why*: what it enabled or the problem it solved ("for a B2B client", "reducing onboarding 80%"). A strong bullet = keyword + how you used it + business reason + where. Don't drop the reason for brevity.
@@ -90,11 +93,12 @@ The CV below is already pre-filtered for this JD — experience and projects are
     { "category": "Databases & Caching", "items": "PostgreSQL, Redis, MongoDB" }
   ],
   "experience": [
-    { "company": "Acme SaaS", "bullets": ["Led full-stack delivery of a membership platform serving thousands of subscribers, shipping the MVP in 4 weeks.", "Built the Node.js and PostgreSQL backend with OAuth 2.0 and webhook billing, cutting signup time by 60%.", "Built the admin console with drag-and-drop newsletter builder, audience segmentation, and RBAC, backed by Redis and 90%+ test coverage."] }
+    { "company": "Acme SaaS", "bullets": ["Led full-stack delivery of a membership platform serving thousands of subscribers, shipping the MVP in 4 weeks.", "Built the Node.js and PostgreSQL backend with OAuth 2.0 and webhook billing, cutting signup time by 60%.", "Built the admin console with drag-and-drop newsletter builder, audience segmentation, and RBAC, backed by Redis and 90%+ test coverage."] },
+    { "company": "Northgate College", "bullets": ["Taught programming to 600+ undergraduates across two languages, adapting to mixed technical backgrounds.", "Wrote the environment setup guides that cut configuration time from 2 hours to 30 minutes per student."] }
   ]
 }
 
-(The example summary lands in the 50–70 range — yours must too. The example shows 2 projects/skills for brevity; produce 3–4 projects and 5–6 skill categories. The names above are placeholders — use the actual CV/JD content, not these.)
+(The example summary lands in the 50–70 range — yours must too. The example shows 2 projects/skills for brevity; produce 3–4 projects and 5–6 skill categories. The example shows 2 companies because that CV had 2 — you must output every company listed under `### experience` above, no more and no fewer. The names above are placeholders — use the actual CV/JD content, not these.)
 
 ## Output (ONLY this JSON, nothing else)
 
@@ -112,7 +116,11 @@ The CV below is already pre-filtered for this JD — experience and projects are
   ],
   "experience": [
     {
-      "company": "<exact company name>",
+      "company": "<exact company name, from the list under ### experience>",
+      "bullets": ["<bullet>", "<bullet>", "<bullet>"]
+    },
+    {
+      "company": "<the next company on that list — repeat until every one is present>",
       "bullets": ["<bullet>", "<bullet>", "<bullet>"]
     }
   ]
