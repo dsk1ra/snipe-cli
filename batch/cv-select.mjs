@@ -237,11 +237,11 @@ export function remapProjectNames(projects, cvText) {
 export function reconcileExperience(items, selectedCv) {
   const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
   if (!sec || !Array.isArray(items)) return items;
-  const real = parseEntries(sec.lines).entries.map(e => {
-    const title = e.head[0].replace(/^###\s+/, '').trim();
-    const bold = (e.head[1] || '').match(/^\*\*(.+?)\*\*/);
-    return { company: bold ? bold[1].trim() : title, role: title, bullets: e.bullets };
-  });
+  const real = parseEntries(sec.lines).entries.map(e => ({
+    company: entryCompany(e),
+    role: e.head[0].replace(/^###\s+/, '').trim(),
+    bullets: e.bullets,
+  }));
   if (!real.length) return items;
 
   const claimed = new Set();
@@ -279,6 +279,32 @@ export function reconcileExperience(items, selectedCv) {
   return out;
 }
 
+/**
+ * The employer name for a parsed CV entry.
+ *
+ * Two layouts are in the wild: the company on its own bold line under the
+ * heading (`### Role` / `**Company** - City | dates`), and the company folded
+ * into the heading itself (`### Company - Role`). Callers used to each do their
+ * own bold-line match, so a heading-only CV yielded no employers for the schema
+ * floor and the prompt injection while the reconciler still resolved them —
+ * the same CV producing two different answers depending on who asked.
+ *
+ * @param {{head: string[]}} entry
+ * @returns {string}
+ */
+export function entryCompany(entry) {
+  const title = (entry.head?.[0] || '').replace(/^###\s+/, '').trim();
+  const bold = (entry.head?.[1] || '').match(/^\*\*(.+?)\*\*/);
+  return bold ? bold[1].trim() : title;
+}
+
+/** Employer names from a CV's Experience section, in CV order. */
+export function cvCompanies(cvText) {
+  const sec = parseCvSections(cvText).find(s => s.name === 'Experience');
+  if (!sec) return [];
+  return parseEntries(sec.lines).entries.map(entryCompany).filter(Boolean);
+}
+
 /** Numbers worth attributing to the CV. Single digits are too noisy to track. */
 const NUMERIC = /\d[\d,.]*\+?%?/g;
 const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
@@ -309,8 +335,7 @@ export function verifyBulletNumbers(items, cvText) {
   const byCompany = new Map();
   if (sec) {
     for (const e of parseEntries(sec.lines).entries) {
-      const bold = (e.head[1] || '').match(/^\*\*(.+?)\*\*/);
-      byCompany.set((bold ? bold[1] : e.head[0].replace(/^###\s+/, '')).trim().toLowerCase(), e.bullets);
+      byCompany.set(entryCompany(e).toLowerCase(), e.bullets);
     }
   }
   return items.map(entry => {

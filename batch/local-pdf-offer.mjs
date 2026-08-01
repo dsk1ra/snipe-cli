@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         parseCvSections, parseEntries, reconcileExperience, verifyBulletNumbers } from './cv-select.mjs';
+         reconcileExperience, verifyBulletNumbers, cvCompanies } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -211,13 +211,7 @@ const TAILOR_SCHEMA = {
  * @returns {string[]}
  */
 function experienceCompanies(selectedCv) {
-  try {
-    const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
-    if (!sec) return [];
-    return parseEntries(sec.lines).entries
-      .map(e => (e.head[1] || '').match(/^\*\*(.+?)\*\*/)?.[1]?.trim())
-      .filter(/** @returns {c is string} */ c => Boolean(c));
-  } catch { return []; }
+  try { return cvCompanies(selectedCv); } catch { return []; }
 }
 
 function schemaWithExperienceFloor(selectedCv) {

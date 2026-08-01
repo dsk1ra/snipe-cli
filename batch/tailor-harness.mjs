@@ -29,6 +29,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { parseCvSections, parseEntries, entryCompany } from './cv-select.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
@@ -127,20 +128,13 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
  * @param {string} [cvPath] injectable so tests use a fixture CV, not the user's
  */
 function cvExperience(cvPath = resolve(PROJECT, 'cv.md')) {
-  const cv = readFileSync(cvPath, 'utf8');
-  const sec = cv.split(/^## /m).find(s => s.startsWith('Experience'));
+  const sec = parseCvSections(readFileSync(cvPath, 'utf8')).find(s => s.name === 'Experience');
   if (!sec) return [];
-  const out = [];
-  for (const block of sec.split(/^### /m).slice(1)) {
-    const lines = block.split('\n');
-    const bold = lines.find(l => /^\*\*/.test(l))?.match(/^\*\*(.+?)\*\*/);
-    out.push({
-      company: bold ? bold[1].trim() : lines[0].trim(),
-      role: lines[0].trim(),
-      bullets: lines.filter(l => l.startsWith('- ')).map(l => l.slice(2).trim()),
-    });
-  }
-  return out;
+  return parseEntries(sec.lines).entries.map(e => ({
+    company: entryCompany(e),
+    role: e.head[0].replace(/^###\s+/, '').trim(),
+    bullets: e.bullets,
+  }));
 }
 
 const NUM = /\d[\d,.]*\+?%?/g;
@@ -221,7 +215,7 @@ function metricsFor(label, paths = {}) {
         r.company.toLowerCase().includes(key) || r.role.toLowerCase().includes(key));
       // A second entry for an employer already claimed is not a role, it is
       // junk — count it with the invented ones rather than as a match, or the
-      // `UBWIS|UBWIS` failure shape reads as two healthy roles.
+      // `Acme|Acme` failure shape reads as two healthy roles.
       if (match && !matchedRoles.has(match.company)) matchedRoles.add(match.company);
       else unmatched++;
       for (const b of (e.bullets || [])) {
