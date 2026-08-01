@@ -18,7 +18,8 @@ import { resolve, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
-import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder } from './cv-select.mjs';
+import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
+         reconcileExperience, verifyBulletNumbers, cvCompanies } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -42,6 +43,11 @@ function parseArgs(argv) {
     evalScore: null, company: null, role: null, date: null, p1Score: null,
     p1Archetype: null, model: 'snipe-screen',
     ollamaUrl: 'http://localhost:11434', threshold: 3.7, numCtx: 8192,
+    // Benchmarking only. --bench-dir redirects the output folder and stops
+    // before PDF generation (the model's work is done once cv-content.json is
+    // written); --temperature overrides the production 0.15 so a benchmark can
+    // run greedy, where this stack is byte-identical and one run is a valid A/B.
+    benchDir: null, temperature: 0.15,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -60,6 +66,8 @@ function parseArgs(argv) {
       case '--ollama-url':   a.ollamaUrl    = argv[++i]; break;
       case '--threshold':    a.threshold    = parseFloat(argv[++i]); break;
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
+      case '--bench-dir':    a.benchDir     = argv[++i]; break;
+      case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
     }
   }
   return a;
@@ -174,6 +182,9 @@ const TAILOR_SCHEMA = {
       properties: { category: { type: 'string' }, items: { type: 'string' } },
       required: ['category', 'items'],
     } },
+    // minItems is raised per-run to the number of roles cv-select actually
+    // passed (see experienceSchemaFloor) — the prose "ALL companies from the
+    // CV" lost to a worked example and a template that both showed one.
     experience:   { type: 'array', minItems: 1, items: {
       type: 'object',
       properties: { company: { type: 'string' }, bullets: { type: 'array', items: { type: 'string' } } },
@@ -183,7 +194,39 @@ const TAILOR_SCHEMA = {
   required: ['summary', 'competencies', 'projects', 'education_modules', 'skills', 'experience'],
 };
 
-async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, format = null) {
+/**
+ * Grammar-enforced floor on experience entries, derived from the CV that was
+ * actually handed to the model rather than hardcoded — a one-role CV must stay
+ * satisfiable. cv-select never drops experience entries (it only trims bullets
+ * within each), so the count it passes is the count that must come back.
+ * @param {string} selectedCv
+ * @returns {object}
+ */
+/**
+ * Employer names from the CV handed to the model, in CV order. The grammar can
+ * compel the *number* of experience entries but not which company goes in each,
+ * so V1's floor was satisfied by duplicating one employer or promoting a project
+ * to a job. Naming them in the prompt is the half the schema cannot express.
+ * @param {string} selectedCv
+ * @returns {string[]}
+ */
+function experienceCompanies(selectedCv) {
+  try { return cvCompanies(selectedCv); } catch { return []; }
+}
+
+function schemaWithExperienceFloor(selectedCv) {
+  const roles = experienceCompanies(selectedCv).length;
+  if (roles < 2) return TAILOR_SCHEMA;
+  return {
+    ...TAILOR_SCHEMA,
+    properties: {
+      ...TAILOR_SCHEMA.properties,
+      experience: { ...TAILOR_SCHEMA.properties.experience, minItems: roles },
+    },
+  };
+}
+
+async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, format = null, temperature = 0.15) {
   const body = JSON.stringify({
     model,
     system: systemPrompt,
@@ -194,7 +237,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
     // tokens — summary, 6-9 competencies, 3-4 project descriptions, 5-6 skill
     // categories, experience bullets). Inputs are trimmed (Block E brief +
     // capped JD + base64-stripped CV) to keep input + output under the 8k window.
-    options: { num_ctx: numCtx, temperature: 0.15, num_predict: 2400 },
+    options: { num_ctx: numCtx, temperature, num_predict: 2400 },
   });
 
   const resp = await fetch(`${baseUrl}/api/generate`, {
@@ -441,9 +484,11 @@ const systemPrompt = prompt
   .replace('{{CANDIDATE_PROFILE}}', profileNarrative || '(see cv.md)')
   .replace('{{CV_CONTENT}}',        cleanCvForPrompt(cvForPrompt))
   .replace('{{FULL_REPORT}}',       extractTailoringBrief(reportText))
-  .replace('{{JD_FULL}}',           cleanJd(jdText));
+  .replace('{{JD_FULL}}',           cleanJd(jdText))
+  .replace('{{EXPERIENCE_COMPANIES}}', experienceCompanies(cvForPrompt).join(' | ') || '(every company in the CV above)');
 
 const userMessage = `Tailor the CV for ${args.company} — ${args.role}. Score: ${args.evalScore}/5. Report: ${args.reportPath}`;
+const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 
 // Generate with one validate-and-repair retry. We keep the latest parseable
 // JSON so a word-count miss on the retry still ships (clamped) rather than
@@ -456,7 +501,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
   let parsed;
   try {
-    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, TAILOR_SCHEMA);
+    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, tailorSchema, args.temperature);
     parsed = parseJsonResponse(raw);
   } catch (err) {
     lastErr = `invalid JSON (${err.message})`;
@@ -489,6 +534,14 @@ if (Array.isArray(cvContent.projects)) {
 
 // Tier 3 — the model doesn't reliably keep UK reverse-chronological order;
 // re-sort both sections by real CV end date regardless of its output order.
+// Tier 3 — reconcile experience against the employers the CV actually lists,
+// before ordering. The schema floor guarantees the entry count; this guarantees
+// they are the right employers, one each, with a missing one backfilled from the
+// CV rather than left out.
+cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
+// Tier 3 — revert any bullet asserting a figure cv.md does not state. The
+// prompt-side fix for this measured zero effect (ledger V4).
+cvContent.experience = verifyBulletNumbers(cvContent.experience, cvText);
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
@@ -550,7 +603,9 @@ if (typeof cvContent.summary === 'string') {
 
 // Build output folder
 const companySlug = slugify(args.company || 'unknown');
-const appDir      = resolve(PROJECT, `output/${args.date}_${companySlug}_${args.reportNum}`);
+const appDir      = args.benchDir
+  ? resolve(args.benchDir, `${args.id || args.reportNum}_${companySlug}`)
+  : resolve(PROJECT, `output/${args.date}_${companySlug}_${args.reportNum}`);
 const contentFile = resolve(appDir, 'cv-content.json');
 const htmlFile    = resolve(appDir, 'source.html');
 const cvName      = 'Candidate'; // fallback for PDF filename; overridden by profile.yml full_name below
@@ -562,6 +617,19 @@ writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 // Copy JD
 const jdDest = resolve(appDir, 'job-description.txt');
 if (jdText) writeFileSync(jdDest, jdText, 'utf8');
+
+// Benchmark stop. Everything past this point (PDF ladder, tracker row, report
+// back-fill) is deterministic post-processing that costs a chromium render and
+// mutates real user state — none of it measures the model. cv-content.json is
+// captured pre-ladder, so the ladder's project trimming cannot mask what the
+// model actually returned.
+if (args.benchDir) {
+  out({ status: 'ok', id: args.id, report_num: args.reportNum,
+        company: args.company || 'unknown', role: args.role || 'unknown',
+        score: args.evalScore, pdf: null, report: args.reportPath,
+        tracker: null, content: contentFile, error: null });
+  process.exit(0);
+}
 
 // Derive candidate name from profile.yml for PDF filename
 let candidateName = cvName;
