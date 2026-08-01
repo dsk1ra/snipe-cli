@@ -10,7 +10,7 @@ Tailor the candidate's CV for a specific role. The full evaluation report is pro
 - Company names, role titles, dates, and locations must be EXACTLY as in the CV
 - Reorder experience bullets: most JD-relevant bullets FIRST within each role
 - Inject ATS keywords naturally into existing bullets — do not fabricate new claims
-- **LEAD WITH MEASURABLE ACHIEVEMENTS.** Every project description, and the *lead* bullet of every role, MUST carry at least one concrete number from the CV (e.g. `50,000+ runs`, `1M+ events`, `sub-500ms`, `10,000+ users`, `80% reduction`, `3x growth`, `90%+ coverage`, `5+ services`). Quantified beats vague — if a CV bullet has a metric, keep it; never drop it. **Exception:** keep one unquantified bullet per role when it shows collaboration, code review, mentoring, or ownership — this soft-signal evidence matters for early-career roles and must survive the metric emphasis.
+- **LEAD WITH MEASURABLE ACHIEVEMENTS.** Every project description, and the *lead* bullet of every role, MUST carry at least one concrete number **copied from the CV above**. Quantified beats vague — if a CV bullet has a metric, keep it; never drop it. Do not round, rescale or approximate a CV number, and do not supply one the CV does not state. **Exception:** keep one unquantified bullet per role when it shows collaboration, code review, mentoring, or ownership — this soft-signal evidence matters for early-career roles and must survive the metric emphasis.
 - Output PLAIN TEXT only (no markdown, no `**bold**`, no backticks) — emphasis is applied automatically downstream.
 
 ### summary
@@ -44,7 +44,7 @@ Tailor the candidate's CV for a specific role. The full evaluation report is pro
 - One entry per company. NEVER repeat a company — two entries naming the same employer is a broken CV.
 - A project is NOT a company. Projects go in `projects`; only the employers listed above belong here.
 - Bullets reordered and lightly rephrased for keyword density (3–4 bullets per role)
-- Preserve the CV's numbers in every bullet that has one (`10,000+ users`, `80%`, `4 weeks`, `90%+ coverage`, `over 500 users`, `90%`) — lead with the metric where natural
+- Preserve the CV's numbers exactly as written in every bullet that has one — lead with the metric where natural. Copy the digits from the CV; never restate a figure from memory.
 - Keep each bullet's business/outcome clause — the *why*: what it enabled or the problem it solved ("for a B2B client", "reducing onboarding 80%"). A strong bullet = keyword + how you used it + business reason + where. Don't drop the reason for brevity.
 
 ## Available skill categories (select 5–6 by exact name)
