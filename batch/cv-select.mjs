@@ -279,6 +279,60 @@ export function reconcileExperience(items, selectedCv) {
   return out;
 }
 
+/** Numbers worth attributing to the CV. Single digits are too noisy to track. */
+const NUMERIC = /\d[\d,.]*\+?%?/g;
+const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
+  .map(x => x.replace(/[.,]$/, '')).filter(x => x.length > 1));
+
+/**
+ * Revert any tailored bullet asserting a number the CV does not state.
+ *
+ * Measured across 24 offers: 15 carried an invented figure — `100+` on 11,
+ * `170+` on 3 (the real 170 with a `+` appended, which overstates it), `150+`
+ * on 1. Deleting the prompt's own fabricated metric examples changed this by
+ * exactly nothing (ledger V4), so the repair belongs in code. Same shape as
+ * `verifyAgainstCv()` in fit-rules.mjs, which fixed the equivalent Phase 1
+ * surface.
+ *
+ * A bad bullet is replaced with the CV bullet it most resembles rather than
+ * dropped, so the role keeps its depth; only the offending bullet loses its
+ * rewrite. A bullet whose numbers all appear in the CV is untouched.
+ *
+ * @param {any[]} items experience entries, already reconciled
+ * @param {string} cvText the full CV — a figure may legitimately come from any part of it
+ * @returns {any[]}
+ */
+export function verifyBulletNumbers(items, cvText) {
+  if (!Array.isArray(items)) return items;
+  const allowed = numbersIn(cvText);
+  const sec = parseCvSections(cvText).find(s => s.name === 'Experience');
+  const byCompany = new Map();
+  if (sec) {
+    for (const e of parseEntries(sec.lines).entries) {
+      const bold = (e.head[1] || '').match(/^\*\*(.+?)\*\*/);
+      byCompany.set((bold ? bold[1] : e.head[0].replace(/^###\s+/, '')).trim().toLowerCase(), e.bullets);
+    }
+  }
+  return items.map(entry => {
+    const source = byCompany.get(String(entry?.company || '').trim().toLowerCase()) || [];
+    const bullets = (entry?.bullets || []).map(b => {
+      const bad = [...numbersIn(b)].filter(n => !allowed.has(n));
+      if (!bad.length || !source.length) return b;
+      // Prefer the CV bullet this rewrite came from; overlap picks it out.
+      const bt = toks(b);
+      let best = source[0], bestN = -1;
+      for (const cb of source) {
+        let n = 0;
+        for (const t of toks(cb)) if (bt.has(t)) n++;
+        if (n > bestN) { bestN = n; best = cb; }
+      }
+      return best;
+    });
+    // Reverting can collide two bullets onto the same CV line.
+    return { ...entry, bullets: [...new Set(bullets)] };
+  });
+}
+
 // The 7B model doesn't reliably honour "keep the given order" — re-sort its
 // output by real CV end date so experience/projects stay UK-convention
 // reverse-chronological regardless of what the model returned.

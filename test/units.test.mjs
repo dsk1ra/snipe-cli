@@ -299,3 +299,44 @@ try {
 } catch (e) {
   fail(`experience reconciliation unit tests crashed: ${e.message}`);
 }
+
+// ── 22. UNIT — Phase 3 bullet-number verification ────────────────────
+// The prompt-side fix for invented figures measured zero effect across 24
+// offers (ledger V4), so this is the repair. Same shape as fit-rules'
+// verifyAgainstCv, which fixed the equivalent Phase 1 surface.
+try {
+  const { verifyBulletNumbers } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const cv = [
+    '## Experience', '',
+    '### PM / Software Engineer',
+    '**UBWIS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Led a two-developer team building a membership platform: MVP in 4 weeks, grew paying subscribers from 80 at launch to 170',
+    '- Automated billing with Stripe, cutting onboarding time by over 80%',
+  ].join('\n');
+  const bullets = bs => verifyBulletNumbers([{ company: 'UBWIS', bullets: bs }], cv)[0].bullets;
+
+  eq(bullets(['Led delivery serving 100+ subscribers, MVP in 4 weeks.'])[0].includes('80 at launch to 170'), true,
+    'a bullet inventing 100+ reverts to the CV bullet it came from');
+  eq(bullets(['Grew subscribers to 170+ across 5 locations.'])[0].includes('to 170'), true,
+    'appending a plus to a real figure counts as fabrication and reverts');
+  deepEq(bullets(['Cut onboarding time by over 80% with Stripe.']), ['Cut onboarding time by over 80% with Stripe.'],
+    'a rewrite whose figures are all in the CV keeps its tailoring');
+  deepEq(bullets(['Led a team with no figures at all.']), ['Led a team with no figures at all.'],
+    'a bullet with no numbers is untouched');
+  deepEq(bullets(['Shipped in 4 weeks.', 'Grew to 170 members.']),
+    ['Shipped in 4 weeks.', 'Grew to 170 members.'],
+    'multiple clean bullets all survive');
+
+  // Two bad bullets can revert onto the same CV line; the CV must not repeat.
+  const collided = bullets(['Served 100+ users on the platform.', 'Reached 200+ users on the platform.']);
+  eq(collided.length, new Set(collided).size, 'reverting two bullets onto one CV line does not duplicate it');
+
+  // Degenerate inputs
+  deepEq(verifyBulletNumbers([{ company: 'Nowhere Ltd', bullets: ['Invented 999+ things.'] }], cv)[0].bullets,
+    ['Invented 999+ things.'],
+    'an employer absent from the CV has no source to revert to and is left alone');
+  eq(Array.isArray(verifyBulletNumbers(/** @type {any} */ (null), cv)), false,
+    'a non-array is returned untouched');
+} catch (e) {
+  fail(`bullet-number verification unit tests crashed: ${e.message}`);
+}
