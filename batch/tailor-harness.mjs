@@ -122,6 +122,7 @@ function cvExperience() {
     const bold = lines.find(l => /^\*\*/.test(l))?.match(/^\*\*(.+?)\*\*/);
     out.push({
       company: bold ? bold[1].trim() : lines[0].trim(),
+      role: lines[0].trim(),
       bullets: lines.filter(l => l.startsWith('- ')).map(l => l.slice(2).trim()),
     });
   }
@@ -180,9 +181,16 @@ function metricsFor(label) {
     const exp = Array.isArray(c.experience) ? c.experience : [];
 
     const fabNums = [];
-    let groundSum = 0, groundN = 0, copied = 0;
+    let groundSum = 0, groundN = 0, copied = 0, unmatched = 0;
+    const matchedRoles = new Set();
     for (const e of exp) {
-      const match = cvExp.find(r => r.company.toLowerCase().includes(String(e.company || '').toLowerCase().slice(0, 8)));
+      // A schema floor can be satisfied by padding, so an entry only counts as a
+      // retained role if it names something cv.md actually contains — by company
+      // or by role title, since the model uses either.
+      const key = String(e.company || '').toLowerCase().slice(0, 8);
+      const match = key && cvExp.find(r =>
+        r.company.toLowerCase().includes(key) || r.role.toLowerCase().includes(key));
+      if (match) matchedRoles.add(match.company); else unmatched++;
       for (const b of (e.bullets || [])) {
         for (const n of numsOf(b)) if (!cvNums.has(n)) fabNums.push(n);
         for (const sh of shingles(b)) if (ex.has(sh)) { copied++; break; }
@@ -195,7 +203,10 @@ function metricsFor(label) {
     rows.push({
       dir: d,
       roles: exp.length,
-      retention: expectedRoles ? Math.min(1, exp.length / expectedRoles) : 1,
+      // Retention counts roles traceable to cv.md, not array length — otherwise
+      // a padded or invented entry reads as a fix.
+      retention: expectedRoles ? matchedRoles.size / expectedRoles : 1,
+      unmatched,
       companies: exp.map(e => e.company).join('|'),
       fab: fabNums.length,
       fabList: [...new Set(fabNums)],
@@ -213,6 +224,7 @@ function metricsFor(label) {
     label, n: rows.length, meta,
     role_retention: +mean('retention').toFixed(3),
     all_roles_pct: +(rows.filter(r => r.retention >= 1).length / n).toFixed(3),
+    invented_roles: +mean('unmatched').toFixed(3),
     metric_fab: +mean('fab').toFixed(3),
     fab_offers_pct: +(rows.filter(r => r.fab > 0).length / n).toFixed(3),
     example_copy_pct: +(rows.filter(r => r.copied > 0).length / n).toFixed(3),
@@ -264,7 +276,7 @@ if (!isMain) {
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const A = metricsFor(a), B = metricsFor(b);
-  const keys = ['n', 'role_retention', 'all_roles_pct', 'metric_fab', 'fab_offers_pct', 'example_copy_pct', 'grounding', 'mean_bullets'];
+  const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct', 'example_copy_pct', 'grounding', 'mean_bullets'];
   const pad = (s, w) => String(s).padEnd(w);
   console.log(`${pad('metric', 18)}${pad(a, 14)}${pad(b, 14)}delta`);
   console.log('-'.repeat(56));
