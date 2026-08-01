@@ -77,6 +77,7 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 | V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
 | V2 = V1 + named employers | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
 | **V3 = V2 + code reconcile** | **1.000** | **1.000** | **0.000** | 0.625 | 0.625 | 0.818 |
+| V4 = V3 + no fake metrics | 1.000 | 1.000 | 0.000 | 0.625 | 0.625 | 0.835 |
 
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
@@ -149,3 +150,28 @@ is a far smaller problem than "24 of 24 omit a job" but is not zero. The next
 structural lever would be a per-role generation call rather than one call for the
 whole document — the same shape as Phase 2's staged split — at the cost of a
 second model call per offer. Not attempted here.
+
+### V4 — remove the fabricated metrics from the prompt  ❌ no effect on fabrication
+Both "preserve the CV's numbers" rules illustrated themselves with figures absent
+from `cv.md`. 9 of 12 were fabricated, several being near-misses of real ones
+(`50,000+ runs` vs the real `63,000+`, `90%+ coverage` vs `85%+`, `10,000+ users`
+and `over 500 users` vs nothing). Removed rather than corrected — the CV is
+already interpolated as `{{CV_CONTENT}}`, so a hardcoded list can only drift from
+`cv.md` again on the next edit.
+
+**`metric_fab` did not move: 0.625 → 0.625.** The offending numbers are
+byte-identical across V3 and V4:
+
+| invented number | offers |
+|-----------------|--------|
+| `100+` | 11 |
+| `170+` | 3 |
+| `150+` | 1 |
+
+Nothing in the prompt says 100 any more, so the model is not copying the examples
+— it is inventing a round number for "subscribers" outright, and `170+` is the
+real 170 with a `+` appended, which overstates it. The prompt was a genuine
+defect worth removing on its own merits, but it was **not the cause**.
+
+That is now two prompt-level variants (V2, V4) with zero effect on this model.
+Keep the change, stop reaching for the prompt.
