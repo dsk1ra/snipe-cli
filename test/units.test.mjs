@@ -210,3 +210,229 @@ try {
 } catch (e) {
   fail(`scan filter unit tests crashed: ${e.message}`);
 }
+
+// ── 20. UNIT — Phase 3 tailoring-harness metrics ─────────────────────
+// These decide whether a benchmark says a change worked, so a silent break
+// here invalidates every comparison rather than failing loudly.
+try {
+  const h = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+
+  // numsOf: what counts as a "number the CV must contain"
+  deepEq([...h.numsOf('grew from 80 at launch to 170')], ['80', '170'],
+    'numsOf pulls plain integers');
+  deepEq([...h.numsOf('cut onboarding by 80% across 5 locations')], ['80%'],
+    'numsOf keeps the percent sign, so 80 and 80% are not interchangeable');
+  deepEq([...h.numsOf('serving 10,000+ users')], ['10,000+'],
+    'numsOf keeps thousands separators and the plus, so 10,000+ != 10000');
+  deepEq([...h.numsOf('no digits here')], [],
+    'numsOf returns nothing for prose');
+  deepEq([...h.numsOf('version 3 of 4')], [],
+    'numsOf drops single digits — too noisy to attribute to the CV');
+
+  // shingles: the example-copy detector
+  const sh = h.shingles('one two three four five six seven eight nine', 8);
+  eq(sh.size, 2, 'shingles yields (n - k + 1) windows');
+  eq(sh.has('one two three four five six seven eight'), true, 'shingles keeps word order');
+  eq(h.shingles('too short for a window', 8).size, 0,
+    'shingles yields nothing below the window size');
+  eq(h.shingles('ONE Two THREE four five six seven eight').has('one two three four five six seven eight'), true,
+    'shingles is case-insensitive, so recased copying is still caught');
+
+  // exampleShingles: reads the real prompt, so it breaks if the example moves
+  const ex = h.exampleShingles();
+  eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
+  eq([...ex].some(s => s.includes('membership platform')), true,
+    'exampleShingles covers the worked-example experience bullets');
+} catch (e) {
+  fail(`tailor-harness metric unit tests crashed: ${e.message}`);
+}
+
+// ── 21. UNIT — Phase 3 experience reconciliation ─────────────────────
+// The failure shapes are the ones measured across 24 benchmark offers: the
+// schema floor guarantees the entry count, this guarantees the entries are the
+// real employers. See batch/PHASE3-EXPERIMENT-LEDGER.md.
+try {
+  const { reconcileExperience } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const cv = [
+    '## Experience', '',
+    '### Teaching Assistant',
+    '**Northgate College** — Edinburgh | Sep 2025 – Present', '',
+    '- Taught programming to 800+ undergraduates across two languages',
+    '- Wrote setup guides cutting configuration time to 30 minutes', '',
+    '### PM / Software Engineer',
+    '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Led a two-developer team building a subscription platform, MVP in 4 weeks',
+    '- Automated billing and onboarding with a payment provider and OAuth 2.0',
+  ].join('\n');
+  const names = items => reconcileExperience(items, cv).map(e => e.company);
+  const acme = { company: 'Acme SaaS', bullets: ['Led team, membership platform MVP 4 weeks'] };
+  const college = { company: 'Northgate College', bullets: ['Taught 800+ students Java and C++'] };
+
+  deepEq(names([college, acme]), ['Northgate College', 'Acme SaaS'],
+    'a correct pair passes through unchanged');
+  deepEq(names([acme, { company: 'Acme SaaS', bullets: ['Automated billing with Stripe'] }]),
+    ['Northgate College', 'Acme SaaS'],
+    'a duplicated employer is replaced by the missing one');
+  deepEq(names([acme, { company: 'Analytics Dashboard', bullets: ['Built a SIEM dashboard with Okta'] }]),
+    ['Northgate College', 'Acme SaaS'],
+    'a project promoted to a job is dropped, not kept as a second employer');
+  deepEq(names([acme]), ['Northgate College', 'Acme SaaS'],
+    'a role the model omitted entirely is backfilled');
+  deepEq(names([acme, college]), ['Northgate College', 'Acme SaaS'],
+    'entries arriving out of CV order are returned in CV order');
+
+  // Backfill must come from the CV verbatim; a claimed role keeps its rewrite.
+  const out = reconcileExperience([acme], cv);
+  eq(out[0].bullets.length, 2, 'a backfilled role carries the CV bullets');
+  eq(out[0].bullets[0].includes('800+ undergraduates'), true,
+    'backfilled bullets are the real CV text, not invented');
+  deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
+
+  // Degenerate inputs must not throw or silently empty the section.
+  deepEq(reconcileExperience([], cv).map(e => e.company),
+    ['Northgate College', 'Acme SaaS'],
+    'an empty model array backfills every role rather than yielding no experience');
+  eq(Array.isArray(reconcileExperience(/** @type {any} */ (null), cv)), false,
+    'a non-array is returned untouched for the caller to reject');
+  deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
+    'a CV with no Experience section leaves the model output alone');
+} catch (e) {
+  fail(`experience reconciliation unit tests crashed: ${e.message}`);
+}
+
+// ── 22. UNIT — Phase 3 bullet-number verification ────────────────────
+// The prompt-side fix for invented figures measured zero effect across 24
+// offers (ledger V4), so this is the repair. Same shape as fit-rules'
+// verifyAgainstCv, which fixed the equivalent Phase 1 surface.
+try {
+  const { verifyBulletNumbers } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const cv = [
+    '## Experience', '',
+    '### PM / Software Engineer',
+    '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Led a two-developer team building a membership platform: MVP in 4 weeks, grew paying subscribers from 80 at launch to 170',
+    '- Automated billing with Stripe, cutting onboarding time by over 80%',
+  ].join('\n');
+  const bullets = bs => verifyBulletNumbers([{ company: 'Acme SaaS', bullets: bs }], cv)[0].bullets;
+
+  eq(bullets(['Led delivery serving 100+ subscribers, MVP in 4 weeks.'])[0].includes('80 at launch to 170'), true,
+    'a bullet inventing 100+ reverts to the CV bullet it came from');
+  eq(bullets(['Grew subscribers to 170+ across 5 locations.'])[0].includes('to 170'), true,
+    'appending a plus to a real figure counts as fabrication and reverts');
+  deepEq(bullets(['Cut onboarding time by over 80% with Stripe.']), ['Cut onboarding time by over 80% with Stripe.'],
+    'a rewrite whose figures are all in the CV keeps its tailoring');
+  deepEq(bullets(['Led a team with no figures at all.']), ['Led a team with no figures at all.'],
+    'a bullet with no numbers is untouched');
+  deepEq(bullets(['Shipped in 4 weeks.', 'Grew to 170 members.']),
+    ['Shipped in 4 weeks.', 'Grew to 170 members.'],
+    'multiple clean bullets all survive');
+
+  // Two bad bullets can revert onto the same CV line; the CV must not repeat.
+  const collided = bullets(['Served 100+ users on the platform.', 'Reached 200+ users on the platform.']);
+  eq(collided.length, new Set(collided).size, 'reverting two bullets onto one CV line does not duplicate it');
+
+  // Degenerate inputs
+  deepEq(verifyBulletNumbers([{ company: 'Nowhere Ltd', bullets: ['Invented 999+ things.'] }], cv)[0].bullets,
+    ['Invented 999+ things.'],
+    'an employer absent from the CV has no source to revert to and is left alone');
+  eq(Array.isArray(verifyBulletNumbers(/** @type {any} */ (null), cv)), false,
+    'a non-array is returned untouched');
+} catch (e) {
+  fail(`bullet-number verification unit tests crashed: ${e.message}`);
+}
+
+// ── 23. UNIT — Phase 3 harness sample selection and scoring ──────────
+// metricsFor decides whether a benchmark says a change worked, so it is scored
+// here against a fixture tree with known answers rather than trusted.
+try {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+  const { tmpdir } = await import('os');
+  const h = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+  const root = mkdtempSync(join(tmpdir(), 'snipe-bench-'));
+  try {
+    // Fixture CV: two employers, four bullets, figures 800+, 30, 170, 80%.
+    const cvPath = join(root, 'cv.md');
+    writeFileSync(cvPath, [
+      '## Experience', '',
+      '### Teaching Assistant', '**Northgate College** - Edinburgh | Sep 2025 - Present', '',
+      '- Taught programming to 800+ undergraduates across two languages',
+      '- Wrote setup guides cutting configuration time to 30 minutes', '',
+      '### PM / Software Engineer', '**Acme SaaS** - Edinburgh | Oct 2024 - Sep 2025', '',
+      '- Led a team building a subscription platform, MVP in 4 weeks, grew to 170 members',
+      '- Automated billing, cutting onboarding time by over 80%',
+    ].join('\n'), 'utf8');
+
+    const benchRoot = join(root, 'bench');
+    const write = (label, dir, experience) => {
+      const d = join(benchRoot, label, dir);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'cv-content.json'), JSON.stringify({ experience }), 'utf8');
+    };
+
+    // Perfect run: both employers, CV figures only.
+    write('good', 'a', [
+      { company: 'Northgate College', bullets: ['Taught 800+ undergraduates across two languages'] },
+      { company: 'Acme SaaS', bullets: ['Grew the platform to 170 members in 4 weeks'] },
+    ]);
+    const good = h.metricsFor('good', { benchRoot, cvPath });
+    eq(good.n, 1, 'metricsFor counts one offer per cv-content.json');
+    eq(good.role_retention, 1, 'both real employers score full retention');
+    eq(good.all_roles_pct, 1, 'an offer keeping every role counts toward all_roles_pct');
+    eq(good.invented_roles, 0, 'no entry is unmatched when both name real employers');
+    eq(good.metric_fab, 0, 'figures present in the CV are not counted as fabricated');
+
+    // Degenerate run: one role dropped, one employer duplicated, invented figure.
+    write('bad', 'a', [
+      { company: 'Acme SaaS', bullets: ['Served 100+ members, shipping in 4 weeks'] },
+      { company: 'Acme SaaS', bullets: ['Automated billing by 80%'] },
+    ]);
+    const bad = h.metricsFor('bad', { benchRoot, cvPath });
+    eq(bad.role_retention, 0.5, 'a duplicated employer counts once, so retention is halved');
+    eq(bad.all_roles_pct, 0, 'an offer missing a role scores zero on all_roles_pct');
+    eq(bad.invented_roles, 1, 'the duplicate entry is reported as unmatched, not as a role');
+    eq(bad.metric_fab, 1, 'a figure absent from the CV is counted once');
+    eq(bad.fab_offers_pct, 1, 'the offer is flagged as carrying a fabrication');
+
+    // An entry naming no real employer at all.
+    write('invented', 'a', [
+      { company: 'Northgate College', bullets: ['Taught 800+ undergraduates'] },
+      { company: 'Acme SaaS', bullets: ['Grew to 170 members'] },
+      { company: 'Nowhere Ltd', bullets: ['Co-founded a bakery'] },
+    ]);
+    const inv = h.metricsFor('invented', { benchRoot, cvPath });
+    eq(inv.role_retention, 1, 'a spurious extra entry does not reduce retention of the real roles');
+    eq(inv.invented_roles, 1, 'an employer absent from the CV is reported as invented');
+
+    // Sample selection: only offers with an eval, a report and a cached JD.
+    const batchDir = join(root, 'batch');
+    const reportsDir = join(root, 'reports');
+    mkdirSync(join(batchDir, 'jds'), { recursive: true });
+    mkdirSync(join(batchDir, 'evals'), { recursive: true });
+    mkdirSync(reportsDir, { recursive: true });
+    const stateFile = join(batchDir, 'local-state.tsv');
+    writeFileSync(stateFile, [
+      'id\turl\tp1_status\tp1_score\tp1_archetype\tp2_status\tp2_report_num\tp3_status\terror\tretries',
+      '1\thttps://x/1\tscored\t3\tBackend\tevaled\t001\tcompleted\t-\t0',   // complete
+      '2\thttps://x/2\tscored\t3\tBackend\tevaled\t002\tcompleted\t-\t0',   // report missing
+      '3\thttps://x/3\tscored\t3\tBackend\tskipped\t-\t-\t-\t0',            // never evaled
+    ].join('\n'), 'utf8');
+    writeFileSync(join(reportsDir, '001-acme-2026-01-01.md'), '# report', 'utf8');
+    writeFileSync(join(batchDir, 'jds/1.txt'), 'a jd', 'utf8');
+    writeFileSync(join(batchDir, 'evals/1.json'),
+      JSON.stringify({ company: 'Acme', role: 'Engineer', score: 4.2 }), 'utf8');
+    writeFileSync(join(batchDir, 'jds/2.txt'), 'a jd', 'utf8');
+    writeFileSync(join(batchDir, 'evals/2.json'),
+      JSON.stringify({ company: 'Beta', role: 'Engineer', score: 3.1 }), 'utf8');
+
+    const elig = h.eligible({ stateFile, reportsDir, batchDir });
+    eq(elig.length, 1, 'only the offer with an eval, a report and a JD is eligible');
+    eq(elig[0].id, '1', 'the eligible offer is the complete one');
+    eq(elig[0].score, 4.2, 'the eval score is carried through for stratification');
+    deepEq(h.eligible({ stateFile: join(root, 'nope.tsv'), reportsDir, batchDir }), [],
+      'a missing state file yields no offers rather than throwing');
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+} catch (e) {
+  fail(`tailor-harness sample/metrics unit tests crashed: ${e.message}`);
+}
