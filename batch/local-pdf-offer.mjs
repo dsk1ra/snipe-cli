@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         parseCvSections, parseEntries } from './cv-select.mjs';
+         parseCvSections, parseEntries, reconcileExperience } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -540,6 +540,11 @@ if (Array.isArray(cvContent.projects)) {
 
 // Tier 3 — the model doesn't reliably keep UK reverse-chronological order;
 // re-sort both sections by real CV end date regardless of its output order.
+// Tier 3 — reconcile experience against the employers the CV actually lists,
+// before ordering. The schema floor guarantees the entry count; this guarantees
+// they are the right employers, one each, with a missing one backfilled from the
+// CV rather than left out.
+cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
