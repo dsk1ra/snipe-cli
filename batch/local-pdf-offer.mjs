@@ -42,6 +42,11 @@ function parseArgs(argv) {
     evalScore: null, company: null, role: null, date: null, p1Score: null,
     p1Archetype: null, model: 'snipe-screen',
     ollamaUrl: 'http://localhost:11434', threshold: 3.7, numCtx: 8192,
+    // Benchmarking only. --bench-dir redirects the output folder and stops
+    // before PDF generation (the model's work is done once cv-content.json is
+    // written); --temperature overrides the production 0.15 so a benchmark can
+    // run greedy, where this stack is byte-identical and one run is a valid A/B.
+    benchDir: null, temperature: 0.15,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -60,6 +65,8 @@ function parseArgs(argv) {
       case '--ollama-url':   a.ollamaUrl    = argv[++i]; break;
       case '--threshold':    a.threshold    = parseFloat(argv[++i]); break;
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
+      case '--bench-dir':    a.benchDir     = argv[++i]; break;
+      case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
     }
   }
   return a;
@@ -183,7 +190,7 @@ const TAILOR_SCHEMA = {
   required: ['summary', 'competencies', 'projects', 'education_modules', 'skills', 'experience'],
 };
 
-async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, format = null) {
+async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, format = null, temperature = 0.15) {
   const body = JSON.stringify({
     model,
     system: systemPrompt,
@@ -194,7 +201,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
     // tokens — summary, 6-9 competencies, 3-4 project descriptions, 5-6 skill
     // categories, experience bullets). Inputs are trimmed (Block E brief +
     // capped JD + base64-stripped CV) to keep input + output under the 8k window.
-    options: { num_ctx: numCtx, temperature: 0.15, num_predict: 2400 },
+    options: { num_ctx: numCtx, temperature, num_predict: 2400 },
   });
 
   const resp = await fetch(`${baseUrl}/api/generate`, {
@@ -456,7 +463,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
   let parsed;
   try {
-    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, TAILOR_SCHEMA);
+    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, TAILOR_SCHEMA, args.temperature);
     parsed = parseJsonResponse(raw);
   } catch (err) {
     lastErr = `invalid JSON (${err.message})`;
@@ -550,7 +557,9 @@ if (typeof cvContent.summary === 'string') {
 
 // Build output folder
 const companySlug = slugify(args.company || 'unknown');
-const appDir      = resolve(PROJECT, `output/${args.date}_${companySlug}_${args.reportNum}`);
+const appDir      = args.benchDir
+  ? resolve(args.benchDir, `${args.id || args.reportNum}_${companySlug}`)
+  : resolve(PROJECT, `output/${args.date}_${companySlug}_${args.reportNum}`);
 const contentFile = resolve(appDir, 'cv-content.json');
 const htmlFile    = resolve(appDir, 'source.html');
 const cvName      = 'Candidate'; // fallback for PDF filename; overridden by profile.yml full_name below
@@ -562,6 +571,19 @@ writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 // Copy JD
 const jdDest = resolve(appDir, 'job-description.txt');
 if (jdText) writeFileSync(jdDest, jdText, 'utf8');
+
+// Benchmark stop. Everything past this point (PDF ladder, tracker row, report
+// back-fill) is deterministic post-processing that costs a chromium render and
+// mutates real user state — none of it measures the model. cv-content.json is
+// captured pre-ladder, so the ladder's project trimming cannot mask what the
+// model actually returned.
+if (args.benchDir) {
+  out({ status: 'ok', id: args.id, report_num: args.reportNum,
+        company: args.company || 'unknown', role: args.role || 'unknown',
+        score: args.evalScore, pdf: null, report: args.reportPath,
+        tracker: null, content: contentFile, error: null });
+  process.exit(0);
+}
 
 // Derive candidate name from profile.yml for PDF filename
 let candidateName = cvName;
