@@ -58,13 +58,18 @@ win.
 
 ## Root cause (read before the variants)
 
+> **The file paths in this section were wrong.** `local-pdf-offer.mjs:28` prefers
+> the gitignored `local-tailor-prompt.local.md` when it exists, and it has since
+> 22 July. Everything below is true of the *shipped* prompt; the prompt that
+> actually ran was worse. See *The V2/V4 runs are void*.
+
 Three independent signals all tell the 7B "one company", and they beat the prose
-instruction at `local-tailor-prompt.md:41` that says *"ALL companies from the CV"*:
+instruction that says *"ALL companies from the CV"*:
 
 | location | what it shows |
 |----------|---------------|
-| `local-tailor-prompt.md:92` worked example | exactly **1** company ("Acme SaaS") |
-| `local-tailor-prompt.md:113` output template | exactly **1** experience object — `projects` shows **3** |
+| worked example | exactly **1** company — and in the **active** prompt that company is `UBWIS`, with a complete finished answer attached |
+| output template | exactly **1** experience object — `projects` shows **3** |
 | `local-pdf-offer.mjs:184` schema | `experience: minItems 1` — `projects` is `minItems 3` |
 
 The brevity disclaimer at `:102` explicitly corrects the count for projects and
@@ -75,10 +80,10 @@ experience, so the single-entry example reads as the target.
 both roles, correctly reverse-chronological, with UBWIS's real numbers intact.
 The loss happens downstream, in the model.
 
-Secondary: `local-tailor-prompt.md:43` tells the model to preserve *"the CV's
-numbers"* and then lists `10,000+ users`, `over 500 users`, `90%+ coverage` —
-none of which appear in `cv.md`. The prompt is presenting fabricated metrics as
-the candidate's own.
+Secondary: the prompt tells the model to preserve *"the CV's numbers"* and then
+lists figures absent from `cv.md`. In the **active** prompt that list contained
+`100+ subscribers` — the exact figure that then appeared in 11 of 24 outputs.
+The model was not inventing it; it was obeying.
 
 ## Variants
 
@@ -88,11 +93,14 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 |---------|----------------|-----------|----------------|------------|--------------|-----------|
 | V0 baseline | 0.500 | 0.000 | 0.000 | 0.833 | 0.917 | 0.735 |
 | V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
-| V2 = V1 + named employers | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
+| ~~V2 = V1 + named employers~~ | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
 | **V3 = V2 + code reconcile** | **1.000** | **1.000** | **0.000** | 0.625 | 0.625 | 0.818 |
-| V4 = V3 + no fake metrics | 1.000 | 1.000 | 0.000 | 0.625 | 0.625 | 0.835 |
+| ~~V4 = V3 + no fake metrics~~ | 1.000 | 1.000 | 0.000 | 0.625 | 0.625 | 0.835 |
 | **V5 = V4 + number verify** | **1.000** | **1.000** | **0.000** | **0.000** | 0.667 | 0.883 |
 | V5 repeat (noise floor) | 1.000 | 1.000 | 0.000 | 0.000 | 0.625 | 0.903 |
+| **V6 = V5 + the real prompt** | **1.000** | **1.000** | **0.000** | **0.000** | **0.292** | **0.900** |
+
+~~Struck rows~~ never ran: see *The V2/V4 runs are void* below.
 
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
@@ -188,8 +196,48 @@ Nothing in the prompt says 100 any more, so the model is not copying the example
 real 170 with a `+` appended, which overstates it. The prompt was a genuine
 defect worth removing on its own merits, but it was **not the cause**.
 
-That is now two prompt-level variants (V2, V4) with zero effect on this model.
-Keep the change, stop reaching for the prompt.
+~~That is now two prompt-level variants (V2, V4) with zero effect on this model.
+Keep the change, stop reaching for the prompt.~~ **Wrong — see below.**
+
+## The V2/V4 runs are void
+
+`local-pdf-offer.mjs:28` resolves the prompt as
+`existsSync(local-tailor-prompt.local.md) ? local : local-tailor-prompt.md`.
+The `.local.md` override has existed since 22 July. **V2 and V4 both edited the
+shipped file, which the pipeline never opened**, so neither change reached the
+model and their 0.000 deltas measured nothing at all.
+
+`exampleShingles()` in the harness had the same bug, so `example_copy_pct` was
+computed against a prompt that never ran.
+
+The conclusion drawn from those two runs — *"prompt instruction cannot fix this
+model, the lever is structural"* — was an artefact of the mistake and is
+withdrawn. V6 tests the change properly and reverses it.
+
+### V6 — V5 plus the corrections applied to the prompt that actually runs  ✅
+The active prompt now carries the V2 rules and `{{EXPERIENCE_COMPANIES}}`; its
+worked example uses placeholder employers instead of a finished `UBWIS` answer;
+`100+ subscribers` is corrected to `170 members` and `970% growth` (a role no
+longer in `cv.md`) is gone.
+
+| | V5 | V6 | noise floor |
+|---|---|---|---|
+| Napier **model-written** | 7/24 | **24/24** | — |
+| `example_copy_pct` | 0.667 | **0.292** | ±0.042 |
+| `grounding` | 0.883 | 0.900 | ±0.020 |
+| `mean_bullets` | 4.83 | 4.00 | ±0.12 |
+| verbatim-CV bullets (code intervening) | 50/116, all 24 offers | **1/96, 1 offer** | — |
+
+**The prompt was the lever.** With the worked example no longer handing the model
+a finished single-company answer, it produces both roles unaided on every offer,
+and the `example_copy` drop is ~9x the noise floor. The code guards did not
+become useless — they became a safety net, firing on 1 offer in 24 instead of
+carrying all 24.
+
+The honest ordering of causes is therefore: the prompt's worked example was the
+root cause of both the dropped role and the `100+` figure; the schema floor,
+reconciler and number verifier are defence in depth that made the output correct
+while the root cause was still present.
 
 ### V5 — verify bullet numbers against the CV in code  ✅ SHIPPED
 `verifyBulletNumbers()` reverts any bullet asserting a figure `cv.md` does not
@@ -239,10 +287,8 @@ re-checked against it.
 - **Shipping `temperature 0`.** Production stays at 0.15; the benchmark flag only
   overrides it. Temperature 0 is not fully reproducible here anyway (above), so
   dropping it would need its own A/B on quality, not determinism.
-- **Per-role generation.** The 7B still omits the teaching role ~71% of the time
-  (V3); the reconciler covers for it with true CV text. Splitting the call per
-  role — the shape that fixed Phase 2 — is the remaining lever, at one extra
-  model call per offer.
+- **Per-role generation.** No longer indicated. V6 has the model writing both
+  roles unaided 24/24, so the residual this was meant to address is gone.
 - **Re-running Phase 2 for the sample.** The benchmark's input reports were
   generated under an older `cv.md`. Constant across V0–V5 so every delta holds,
   but the absolute `grounding`/`metric_fab` figures are measured against slightly
