@@ -92,8 +92,8 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 | variant | role_retention | all_roles | invented_roles | metric_fab | example_copy | grounding |
 |---------|----------------|-----------|----------------|------------|--------------|-----------|
 | V0 baseline | 0.500 | 0.000 | 0.000 | 0.833 | 0.917 | 0.735 |
-| V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
-| ~~V2 = V1 + named employers~~ | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
+| V1 schema floor | 0.646 | 0.292 | **0.792** | 0.833 | 0.917 | 0.728 |
+| ~~V2 = V1 + named employers~~ | 0.646 | 0.292 | 0.792 | 0.875 | 0.917 | 0.746 |
 | **V3 = V2 + code reconcile** | **1.000** | **1.000** | **0.000** | 0.625 | 0.625 | 0.818 |
 | ~~V4 = V3 + no fake metrics~~ | 1.000 | 1.000 | 0.000 | 0.625 | 0.625 | 0.835 |
 | **V5 = V4 + number verify** | **1.000** | **1.000** | **0.000** | **0.000** | 0.667 | 0.883 |
@@ -109,7 +109,7 @@ same Acme SaaS block whatever the JD, so Phase 3 is barely tailoring experience 
 
 ### V1 — grammar floor on `experience.minItems`  ⚠ partial, and partly fake
 Deriving `minItems` from the roles cv-select passed does force a second entry —
-`all_roles_pct` 0.000 → 0.292 — but **`invented_roles` goes 0.000 → 0.417**. The
+`all_roles_pct` 0.000 → 0.292 — but **`invented_roles` goes 0.000 → 0.792**. The
 model satisfies the grammar with padding:
 
 | second entry | offers |
@@ -117,6 +117,12 @@ model satisfies the grammar with padding:
 | genuine `Northgate College` | 7 |
 | `Acme SaaS` duplicated (one offer thrice) | 9 |
 | a *project* promoted to a job (`Zero Trust…`, `MongoDB`, `Re:Link…`) | 8 |
+
+> `invented_roles` for V1/V2 was first reported as 0.417/0.458. The metric
+> counted a repeated employer as a *match*, so `Acme|Acme` scored as two healthy
+> roles on that column. Corrected to count a second claim on an already-matched
+> employer as junk, every stored run was re-scored from disk (no GPU needed) and
+> only these two rows moved. `role_retention` always caught the duplicate.
 
 **This is why retention counts roles traceable to `cv.md` and not array length.**
 Under the length-based metric the same run scores 0.500 → 0.958 and reads as
@@ -134,7 +140,7 @@ the worked example instead of one, and extends the brevity note to experience.
 
 **`role_retention` and `all_roles_pct` did not move at all** — 0.646 and 0.292,
 identical to V1 to three decimals. The *same 7 offers* succeed and the same 17
-fail in the same way. `invented_roles` got slightly worse (0.417 → 0.458).
+fail in the same way. `invented_roles` is identical too (0.792 both).
 
 This is the Phase 1 V5 result again: *prompt instruction alone cannot fix this
 model's CV lookup*. The 7B is not failing to understand the requirement — the
