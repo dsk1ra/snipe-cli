@@ -97,9 +97,11 @@ export function topK(queryVec, index, k = 3) {
 // Split the CV (+ article-digest if present) into retrievable atoms. Each atom
 // carries an entity prefix ("Acme Corp — Software Engineer / PM: <bullet>") so a
 // bullet stays meaningful out of context.
-export function extractCvAtoms() {
+// `md` overrides the on-disk cv.md — only the tests pass it, so the line-parsing
+// rules can be asserted without depending on the gitignored real CV.
+export function extractCvAtoms(md) {
   const atoms = [];
-  const cv = cleanCvForPrompt(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
+  const cv = cleanCvForPrompt(md ?? readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
 
   const SECTIONS = ['Summary', 'Experience', 'Projects', 'Education', 'Certifications', 'Skills', 'Languages'];
   let entity = '';
@@ -116,6 +118,15 @@ export function extractCvAtoms() {
       const name = sectionH[1].trim();
       if (SECTIONS.includes(name)) { section = name; entity = ''; }
       else entity = name;
+      continue;
+    }
+    // Location out of the contact header — the one header field worth retrieving.
+    // JDs make "currently based in <countries>" a MUST, and with no location atom
+    // in the index that row could only ever grade Gap (it did: reports 050, 144).
+    // Phrased to match the JD wording rather than the CV's, so cosine sim lands.
+    const loc = !section && s.match(/\*\*Location:?\*\*:?\s*([^|]+)/i);
+    if (loc) {
+      atoms.push({ text: `Currently based in ${loc[1].trim()}`, source: 'contact' });
       continue;
     }
     // Labelled line: "**Category:** items" or "**Category**: items" — skills rows,

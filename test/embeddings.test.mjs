@@ -153,3 +153,64 @@ else fail(`modelFingerprint() offline fallback → "${offline}", expected "snipe
     restore();
   }
 }
+
+// ── CV atom extraction ──────────────────────────────────────────────────────
+
+// Regression: the contact header is skipped so **Email:** never becomes an atom,
+// which took **Location:** with it. No location atom meant a JD's "currently
+// based in <countries>" MUST could only ever grade Gap — it did on reports 050
+// and 144, both against a CV that says Edinburgh, UK on line 3.
+{
+  const { extractCvAtoms } = await import(
+    pathToFileURL(join(ROOT, 'batch/embeddings.mjs')).href
+  );
+  const cv = [
+    '# Alex Fixture',
+    '**Email:** alex@example.com | **Phone:** +44 7700 900000 | **Location:** Edinburgh, UK (open to remote)',
+    '',
+    '## Skills',
+    '**Languages:** Rust, Java, C/C++',
+    '',
+    '## Education',
+    '### BSc Computer Science',
+    '**Location:** Berlin',
+  ].join('\n');
+  const atoms = extractCvAtoms(cv);
+  const texts = atoms.map(a => a.text);
+
+  const locAtom = atoms.find(a => a.source === 'contact');
+  if (locAtom && /Edinburgh, UK/.test(locAtom.text)) {
+    pass('extractCvAtoms emits a location atom from the contact header');
+  } else {
+    fail(`no contact location atom; got ${JSON.stringify(texts)}`);
+  }
+
+  // Phrased as the JD asks it, not as the CV writes it — this is what makes the
+  // embedding match "Currently based in the U.S., Canada, UK, ...".
+  if (locAtom && /^Currently based in /.test(locAtom.text)) {
+    pass('the location atom is phrased to match JD wording');
+  } else {
+    fail(`location atom reads ${JSON.stringify(locAtom?.text)}`);
+  }
+
+  // The trailing "| **Location:**" must not drag the email and phone in with it.
+  if (!texts.some(t => /alex@example\.com|900000/.test(t))) {
+    pass('email and phone still never become atoms');
+  } else {
+    fail(`contact PII leaked into the index: ${JSON.stringify(texts)}`);
+  }
+
+  // Gated on being pre-section, so a **Location:** inside Education still takes
+  // the labelled-line path rather than being hijacked as a contact atom.
+  if (texts.some(t => t === 'Education — Location: Berlin')) {
+    pass('a **Location:** line inside a section stays a labelled atom');
+  } else {
+    fail(`Education location was not a labelled atom: ${JSON.stringify(texts)}`);
+  }
+
+  if (texts.some(t => /^Skills — Languages: Rust/.test(t))) {
+    pass('the new branch does not shadow the labelled skills row');
+  } else {
+    fail(`skills row missing: ${JSON.stringify(texts)}`);
+  }
+}
