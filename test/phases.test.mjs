@@ -10,6 +10,7 @@
 import {
   pass, fail, warn, ROOT, join, runNodeAsync, preserve, ensureUserLayer,
   existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, tmpdir,
+  pathToFileURL,
 } from './harness.mjs';
 import { startFakeOllama } from './fake-ollama.mjs';
 
@@ -409,6 +410,72 @@ try {
 
     if (s3?.pdf) strays.push(join(ROOT, s3.pdf, '..'));
     else strays.push(join(ROOT, 'output', `2026-01-01_acme-corp_901`));
+
+    // ── Phase 3 · --bench-dir ────────────────────────────────────────────────
+    // The benchmark path stops once cv-content.json is written, so it is the
+    // only way to exercise the tailoring end to end without a Chromium render,
+    // an output/ folder or a tracker row. It is also where the experience
+    // schema floor and the reconciler are observable.
+    const benchOut = join(bench, 'p3bench');
+    const p3b = await runNodeAsync(['batch/local-pdf-offer.mjs',
+      '--id', ID, '--url', 'https://example.com/jobs/1',
+      '--report-path', reportPath, '--report-num', '902',
+      '--jd-file', JD_TMP, '--eval-score', '4.2',
+      '--company', 'Acme Corp', '--role', 'Senior Backend Engineer',
+      '--date', '2026-01-01', '--ollama-url', ollama.url,
+      '--temperature', '0', '--bench-dir', benchOut],
+      { timeout: 300_000, env: { ...process.env, SNIPE_ADDITIONS: bench } });
+    const s3b = envelope(p3b, 'phase 3 bench');
+
+    if (s3b?.status === 'ok') pass('phase 3 --bench-dir exits ok before the PDF ladder');
+    else fail(`phase 3 --bench-dir exit ${p3b.code} status ${s3b?.status}: ${String(s3b?.error || p3b.err).slice(0, 200)}`);
+
+    if (s3b?.pdf === null) pass('phase 3 --bench-dir reports no PDF');
+    else fail(`phase 3 --bench-dir reported a PDF: ${s3b?.pdf}`);
+
+    if (s3b?.content && existsSync(s3b.content)) {
+      pass('phase 3 --bench-dir writes cv-content.json into the bench dir');
+      const content = JSON.parse(readFileSync(s3b.content, 'utf8'));
+
+      // The whole point of the fix: every employer in the CV comes back, once.
+      const companies = (content.experience || []).map(e => e.company);
+      // Resolve employers exactly as the pipeline does. Rolling a regex here is
+      // what let the two definitions drift apart in the first place: the
+      // fixture CV puts the employer in the ### heading, which a bold-line
+      // match misses entirely.
+      const { cvCompanies } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+      const expected = cvCompanies(readFileSync(join(ROOT, 'cv.md'), 'utf8'));
+
+      if (expected.length && companies.length === expected.length) {
+        pass(`phase 3 returns one entry per CV employer (${companies.length})`);
+      } else fail(`phase 3 returned ${companies.length} entries for ${expected.length} CV employers: ${companies.join('|')}`);
+
+      if (companies.length === new Set(companies).size) pass('phase 3 never repeats an employer');
+      else fail(`phase 3 repeated an employer: ${companies.join('|')}`);
+
+      const kept = c => companies.some(x => String(x).toLowerCase().includes(String(c).toLowerCase().slice(0, 8)));
+      const dropped = expected.filter(c => !kept(c));
+      if (!dropped.length) pass('phase 3 keeps every CV employer by name');
+      else fail(`phase 3 dropped CV employers: ${dropped.join(', ')}`);
+
+      // No bullet may assert a figure the CV does not state.
+      const nums = s => new Set((String(s).match(/\d[\d,.]*\+?%?/g) || [])
+        .map(x => x.replace(/[.,]$/, '')).filter(x => x.length > 1));
+      const cvNums = nums(readFileSync(join(ROOT, 'cv.md'), 'utf8'));
+      const bad = [];
+      for (const e of content.experience || []) {
+        for (const b of e.bullets || []) for (const n of nums(b)) if (!cvNums.has(n)) bad.push(n);
+      }
+      if (!bad.length) pass('phase 3 emits no figure absent from cv.md');
+      else fail(`phase 3 emitted figures absent from cv.md: ${[...new Set(bad)].join(', ')}`);
+    } else fail('phase 3 --bench-dir wrote no cv-content.json');
+
+    if (!existsSync(join(bench, `${ID}.tsv`)) || s3?.status) {
+      pass('phase 3 --bench-dir writes no tracker row of its own');
+    }
+    if (!existsSync(join(ROOT, 'output', '2026-01-01_acme-corp_902'))) {
+      pass('phase 3 --bench-dir leaves output/ untouched');
+    } else fail('phase 3 --bench-dir created an output/ folder');
   }
 } finally {
   await ollama.close();
