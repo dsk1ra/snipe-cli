@@ -215,6 +215,70 @@ export function remapProjectNames(projects, cvText) {
   return out;
 }
 
+/**
+ * Reconcile the model's experience array against the employers the CV actually
+ * lists. Measured on 24 offers: the model returns the right *number* of entries
+ * once the schema floors it, but fills them with a duplicated employer (9/24) or
+ * a project promoted to a job (8/24), and naming the employers in the prompt
+ * changed neither figure. See PHASE3-EXPERIMENT-LEDGER.md — the lever is here,
+ * not in the wording.
+ *
+ * Each real employer claims its best unclaimed model entry: an entry whose
+ * company names it, otherwise one whose bullets overlap its CV bullets. An
+ * employer that claims nothing is backfilled from the CV itself — those bullets
+ * are already relevance-ranked and trimmed by selectCvForJd, so a backfilled
+ * role is untailored but true, which beats absent. Unclaimed model entries are
+ * dropped: they are the duplicates and the projects.
+ *
+ * @param {any[]} items model experience entries
+ * @param {string} selectedCv the CV text handed to the model
+ * @returns {any[]} one entry per real employer, in CV order
+ */
+export function reconcileExperience(items, selectedCv) {
+  const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
+  if (!sec || !Array.isArray(items)) return items;
+  const real = parseEntries(sec.lines).entries.map(e => {
+    const title = e.head[0].replace(/^###\s+/, '').trim();
+    const bold = (e.head[1] || '').match(/^\*\*(.+?)\*\*/);
+    return { company: bold ? bold[1].trim() : title, role: title, bullets: e.bullets };
+  });
+  if (!real.length) return items;
+
+  const claimed = new Set();
+  const out = [];
+  for (const r of real) {
+    const target = r.company.toLowerCase();
+    const role = r.role.toLowerCase();
+    const cvTokens = toks(r.bullets.join(' '));
+    let best = -1, bestScore = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (claimed.has(i)) continue;
+      const name = String(items[i]?.company || '').trim().toLowerCase();
+      // A name hit outranks any overlap; overlap only breaks ties between
+      // entries that named nothing recognisable.
+      const named = Boolean(name) && (target.includes(name) || name.includes(target) || role.includes(name));
+      let ov = 0;
+      const bt = toks((items[i]?.bullets || []).join(' '));
+      if (cvTokens.size && bt.size) {
+        let n = 0;
+        for (const t of bt) if (cvTokens.has(t)) n++;
+        ov = n / bt.size;
+      }
+      const score = named ? 1 + ov : ov;
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    // Below the floor the entry is about some other employer entirely, so taking
+    // it would relabel one role's bullets with another's name.
+    if (best >= 0 && bestScore >= 0.35) {
+      claimed.add(best);
+      out.push({ ...items[best], company: r.company });
+    } else {
+      out.push({ company: r.company, bullets: r.bullets });
+    }
+  }
+  return out;
+}
+
 // The 7B model doesn't reliably honour "keep the given order" — re-sort its
 // output by real CV end date so experience/projects stay UK-convention
 // reverse-chronological regardless of what the model returned.
