@@ -19,7 +19,8 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         reconcileExperience, verifyBulletNumbers, cvCompanies } from './cv-select.mjs';
+         reconcileExperience, verifyBulletNumbers, cvCompanies,
+         stripUnsupportedTenure } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -569,6 +570,11 @@ if (typeof cvContent.summary === 'string') {
     } catch { /* keep best-so-far */ }
   }
   cvContent.summary = best;
+
+  // Sibling strip: a years-of-experience claim the CV never makes. The number
+  // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the
+  // token is allowed; it is the tenure that is invented.
+  cvContent.summary = stripUnsupportedTenure(cvContent.summary, cvText);
 
   // Deterministic fabrication strip — if the target company name survived the
   // retries, drop the sentence claiming it (runs before the length-floor pad).

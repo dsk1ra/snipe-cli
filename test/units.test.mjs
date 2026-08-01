@@ -288,6 +288,19 @@ try {
     'backfilled bullets are the real CV text, not invented');
   deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
 
+  // Regression (report 146): the model named the right employer but pasted the
+  // OTHER role's bullets under it. A name hit scored 1+overlap, which cleared
+  // the 0.35 floor on the name alone, so the mislabel was rubber-stamped and
+  // the real bullets were lost. Content decides provenance now.
+  const mislabelled = { company: 'Northgate College',
+    bullets: ['Led a two-developer team building a subscription platform, MVP in 4 weeks'] };
+  const fixed = reconcileExperience([mislabelled, acme], cv);
+  eq(fixed[0].bullets[0].includes('800+ undergraduates'), true,
+    'a bullet belonging to another role is rejected despite the right company name');
+  eq(fixed.some(e => e.bullets.some(b => /subscription platform/.test(b) && e.company === 'Northgate College')), false,
+    "the other role's bullet never appears under the wrong employer");
+  deepEq(fixed[1].bullets, acme.bullets, 'the correctly-labelled role still keeps its rewrite');
+
   // Degenerate inputs must not throw or silently empty the section.
   deepEq(reconcileExperience([], cv).map(e => e.company),
     ['Northgate College', 'Acme SaaS'],
@@ -296,6 +309,26 @@ try {
     'a non-array is returned untouched for the caller to reject');
   deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
     'a CV with no Experience section leaves the model output alone');
+
+  // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"
+  // also occurs as "2+ hours" in an unrelated bullet, so the token is allowed —
+  // the claim is what is invented, not the digit.
+  const { stripUnsupportedTenure } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const tenureCv = cv + '\n- Cut configuration time from 2+ hours to 30 minutes';
+  eq(stripUnsupportedTenure('Engineer with 2+ years of hands-on experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'an unsupported tenure claim is stripped without mangling the sentence');
+  eq(stripUnsupportedTenure('Engineer with 5 years in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'the bare "with N years" form is stripped too');
+  eq(stripUnsupportedTenure('ML-DSA adds ~200 TB over 5 years for a log pipeline.', tenureCv),
+    'ML-DSA adds ~200 TB over 5 years for a log pipeline.',
+    'a duration in a projection is not a tenure claim and survives');
+  eq(stripUnsupportedTenure('Engineer with 6 years of experience.', 'Engineer with 6 years of experience shipping things.'),
+    'Engineer with 6 years of experience.',
+    'a tenure the CV does state is left alone');
+  eq(stripUnsupportedTenure(/** @type {any} */ (null), tenureCv), null,
+    'a non-string summary is returned untouched');
 } catch (e) {
   fail(`experience reconciliation unit tests crashed: ${e.message}`);
 }
