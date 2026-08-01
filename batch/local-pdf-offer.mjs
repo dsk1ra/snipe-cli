@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         parseCvSections, parseEntries, reconcileExperience } from './cv-select.mjs';
+         parseCvSections, parseEntries, reconcileExperience, verifyBulletNumbers } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -545,6 +545,9 @@ if (Array.isArray(cvContent.projects)) {
 // they are the right employers, one each, with a missing one backfilled from the
 // CV rather than left out.
 cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
+// Tier 3 — revert any bullet asserting a figure cv.md does not state. The
+// prompt-side fix for this measured zero effect (ledger V4).
+cvContent.experience = verifyBulletNumbers(cvContent.experience, cvText);
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
