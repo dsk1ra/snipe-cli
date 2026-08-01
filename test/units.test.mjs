@@ -256,45 +256,45 @@ try {
   const cv = [
     '## Experience', '',
     '### Teaching Assistant',
-    '**Edinburgh Napier University** — Edinburgh | Sep 2025 – Present', '',
-    '- Delivered technical instruction to 800+ undergraduate students across Java and C++',
-    '- Authored troubleshooting documentation cutting configuration time to 30 minutes', '',
+    '**Northgate College** — Edinburgh | Sep 2025 – Present', '',
+    '- Taught programming to 800+ undergraduates across two languages',
+    '- Wrote setup guides cutting configuration time to 30 minutes', '',
     '### PM / Software Engineer',
-    '**UBWIS** — Edinburgh | Oct 2024 – Sep 2025', '',
-    '- Led a two-developer team building a membership platform, MVP in 4 weeks',
-    '- Automated billing and onboarding with Stripe and OAuth 2.0',
+    '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Led a two-developer team building a subscription platform, MVP in 4 weeks',
+    '- Automated billing and onboarding with a payment provider and OAuth 2.0',
   ].join('\n');
   const names = items => reconcileExperience(items, cv).map(e => e.company);
-  const ubwis = { company: 'UBWIS', bullets: ['Led team, membership platform MVP 4 weeks'] };
-  const napier = { company: 'Edinburgh Napier University', bullets: ['Taught 800+ students Java and C++'] };
+  const acme = { company: 'Acme SaaS', bullets: ['Led team, membership platform MVP 4 weeks'] };
+  const college = { company: 'Northgate College', bullets: ['Taught 800+ students Java and C++'] };
 
-  deepEq(names([napier, ubwis]), ['Edinburgh Napier University', 'UBWIS'],
+  deepEq(names([college, acme]), ['Northgate College', 'Acme SaaS'],
     'a correct pair passes through unchanged');
-  deepEq(names([ubwis, { company: 'UBWIS', bullets: ['Automated billing with Stripe'] }]),
-    ['Edinburgh Napier University', 'UBWIS'],
+  deepEq(names([acme, { company: 'Acme SaaS', bullets: ['Automated billing with Stripe'] }]),
+    ['Northgate College', 'Acme SaaS'],
     'a duplicated employer is replaced by the missing one');
-  deepEq(names([ubwis, { company: 'Zero Trust Security Analytics Dashboard', bullets: ['Built a SIEM dashboard with Okta'] }]),
-    ['Edinburgh Napier University', 'UBWIS'],
+  deepEq(names([acme, { company: 'Analytics Dashboard', bullets: ['Built a SIEM dashboard with Okta'] }]),
+    ['Northgate College', 'Acme SaaS'],
     'a project promoted to a job is dropped, not kept as a second employer');
-  deepEq(names([ubwis]), ['Edinburgh Napier University', 'UBWIS'],
+  deepEq(names([acme]), ['Northgate College', 'Acme SaaS'],
     'a role the model omitted entirely is backfilled');
-  deepEq(names([ubwis, napier]), ['Edinburgh Napier University', 'UBWIS'],
+  deepEq(names([acme, college]), ['Northgate College', 'Acme SaaS'],
     'entries arriving out of CV order are returned in CV order');
 
   // Backfill must come from the CV verbatim; a claimed role keeps its rewrite.
-  const out = reconcileExperience([ubwis], cv);
+  const out = reconcileExperience([acme], cv);
   eq(out[0].bullets.length, 2, 'a backfilled role carries the CV bullets');
-  eq(out[0].bullets[0].includes('800+ undergraduate students'), true,
+  eq(out[0].bullets[0].includes('800+ undergraduates'), true,
     'backfilled bullets are the real CV text, not invented');
-  deepEq(out[1].bullets, ubwis.bullets, 'a claimed role keeps the model rewrite');
+  deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
 
   // Degenerate inputs must not throw or silently empty the section.
   deepEq(reconcileExperience([], cv).map(e => e.company),
-    ['Edinburgh Napier University', 'UBWIS'],
+    ['Northgate College', 'Acme SaaS'],
     'an empty model array backfills every role rather than yielding no experience');
   eq(Array.isArray(reconcileExperience(/** @type {any} */ (null), cv)), false,
     'a non-array is returned untouched for the caller to reject');
-  deepEq(reconcileExperience([ubwis], 'no experience section here'), [ubwis],
+  deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
     'a CV with no Experience section leaves the model output alone');
 } catch (e) {
   fail(`experience reconciliation unit tests crashed: ${e.message}`);
@@ -309,11 +309,11 @@ try {
   const cv = [
     '## Experience', '',
     '### PM / Software Engineer',
-    '**UBWIS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
     '- Led a two-developer team building a membership platform: MVP in 4 weeks, grew paying subscribers from 80 at launch to 170',
     '- Automated billing with Stripe, cutting onboarding time by over 80%',
   ].join('\n');
-  const bullets = bs => verifyBulletNumbers([{ company: 'UBWIS', bullets: bs }], cv)[0].bullets;
+  const bullets = bs => verifyBulletNumbers([{ company: 'Acme SaaS', bullets: bs }], cv)[0].bullets;
 
   eq(bullets(['Led delivery serving 100+ subscribers, MVP in 4 weeks.'])[0].includes('80 at launch to 170'), true,
     'a bullet inventing 100+ reverts to the CV bullet it came from');
