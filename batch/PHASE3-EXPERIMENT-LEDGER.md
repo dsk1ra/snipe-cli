@@ -91,6 +91,8 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 | V2 = V1 + named employers | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
 | **V3 = V2 + code reconcile** | **1.000** | **1.000** | **0.000** | 0.625 | 0.625 | 0.818 |
 | V4 = V3 + no fake metrics | 1.000 | 1.000 | 0.000 | 0.625 | 0.625 | 0.835 |
+| **V5 = V4 + number verify** | **1.000** | **1.000** | **0.000** | **0.000** | 0.667 | 0.883 |
+| V5 repeat (noise floor) | 1.000 | 1.000 | 0.000 | 0.000 | 0.625 | 0.903 |
 
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
@@ -188,3 +190,60 @@ defect worth removing on its own merits, but it was **not the cause**.
 
 That is now two prompt-level variants (V2, V4) with zero effect on this model.
 Keep the change, stop reaching for the prompt.
+
+### V5 — verify bullet numbers against the CV in code  ✅ SHIPPED
+`verifyBulletNumbers()` reverts any bullet asserting a figure `cv.md` does not
+state to the CV bullet it most resembles. Reverted rather than dropped, so the
+role keeps its depth and only the offending bullet loses its rewrite.
+
+**`metric_fab` 0.625 → 0.000.** Not a single invented figure survives in 24
+offers, and it holds on the repeat run. `grounding` 0.835 → 0.883 follows: a
+reverted bullet is CV text by construction. 16 of 24 offers had at least one
+bullet reverted, which is a direct measure of how often the 7B invents a number.
+
+## Noise floor — measured, after the first estimate was wrong
+
+V5 was re-run unchanged. **21 of 24 offers came back byte-identical; 3 differed**
+(`159_openai`, `30_unknown`, `39_an-innovative…`), so ~12.5% of offers vary
+between identical runs at temperature 0.
+
+| metric | floor | reading |
+|--------|-------|---------|
+| `role_retention`, `all_roles_pct`, `invented_roles`, `metric_fab` | **0.000** | code-guaranteed, not model behaviour |
+| `grounding` | **±0.020** | |
+| `example_copy_pct` | **±0.042** | one offer of 24 |
+| `mean_bullets` | ±0.120 | |
+
+Applying it to the deltas already recorded:
+
+| delta | size | verdict |
+|-------|------|---------|
+| V0→V5 `metric_fab` −0.833 | code guarantee | **real** |
+| V0→V5 `all_roles_pct` +1.000 | code guarantee | **real** |
+| V0→V5 `grounding` +0.148 | 7× floor | **real** |
+| V3→V4 `grounding` +0.017 | **under** floor | not evidence |
+| V4→V5 `example_copy` +0.042 | **at** floor | not evidence |
+
+So V4's verdict ("no effect") is unchanged and now properly supported rather
+than assumed. V1→V2's `role_retention` delta of exactly 0.000 is not merely an
+aggregate match: the *same 7 offers* succeeded in both runs, which is a stronger
+statement than the means agreeing, though with 12.5% of offers varying it is
+evidence rather than proof.
+
+**The four headline results rest on deterministic code paths, so the floor does
+not touch them.** Every interpretive claim about model behaviour has been
+re-checked against it.
+
+## Not attempted
+
+- **Shipping `temperature 0`.** Production stays at 0.15; the benchmark flag only
+  overrides it. Temperature 0 is not fully reproducible here anyway (above), so
+  dropping it would need its own A/B on quality, not determinism.
+- **Per-role generation.** The 7B still omits the teaching role ~71% of the time
+  (V3); the reconciler covers for it with true CV text. Splitting the call per
+  role — the shape that fixed Phase 2 — is the remaining lever, at one extra
+  model call per offer.
+- **Re-running Phase 2 for the sample.** The benchmark's input reports were
+  generated under an older `cv.md`. Constant across V0–V5 so every delta holds,
+  but the absolute `grounding`/`metric_fab` figures are measured against slightly
+  aged tailoring briefs.
