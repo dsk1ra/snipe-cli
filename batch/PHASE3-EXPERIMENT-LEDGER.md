@@ -39,9 +39,22 @@ Same offer (#13), two runs each:
 | **0** | **byte-identical** `cv-content.json` |
 | 0.15 (production) | differs |
 
-So a single run per variant is a valid A/B **only at temperature 0**, and every
-benchmark below is run there. Whether production should also drop to 0 is itself
-a variant — Phase 1's V1 made exactly that change and it was part of the win.
+Every benchmark below runs at 0. Whether production should also drop to 0 is
+itself a variant — Phase 1's V1 made exactly that change and it was part of the
+win.
+
+> **Correction — that check was too weak, and the conclusion drawn from it was
+> wrong.** Two consecutive runs of *one* offer on warm state prove reproducibility
+> within a session; they say nothing about a 24-offer run where the model is
+> swapped, reloaded and batched differently. V5 changed only post-processing —
+> same prompt, same schema, same temperature — yet 1 of 24 offers came back with
+> different *model* text (`30_unknown`, which gained a bullet). Greedy decoding is
+> byte-identical only when the numerics are; GPU batch/split variation can flip a
+> token regardless of temperature.
+>
+> So temperature 0 does **not** reduce the noise floor to zero here, and a single
+> run per variant is not automatically a valid A/B. The floor is measured
+> directly in *Noise floor* below, and any delta smaller than it is not evidence.
 
 ## Root cause (read before the variants)
 
