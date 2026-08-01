@@ -68,7 +68,7 @@ instruction that says *"ALL companies from the CV"*:
 
 | location | what it shows |
 |----------|---------------|
-| worked example | exactly **1** company — and in the **active** prompt that company is `UBWIS`, with a complete finished answer attached |
+| worked example | exactly **1** company — and in the **active** prompt that company is `Acme SaaS`, with a complete finished answer attached |
 | output template | exactly **1** experience object — `projects` shows **3** |
 | `local-pdf-offer.mjs:184` schema | `experience: minItems 1` — `projects` is `minItems 3` |
 
@@ -77,7 +77,7 @@ skills (*"produce 3–4 projects and 5–6 skill categories"*) and says nothing 
 experience, so the single-entry example reads as the target.
 
 `cv-select.mjs` is **not** implicated. Run directly against `cv.md` it returns
-both roles, correctly reverse-chronological, with UBWIS's real numbers intact.
+both roles, correctly reverse-chronological, with Acme SaaS's real numbers intact.
 The loss happens downstream, in the model.
 
 Secondary: the prompt tells the model to preserve *"the CV's numbers"* and then
@@ -105,7 +105,7 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
 `grounding` 0.735 with `copied=2` on 20 of 24 offers: the model emits nearly the
-same UBWIS block whatever the JD, so Phase 3 is barely tailoring experience at all.
+same Acme SaaS block whatever the JD, so Phase 3 is barely tailoring experience at all.
 
 ### V1 — grammar floor on `experience.minItems`  ⚠ partial, and partly fake
 Deriving `minItems` from the roles cv-select passed does force a second entry —
@@ -114,8 +114,8 @@ model satisfies the grammar with padding:
 
 | second entry | offers |
 |--------------|--------|
-| genuine `Edinburgh Napier University` | 7 |
-| `UBWIS` duplicated (one offer thrice) | 9 |
+| genuine `Northgate College` | 7 |
+| `Acme SaaS` duplicated (one offer thrice) | 9 |
 | a *project* promoted to a job (`Zero Trust…`, `MongoDB`, `Re:Link…`) | 8 |
 
 **This is why retention counts roles traceable to `cv.md` and not array length.**
@@ -128,7 +128,7 @@ Keep the floor — it is a necessary precondition — but it is not the fix.
 
 ### V2 — inject the exact employer list into the prompt  ❌ no effect
 The prompt now receives the real employers derived from the CV cv-select passed
-(`Edinburgh Napier University | UBWIS`), names both failure modes outright
+(`Northgate College | Acme SaaS`), names both failure modes outright
 ("NEVER repeat a company", "a project is NOT a company"), shows two companies in
 the worked example instead of one, and extends the brevity note to experience.
 
@@ -150,7 +150,7 @@ sample can resolve and neither is worth reading as an effect.
 unclaimed model entry (by name, else by bullet overlap ≥ 0.35); an employer that
 claims nothing is backfilled from the CV; unclaimed entries are dropped.
 
-All 24 offers now carry `Edinburgh Napier University | UBWIS`. `metric_fab`
+All 24 offers now carry `Northgate College | Acme SaaS`. `metric_fab`
 0.833 → 0.625 and `example_copy_pct` 0.917 → 0.625 fall out of it: a backfilled
 role cannot copy the worked example or invent a number.
 
@@ -160,8 +160,8 @@ the model actually wrote:
 
 | role | model-written | backfilled |
 |------|---------------|------------|
-| UBWIS | **24/24** | 0 |
-| Edinburgh Napier University | **7/24** | 17 |
+| Acme SaaS | **24/24** | 0 |
+| Northgate College | **7/24** | 17 |
 
 7/24 = 0.292, *identical* to V1's and V2's `all_roles_pct`. So the model still
 omits the teaching role ~71% of the time and nothing in V1–V3 changed that; the
@@ -216,13 +216,13 @@ withdrawn. V6 tests the change properly and reverses it.
 
 ### V6 — V5 plus the corrections applied to the prompt that actually runs  ✅
 The active prompt now carries the V2 rules and `{{EXPERIENCE_COMPANIES}}`; its
-worked example uses placeholder employers instead of a finished `UBWIS` answer;
+worked example uses placeholder employers instead of a finished `Acme SaaS` answer;
 `100+ subscribers` is corrected to `170 members` and `970% growth` (a role no
 longer in `cv.md`) is gone.
 
 | | V5 | V6 | noise floor |
 |---|---|---|---|
-| Napier **model-written** | 7/24 | **24/24** | — |
+| second role **model-written** | 7/24 | **24/24** | — |
 | `example_copy_pct` | 0.667 | **0.292** | ±0.042 |
 | `grounding` | 0.883 | 0.900 | ±0.020 |
 | `mean_bullets` | 4.83 | 4.00 | ±0.12 |
