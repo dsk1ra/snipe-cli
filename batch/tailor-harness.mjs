@@ -37,18 +37,29 @@ const SAMPLE = resolve(BENCH, 'sample.tsv');
 
 // ── sample selection ──────────────────────────────────────────────────────────
 
-/** Offers with an eval, a report on disk and a cached JD — Phase 3's real inputs. */
-function eligible() {
-  const state = readFileSync(resolve(__dirname, 'local-state.tsv'), 'utf8').trim().split('\n');
-  const reports = readdirSync(resolve(PROJECT, 'reports'));
+/**
+ * Offers with an eval, a report on disk and a cached JD — Phase 3's real inputs.
+ * Paths are injectable so the selection rules can be tested against a fixture
+ * tree instead of whatever happens to be in the developer's batch/ dir.
+ * @param {{stateFile?: string, reportsDir?: string, batchDir?: string}} [paths]
+ */
+export function eligible(paths = {}) {
+  const {
+    stateFile = resolve(__dirname, 'local-state.tsv'),
+    reportsDir = resolve(PROJECT, 'reports'),
+    batchDir = __dirname,
+  } = paths;
+  if (!existsSync(stateFile) || !existsSync(reportsDir)) return [];
+  const state = readFileSync(stateFile, 'utf8').trim().split('\n');
+  const reports = readdirSync(reportsDir);
   const out = [];
   for (const line of state.slice(1)) {
     const c = line.split('\t');
     const [id, , , , , p2status, reportNum] = c;
     if (p2status !== 'evaled' || !reportNum || reportNum === '-') continue;
     const report = reports.find(f => f.startsWith(`${reportNum}-`));
-    const jd = resolve(__dirname, `jds/${id}.txt`);
-    const ev = resolve(__dirname, `evals/${id}.json`);
+    const jd = resolve(batchDir, `jds/${id}.txt`);
+    const ev = resolve(batchDir, `evals/${id}.json`);
     if (!report || !existsSync(jd) || !existsSync(ev)) continue;
     let e;
     try { e = JSON.parse(readFileSync(ev, 'utf8')); } catch { continue; }
@@ -63,16 +74,16 @@ function eligible() {
  * Stratified by eval score so the sample spans the range Phase 3 actually sees,
  * deterministic (sorted, fixed stride) so re-running `sample` reproduces it.
  */
-function buildSample(n) {
-  const all = eligible().sort((a, b) => a.score - b.score || Number(a.id) - Number(b.id));
+function buildSample(n, paths = {}) {
+  const all = eligible(paths).sort((a, b) => a.score - b.score || Number(a.id) - Number(b.id));
   if (all.length <= n) return all;
   const step = all.length / n;
   return Array.from({ length: n }, (_, i) => all[Math.floor(i * step)]);
 }
 
-function readSample() {
-  if (!existsSync(SAMPLE)) throw new Error(`no sample — run: node batch/tailor-harness.mjs sample --n 24`);
-  return readFileSync(SAMPLE, 'utf8').trim().split('\n').slice(1).map(l => {
+export function readSample(samplePath = SAMPLE) {
+  if (!existsSync(samplePath)) throw new Error(`no sample — run: node batch/tailor-harness.mjs sample --n 24`);
+  return readFileSync(samplePath, 'utf8').trim().split('\n').slice(1).map(l => {
     const [id, reportNum, report, jd, company, role, score] = l.split('\t');
     return { id, reportNum, report, jd, company, role, score: parseFloat(score) };
   });
@@ -111,9 +122,12 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
 
 // ── metrics ───────────────────────────────────────────────────────────────────
 
-/** Experience entries in cv.md, as { company, bullets[] }. */
-function cvExperience() {
-  const cv = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
+/**
+ * Experience entries in cv.md, as { company, role, bullets[] }.
+ * @param {string} [cvPath] injectable so tests use a fixture CV, not the user's
+ */
+function cvExperience(cvPath = resolve(PROJECT, 'cv.md')) {
+  const cv = readFileSync(cvPath, 'utf8');
   const sec = cv.split(/^## /m).find(s => s.startsWith('Experience'));
   if (!sec) return [];
   const out = [];
@@ -173,12 +187,17 @@ function exampleShingles() {
   return out;
 }
 
-function metricsFor(label) {
-  const dir = resolve(BENCH, label);
+/**
+ * @param {string} label
+ * @param {{benchRoot?: string, cvPath?: string}} [paths] injectable for tests
+ */
+function metricsFor(label, paths = {}) {
+  const { benchRoot = BENCH, cvPath = resolve(PROJECT, 'cv.md') } = paths;
+  const dir = resolve(benchRoot, label);
   if (!existsSync(dir)) throw new Error(`no run at ${dir}`);
-  const cvExp = cvExperience();
+  const cvExp = cvExperience(cvPath);
   const expectedRoles = cvExp.length;
-  const cvNums = numsOf(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
+  const cvNums = numsOf(readFileSync(cvPath, 'utf8'));
   const ex = exampleShingles();
 
   const rows = [];
@@ -200,7 +219,11 @@ function metricsFor(label) {
       const key = String(e.company || '').toLowerCase().slice(0, 8);
       const match = key && cvExp.find(r =>
         r.company.toLowerCase().includes(key) || r.role.toLowerCase().includes(key));
-      if (match) matchedRoles.add(match.company); else unmatched++;
+      // A second entry for an employer already claimed is not a role, it is
+      // junk — count it with the invented ones rather than as a match, or the
+      // `UBWIS|UBWIS` failure shape reads as two healthy roles.
+      if (match && !matchedRoles.has(match.company)) matchedRoles.add(match.company);
+      else unmatched++;
       for (const b of (e.bullets || [])) {
         for (const n of numsOf(b)) if (!cvNums.has(n)) fabNums.push(n);
         for (const sh of shingles(b)) if (ex.has(sh)) { copied++; break; }
