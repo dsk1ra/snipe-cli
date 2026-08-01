@@ -69,4 +69,33 @@ the candidate's own.
 
 ## Variants
 
-_Results below are filled in as each run completes._
+All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
+
+| variant | role_retention | all_roles | invented_roles | metric_fab | example_copy | grounding |
+|---------|----------------|-----------|----------------|------------|--------------|-----------|
+| V0 baseline | 0.500 | 0.000 | 0.000 | 0.833 | 0.917 | 0.735 |
+| V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
+
+### V0 — production as shipped
+Every one of the 24 offers dropped a role. Not a tendency, a constant.
+`grounding` 0.735 with `copied=2` on 20 of 24 offers: the model emits nearly the
+same UBWIS block whatever the JD, so Phase 3 is barely tailoring experience at all.
+
+### V1 — grammar floor on `experience.minItems`  ⚠ partial, and partly fake
+Deriving `minItems` from the roles cv-select passed does force a second entry —
+`all_roles_pct` 0.000 → 0.292 — but **`invented_roles` goes 0.000 → 0.417**. The
+model satisfies the grammar with padding:
+
+| second entry | offers |
+|--------------|--------|
+| genuine `Edinburgh Napier University` | 7 |
+| `UBWIS` duplicated (one offer thrice) | 9 |
+| a *project* promoted to a job (`Zero Trust…`, `MongoDB`, `Re:Link…`) | 8 |
+
+**This is why retention counts roles traceable to `cv.md` and not array length.**
+Under the length-based metric the same run scores 0.500 → 0.958 and reads as
+solved. The grammar can only compel a *shape*; it cannot tell the model which
+company belongs in it. `grounding` also drifts down (-0.007) and `mean_bullets`
+inflates 2.96 → 4.38, both consistent with padding rather than recall.
+
+Keep the floor — it is a necessary precondition — but it is not the fix.
