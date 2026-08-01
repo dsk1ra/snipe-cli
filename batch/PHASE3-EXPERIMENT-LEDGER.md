@@ -76,6 +76,7 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 | V0 baseline | 0.500 | 0.000 | 0.000 | 0.833 | 0.917 | 0.735 |
 | V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
 | V2 = V1 + named employers | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
+| **V3 = V2 + code reconcile** | **1.000** | **1.000** | **0.000** | 0.625 | 0.625 | 0.818 |
 
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
@@ -119,3 +120,32 @@ spending more prompt budget: **the remaining lever is structural, not wording.**
 
 `grounding` +0.018 and `metric_fab` +0.042 are both within what a 24-offer
 sample can resolve and neither is worth reading as an effect.
+
+### V3 — reconcile experience in code  ✅ fixes the defect, ⚠ does not fix the model
+`reconcileExperience()` in `cv-select.mjs`. Every real employer claims its best
+unclaimed model entry (by name, else by bullet overlap ≥ 0.35); an employer that
+claims nothing is backfilled from the CV; unclaimed entries are dropped.
+
+All 24 offers now carry `Edinburgh Napier University | UBWIS`. `metric_fab`
+0.833 → 0.625 and `example_copy_pct` 0.917 → 0.625 fall out of it: a backfilled
+role cannot copy the worked example or invent a number.
+
+**`role_retention = 1.000` is a guarantee of the code, not evidence about the
+model, and must not be read as one.** The honest measurement is which entries
+the model actually wrote:
+
+| role | model-written | backfilled |
+|------|---------------|------------|
+| UBWIS | **24/24** | 0 |
+| Edinburgh Napier University | **7/24** | 17 |
+
+7/24 = 0.292, *identical* to V1's and V2's `all_roles_pct`. So the model still
+omits the teaching role ~71% of the time and nothing in V1–V3 changed that; the
+reconciler substitutes true, relevance-ranked CV text where it fails. The
+outcome is a complete and accurate CV, not a better model.
+
+The residual defect is therefore "17 of 24 CVs carry one untailored role", which
+is a far smaller problem than "24 of 24 omit a job" but is not zero. The next
+structural lever would be a per-role generation call rather than one call for the
+whole document — the same shape as Phase 2's staged split — at the cost of a
+second model call per offer. Not attempted here.
