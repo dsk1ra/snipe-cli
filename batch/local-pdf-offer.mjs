@@ -18,7 +18,8 @@ import { resolve, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
-import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder } from './cv-select.mjs';
+import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
+         parseCvSections, parseEntries } from './cv-select.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -181,6 +182,9 @@ const TAILOR_SCHEMA = {
       properties: { category: { type: 'string' }, items: { type: 'string' } },
       required: ['category', 'items'],
     } },
+    // minItems is raised per-run to the number of roles cv-select actually
+    // passed (see experienceSchemaFloor) — the prose "ALL companies from the
+    // CV" lost to a worked example and a template that both showed one.
     experience:   { type: 'array', minItems: 1, items: {
       type: 'object',
       properties: { company: { type: 'string' }, bullets: { type: 'array', items: { type: 'string' } } },
@@ -189,6 +193,30 @@ const TAILOR_SCHEMA = {
   },
   required: ['summary', 'competencies', 'projects', 'education_modules', 'skills', 'experience'],
 };
+
+/**
+ * Grammar-enforced floor on experience entries, derived from the CV that was
+ * actually handed to the model rather than hardcoded — a one-role CV must stay
+ * satisfiable. cv-select never drops experience entries (it only trims bullets
+ * within each), so the count it passes is the count that must come back.
+ * @param {string} selectedCv
+ * @returns {object}
+ */
+function schemaWithExperienceFloor(selectedCv) {
+  let roles = 0;
+  try {
+    const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
+    roles = sec ? parseEntries(sec.lines).entries.length : 0;
+  } catch { /* fall through to the unconstrained schema */ }
+  if (roles < 2) return TAILOR_SCHEMA;
+  return {
+    ...TAILOR_SCHEMA,
+    properties: {
+      ...TAILOR_SCHEMA.properties,
+      experience: { ...TAILOR_SCHEMA.properties.experience, minItems: roles },
+    },
+  };
+}
 
 async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, format = null, temperature = 0.15) {
   const body = JSON.stringify({
@@ -451,6 +479,7 @@ const systemPrompt = prompt
   .replace('{{JD_FULL}}',           cleanJd(jdText));
 
 const userMessage = `Tailor the CV for ${args.company} — ${args.role}. Score: ${args.evalScore}/5. Report: ${args.reportPath}`;
+const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 
 // Generate with one validate-and-repair retry. We keep the latest parseable
 // JSON so a word-count miss on the retry still ships (clamped) rather than
@@ -463,7 +492,7 @@ for (let attempt = 1; attempt <= 2; attempt++) {
     : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
   let parsed;
   try {
-    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, TAILOR_SCHEMA, args.temperature);
+    const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, tailorSchema, args.temperature);
     parsed = parseJsonResponse(raw);
   } catch (err) {
     lastErr = `invalid JSON (${err.message})`;
