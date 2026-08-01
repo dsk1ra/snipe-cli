@@ -75,6 +75,7 @@ All runs: 24 offers, `temperature 0`, `snipe-cv`, ~12 min/run.
 |---------|----------------|-----------|----------------|------------|--------------|-----------|
 | V0 baseline | 0.500 | 0.000 | 0.000 | 0.833 | 0.917 | 0.735 |
 | V1 schema floor | 0.646 | 0.292 | **0.417** | 0.833 | 0.917 | 0.728 |
+| V2 = V1 + named employers | 0.646 | 0.292 | 0.458 | 0.875 | 0.917 | 0.746 |
 
 ### V0 — production as shipped
 Every one of the 24 offers dropped a role. Not a tendency, a constant.
@@ -99,3 +100,22 @@ company belongs in it. `grounding` also drifts down (-0.007) and `mean_bullets`
 inflates 2.96 → 4.38, both consistent with padding rather than recall.
 
 Keep the floor — it is a necessary precondition — but it is not the fix.
+
+### V2 — inject the exact employer list into the prompt  ❌ no effect
+The prompt now receives the real employers derived from the CV cv-select passed
+(`Edinburgh Napier University | UBWIS`), names both failure modes outright
+("NEVER repeat a company", "a project is NOT a company"), shows two companies in
+the worked example instead of one, and extends the brevity note to experience.
+
+**`role_retention` and `all_roles_pct` did not move at all** — 0.646 and 0.292,
+identical to V1 to three decimals. The *same 7 offers* succeed and the same 17
+fail in the same way. `invented_roles` got slightly worse (0.417 → 0.458).
+
+This is the Phase 1 V5 result again: *prompt instruction alone cannot fix this
+model's CV lookup*. The 7B is not failing to understand the requirement — the
+requirement was already stated at `:41` before this change, and stating it three
+more ways with the literal answer supplied changes nothing. Worth knowing before
+spending more prompt budget: **the remaining lever is structural, not wording.**
+
+`grounding` +0.018 and `metric_fab` +0.042 are both within what a 24-offer
+sample can resolve and neither is worth reading as an effect.
