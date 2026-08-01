@@ -231,7 +231,13 @@ const flag = (name, def) => {
 };
 const positional = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && rest[i - 1].startsWith('--')));
 
-if (cmd === 'sample') {
+// Only run the CLI when invoked directly — importing the metrics from a test or
+// an ad-hoc script must not execute a command.
+const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+
+if (!isMain) {
+  // imported: expose the helpers, run nothing
+} else if (cmd === 'sample') {
   const n = parseInt(String(flag('n', '24')), 10);
   const s = buildSample(n);
   mkdirSync(BENCH, { recursive: true });
