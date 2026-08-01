@@ -153,9 +153,19 @@ function shingles(s, k = 8) {
   return out;
 }
 
-/** Bullets in the tailor prompt's worked example — the "Acme SaaS" text. */
+/**
+ * Bullets in the worked example of the prompt that **actually runs**.
+ * local-pdf-offer.mjs:28 prefers the gitignored .local.md override when it
+ * exists, so resolving the shipped file here measured a prompt the pipeline
+ * never opened.
+ */
+export function activePromptPath() {
+  const local = resolve(__dirname, 'local-tailor-prompt.local.md');
+  return existsSync(local) ? local : resolve(__dirname, 'local-tailor-prompt.md');
+}
+
 function exampleShingles() {
-  const p = readFileSync(resolve(__dirname, 'local-tailor-prompt.md'), 'utf8');
+  const p = readFileSync(activePromptPath(), 'utf8');
   const out = new Set();
   for (const m of p.matchAll(/"bullets"\s*:\s*\[([^\]]*)\]/g)) {
     for (const b of m[1].split(/",\s*"/)) for (const sh of shingles(b)) out.add(sh);
