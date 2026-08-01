@@ -244,26 +244,37 @@ export function reconcileExperience(items, selectedCv) {
   }));
   if (!real.length) return items;
 
+  // One token set per real entry — the bullets are compared against every entry,
+  // not just the one being filled, so a rewrite can be traced to its true owner.
+  const realTokens = real.map(r => toks(r.bullets.join(' ')));
+  const overlap = (bt, tk) => {
+    if (!tk.size || !bt.size) return 0;
+    let n = 0;
+    for (const t of bt) if (tk.has(t)) n++;
+    return n / bt.size;
+  };
+
   const claimed = new Set();
   const out = [];
-  for (const r of real) {
+  for (let ri = 0; ri < real.length; ri++) {
+    const r = real[ri];
     const target = r.company.toLowerCase();
     const role = r.role.toLowerCase();
-    const cvTokens = toks(r.bullets.join(' '));
     let best = -1, bestScore = 0;
     for (let i = 0; i < items.length; i++) {
       if (claimed.has(i)) continue;
       const name = String(items[i]?.company || '').trim().toLowerCase();
-      // A name hit outranks any overlap; overlap only breaks ties between
-      // entries that named nothing recognisable.
-      const named = Boolean(name) && (target.includes(name) || name.includes(target) || role.includes(name));
-      let ov = 0;
       const bt = toks((items[i]?.bullets || []).join(' '));
-      if (cvTokens.size && bt.size) {
-        let n = 0;
-        for (const t of bt) if (cvTokens.has(t)) n++;
-        ov = n / bt.size;
-      }
+      const ov = overlap(bt, realTokens[ri]);
+      // A name hit outranks any overlap — but only when the bullets under it are
+      // not a better match for some OTHER role. Naming the right company buys
+      // +1, which cleared the floor below on its own, so the model getting the
+      // label right while pasting another role's bullets went straight through
+      // (observed on report 146: a UBWIS bullet filed under the university —
+      // overlap 0.12 there, 0.96 with UBWIS). Content decides provenance; the
+      // name only breaks ties.
+      const namedRaw = Boolean(name) && (target.includes(name) || name.includes(target) || role.includes(name));
+      const named = namedRaw && !realTokens.some((tk, j) => j !== ri && overlap(bt, tk) > ov);
       const score = named ? 1 + ov : ov;
       if (score > bestScore) { bestScore = score; best = i; }
     }
@@ -328,6 +339,40 @@ const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
  * @param {string} cvText the full CV — a figure may legitimately come from any part of it
  * @returns {any[]}
  */
+// A tenure claim: "2+ years of hands-on experience", or "with 5 years". Bare
+// "over five years" (word form) and "~200 TB over 5 years" are deliberately not
+// matched — those are durations in a projection, not a claim about the person.
+// The experience-anchored branch takes an optional leading "with" so it wins the
+// whole span at that position — listing the bare "with N years" branch first
+// clipped it to "with 2+ years" and left "of hands-on experience" dangling.
+const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\bwith\s+\d[\d.,]*\+?\s*years?\b/gi;
+
+/**
+ * Strip a years-of-experience claim the CV does not make.
+ *
+ * `verifyBulletNumbers` cannot catch this: it tests numeric tokens against the
+ * whole CV, and the offending "2+" also occurs in an unrelated bullet ("2+
+ * hours"), so the token is already allowed. The claim, not the digit, is what
+ * is unsupported — cv.md states no tenure anywhere. Observed on the Mercor
+ * tailor, which opened "Security-first Software Engineer with 2+ years of
+ * hands-on experience in low-level systems (C++, Java)" against a CV whose
+ * low-level work is Rust and which claims no duration at all.
+ *
+ * @param {string} summary the tailored summary
+ * @param {string} cvText the full CV — a tenure it does state is left alone
+ * @returns {string}
+ */
+export function stripUnsupportedTenure(summary, cvText) {
+  if (typeof summary !== 'string' || !summary) return summary;
+  const stated = new Set((String(cvText).match(TENURE) || []).map(m => m.toLowerCase().trim()));
+  return summary
+    .replace(TENURE, m => stated.has(m.toLowerCase().trim())
+      ? m
+      : (/^with\b/i.test(m) ? 'with experience' : 'experience'))
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export function verifyBulletNumbers(items, cvText) {
   if (!Array.isArray(items)) return items;
   const allowed = numbersIn(cvText);
