@@ -202,12 +202,26 @@ const TAILOR_SCHEMA = {
  * @param {string} selectedCv
  * @returns {object}
  */
-function schemaWithExperienceFloor(selectedCv) {
-  let roles = 0;
+/**
+ * Employer names from the CV handed to the model, in CV order. The grammar can
+ * compel the *number* of experience entries but not which company goes in each,
+ * so V1's floor was satisfied by duplicating one employer or promoting a project
+ * to a job. Naming them in the prompt is the half the schema cannot express.
+ * @param {string} selectedCv
+ * @returns {string[]}
+ */
+function experienceCompanies(selectedCv) {
   try {
     const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
-    roles = sec ? parseEntries(sec.lines).entries.length : 0;
-  } catch { /* fall through to the unconstrained schema */ }
+    if (!sec) return [];
+    return parseEntries(sec.lines).entries
+      .map(e => (e.head[1] || '').match(/^\*\*(.+?)\*\*/)?.[1]?.trim())
+      .filter(/** @returns {c is string} */ c => Boolean(c));
+  } catch { return []; }
+}
+
+function schemaWithExperienceFloor(selectedCv) {
+  const roles = experienceCompanies(selectedCv).length;
   if (roles < 2) return TAILOR_SCHEMA;
   return {
     ...TAILOR_SCHEMA,
@@ -476,7 +490,8 @@ const systemPrompt = prompt
   .replace('{{CANDIDATE_PROFILE}}', profileNarrative || '(see cv.md)')
   .replace('{{CV_CONTENT}}',        cleanCvForPrompt(cvForPrompt))
   .replace('{{FULL_REPORT}}',       extractTailoringBrief(reportText))
-  .replace('{{JD_FULL}}',           cleanJd(jdText));
+  .replace('{{JD_FULL}}',           cleanJd(jdText))
+  .replace('{{EXPERIENCE_COMPANIES}}', experienceCompanies(cvForPrompt).join(' | ') || '(every company in the CV above)');
 
 const userMessage = `Tailor the CV for ${args.company} — ${args.role}. Score: ${args.evalScore}/5. Report: ${args.reportPath}`;
 const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
