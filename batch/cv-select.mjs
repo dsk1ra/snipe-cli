@@ -127,8 +127,14 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     if (!p) continue;
     for (const e of p.entries) {
       e.scored = [];
-      const name = e.head[0].replace(/^###\s+/, '').trim();
-      for (const b of e.bullets) items.push({ entry: e, text: b, ctx: `${name}: ${b}` });
+      // The bullet is embedded bare. Prefixing it with its entry name
+      // ("Teaching Assistant: …") injects a constant into every vector of that
+      // entry, and on a 25-word bullet the constant is a large share of the
+      // text — it pulls the whole entry toward one point and flattens the
+      // ranking. Measured against the gold set: pair accuracy 0.689 prefixed
+      // vs 0.757 bare, better on 11 of 12 offers. Prefixing projects only
+      // (their titles being the informative ones) scored 0.720 — worse too.
+      for (const b of e.bullets) items.push({ entry: e, text: b, ctx: b });
     }
   }
   if (!items.length) return cvText;
@@ -181,36 +187,46 @@ const toks = s => new Set((String(s).toLowerCase().match(/[a-z0-9+#.:-]{3,}/g) |
  * The tailor model sometimes renames projects to fit the JD's domain (observed:
  * "Distributed Odds Feed Orchestrator" for a betting-infra JD) — the template
  * then finds no match and silently drops the project. Remap each model project
- * name to the real CV project it describes (name match first, then token
- * overlap of name+description vs the project's CV text). Unmappable entries are
- * removed. Mutates and returns `projects`.
+ * name to the real CV project it *describes*: the description decides, the name
+ * only breaks ties. Naming one project while describing another used to pass
+ * straight through on the name (report 149: "Re:Link" over a description of the
+ * UBWIS platform, which is not a project at all), which is the same failure
+ * reconcileExperience fixes for bullets. Entries matching nothing are dropped,
+ * then the section is topped back up from the CV — untailored but true beats a
+ * one-project CV. Mutates and returns `projects`.
  */
-export function remapProjectNames(projects, cvText) {
+export function remapProjectNames(projects, cvText, minProjects = 3) {
   const sec = parseCvSections(cvText).find(s => s.name === 'Projects');
   if (!sec || !Array.isArray(projects)) return projects;
   const real = parseEntries(sec.lines).entries.map(e => ({
     name: e.head[0].replace(/^###\s+/, '').trim(),
+    bullets: e.bullets,
     tokens: toks(e.head.join(' ') + ' ' + e.bullets.join(' ')),
   }));
   const used = new Set();
   const out = [];
   for (const p of projects) {
     const pName = String(p.name || '').toLowerCase();
-    let target = real.find(r =>
-      !used.has(r.name) && r.name.toLowerCase().includes(pName.slice(0, 20)));
-    if (!target) {
-      let best = null, bestN = 2; // require ≥3 overlapping tokens
-      for (const r of real) {
-        if (used.has(r.name)) continue;
-        let n = 0;
-        for (const t of toks(`${p.name} ${p.description || ''}`)) if (r.tokens.has(t)) n++;
-        if (n > bestN) { best = r; bestN = n; }
-      }
-      target = best;
+    let best = null, bestN = 2; // require ≥3 overlapping tokens
+    for (const r of real) {
+      if (used.has(r.name)) continue;
+      let n = 0;
+      for (const t of toks(`${p.name} ${p.description || ''}`)) if (r.tokens.has(t)) n++;
+      // The name is worth half a token — enough to break a tie between two real
+      // projects, never enough to outvote the description.
+      if (pName && r.name.toLowerCase().includes(pName.slice(0, 20))) n += 0.5;
+      if (n > bestN) { best = r; bestN = n; }
     }
-    if (!target) continue; // nothing on the CV looks like this — drop it
-    used.add(target.name);
-    out.push({ ...p, name: target.name });
+    if (!best) continue; // nothing on the CV looks like this — drop it
+    used.add(best.name);
+    out.push({ ...p, name: best.name });
+  }
+  // Backfill what the drops cost, in CV order, from the projects nothing claimed.
+  for (const r of real) {
+    if (out.length >= minProjects) break;
+    if (used.has(r.name)) continue;
+    used.add(r.name);
+    out.push({ name: r.name, description: r.bullets.slice(0, 2).join(' ') });
   }
   return out;
 }
@@ -519,10 +535,25 @@ Text.
     { name: 'Betting Odds Encryptor', description: 'Implemented AES-256-GCM encryption in Rust with CLI subcommands' },
     { name: 'Web App', description: 'React frontend deployed to Vercel' },
     { name: 'Quantum Basket Weaving', description: 'totally unrelated invention' },
-  ], fakeCv);
+  ], fakeCv, 0);
   assert(remapped.length === 2, 'unmappable fabricated project dropped');
   assert(remapped[0].name === 'Crypto Tool', 'fabricated name remapped by content overlap');
   assert(remapped[1].name === 'Web App', 'real name kept');
+
+  // The description decides provenance, not the name: naming one real project
+  // while describing another lands on the one described (report 149).
+  const misfiled = remapProjectNames([
+    { name: 'Crypto Tool', description: 'Wrote Java batch processor with 99% uptime' },
+  ], fakeCv, 0);
+  assert(misfiled.length === 1 && misfiled[0].name === 'Java Batch',
+    'misfiled project follows its description, not its name');
+
+  // Dropping an entry must not leave a one-project CV — top up from the CV.
+  const backfilled = remapProjectNames([
+    { name: 'Quantum Basket Weaving', description: 'totally unrelated invention' },
+  ], fakeCv, 3);
+  assert(backfilled.length === 3, 'dropped projects backfilled from the CV');
+  assert(backfilled.every(p => /Crypto Tool|Web App|Java Batch/.test(p.name)), 'backfill uses real CV projects');
 
   console.log('✓ cv-select self-check passed');
 }
