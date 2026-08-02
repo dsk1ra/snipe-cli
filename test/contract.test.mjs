@@ -155,6 +155,18 @@ if (overCap.length === 0) {
   fail(`staged-evaluator has maxLength ${overCap.join(', ')} — over the 1500 ceiling, grammar will not compile`);
 }
 
+// ATS text extraction breaks when Chrome's PDF writer emits per-glyph offsets,
+// so the CV template must not track any text.
+const cvTemplate = readFile('templates/cv-template.html');
+const tracked = [...cvTemplate.matchAll(/letter-spacing:\s*([^;]+);/g)]
+  .map(m => m[1].trim())
+  .filter(v => v !== 'normal' && !/^0\w*$/.test(v));
+if (tracked.length === 0) {
+  pass('cv-template.html uses no letter-spacing (ATS-parseable headers)');
+} else {
+  fail(`cv-template.html has letter-spacing ${tracked.join(', ')} — ATS will read headers glyph-by-glyph`);
+}
+
 // ── 11. CLAUDE.md INTEGRITY ─────────────────────────────────────
 
 console.log('\n11. CLAUDE.md integrity');
