@@ -243,6 +243,62 @@ try {
   eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
   eq([...ex].some(s => s.includes('membership platform')), true,
     'exampleShingles covers the worked-example experience bullets');
+
+  // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
+  const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
+  deepEq(h.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),
+    ['gcp', 'kotlin', 'terraform'],
+    'productFab reports every named product the CV never mentions');
+  deepEq(h.productFab('Built Rust services on AWS backed by PostgreSQL', cvMd), [],
+    'productFab stays silent when every product is in the CV');
+  deepEq(h.productFab('Owned distributed low-latency event-driven architecture', cvMd), [],
+    'productFab ignores capability phrases — those are the tier that stays free');
+  deepEq(h.productFab('Shipped AZURE and Angular work', cvMd), ['azure', 'angular'],
+    'productFab is case-insensitive, so shouting a fabrication does not hide it');
+  // Substring safety: "ray" must not fire inside "array", "sap" inside "sapling".
+  deepEq(h.productFab('Optimised an array of sapling growth models', cvMd), [],
+    'productFab matches whole phrases, not substrings of unrelated words');
+  // Multi-word products have to survive the normaliser that strips punctuation.
+  deepEq(h.productFab('Ran pipelines on Google Cloud and Power BI', cvMd),
+    ['google cloud', 'power bi'],
+    'productFab catches multi-word product names');
+
+  // ── ats_coverage: scored against the supportable subset, so it cannot be gamed ──
+  const jd = 'We need Kubernetes and PostgreSQL and GraphQL and Elixir experience';
+  const cvAts = 'Ran Kubernetes clusters against PostgreSQL with a GraphQL gateway';
+  const full = h.atsCoverage(jd, cvAts, 'Kubernetes PostgreSQL GraphQL delivery');
+  eq(full.supportable, 3, 'only the three terms the CV supports are scorable — Elixir is not');
+  eq(full.coverage, 1, 'covering every supportable term scores 1.0');
+  const half = h.atsCoverage(jd, cvAts, 'Kubernetes only');
+  eq(+half.coverage.toFixed(3), 0.333, 'coverage is the fraction of supportable terms reached');
+  eq(h.atsCoverage(jd, cvAts, 'Kubernetes PostgreSQL GraphQL Elixir Elixir').coverage, 1,
+    'stuffing an unsupportable term cannot push coverage above the CV\'s honest ceiling');
+
+  // ── selection_regret: 0 when the shipped picks are the best available ──
+  const atoms = [{ text: 'a' }, { text: 'b' }, { text: 'c' }];
+  const V = { a: [1, 0], b: [0.6, 0.8], c: [0, 1] };
+  const av = [V.a, V.b, V.c];
+  const reqs = [[1, 0]];  // requirement points straight at atom "a"
+  eq(h.selectionRegret(atoms, av, reqs, new Set([0])), 0,
+    'picking the single best-matching atom is zero regret');
+  eq(h.selectionRegret(atoms, av, reqs, new Set([2])) > 0.9, true,
+    'picking the worst atom over the best is near-total regret');
+  eq(h.selectionRegret(atoms, av, reqs, new Set([0, 1])), 0,
+    'regret is against the best pick OF THE SAME SIZE, not against the single best');
+  eq(h.selectionRegret(atoms, av, [], new Set([0])), null,
+    'no requirements means no opinion, not a perfect score');
+  eq(h.selectionRegret(atoms, av, reqs, new Set()), null,
+    'shipping nothing is unscoreable rather than optimal');
+
+  // shippedAtomIndices: maps rewritten output back to the atom it came from
+  const srcAtoms = [
+    { text: 'Migrated payment handling to Stripe removing card data from databases' },
+    { text: 'Taught programming to 800 undergraduate students across two languages' },
+  ];
+  deepEq([...h.shippedAtomIndices(['Moved payment handling onto Stripe, removing card data'], srcAtoms)], [0],
+    'a reworded bullet is credited to the atom it derives from');
+  deepEq([...h.shippedAtomIndices(['Invented an unrelated quantum blockchain claim'], srcAtoms)], [],
+    'a bullet resembling no atom is credited to none, rather than to the least-bad match');
 } catch (e) {
   fail(`tailor-harness metric unit tests crashed: ${e.message}`);
 }
