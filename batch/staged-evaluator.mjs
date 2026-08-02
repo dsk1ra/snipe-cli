@@ -36,6 +36,7 @@ import {
   compScoreFromSalary, buildCompBlock,
 } from './text-utils.mjs';
 import { loadCvIndex, embed, topK, similarPastOffers } from './embeddings.mjs';
+import { logCall } from './timing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = resolve(__dirname, '..');
@@ -97,7 +98,7 @@ const clampDim = (v) => {
 
 // ── Ollama (schema-constrained chat) ──────────────────────────────────────────
 
-async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0, numCtx = 8192 }) {
+async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0, numCtx = 8192, label = 'p2' }) {
   // One retry. Two different failure modes need two different retries:
   //   done_reason=stop   → a bad sample; re-roll at a slightly higher temperature.
   //   done_reason=length → the answer did not FIT; re-rolling the same budget just
@@ -129,6 +130,7 @@ async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, ti
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
+    logCall(label, model, data, { extra: `attempt=${attempt}` });
     const content = data?.message?.content || '';
     // Context-budget telemetry: prompt + output must fit num_ctx, and a prompt
     // that grows past it silently truncates the answer instead of erroring.
@@ -184,7 +186,7 @@ async function stage1JdParse(jd, args) {
   return ollamaJson({
     baseUrl: args.ollamaUrl, model: args.model, system,
     user: `## Job Description\n${cleanJd(jd, 8000)}`,
-    schema: STAGE1_SCHEMA, numPredict: 900, timeoutMs: args.timeout,
+    schema: STAGE1_SCHEMA, numPredict: 900, timeoutMs: args.timeout, label: 'p2-parse',
   });
 }
 
@@ -260,7 +262,7 @@ async function stage2Evidence(requirements, args) {
 
   const out = await ollamaJson({
     baseUrl: args.ollamaUrl, model: args.model, system,
-    user: lines, schema: STAGE2_SCHEMA, numPredict: 1800, timeoutMs: args.timeout,
+    user: lines, schema: STAGE2_SCHEMA, numPredict: 1800, timeoutMs: args.timeout, label: 'p2-evidence',
   });
 
   // Normalize: exactly one entry per requirement, in order.
@@ -509,7 +511,7 @@ async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, sal
     // 0.1 to match stages 1 and 2 — the 0.2 here was inherited, and this call's
     // primary output is a 1-5 judgment, not prose. Lower temperature also shrinks
     // run-to-run variance, which is what makes an 18-offer benchmark readable.
-    schema, numPredict: 5120, numCtx: 12288, timeoutMs: args.timeout, temperature: 0,
+    schema, numPredict: 5120, numCtx: 12288, timeoutMs: args.timeout, temperature: 0, label: 'p2-judgment',
   });
 
   // Resolve target numbers back to requirement text so report assembly is

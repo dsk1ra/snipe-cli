@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 import { stackMismatchCap, languageMismatchCap, seniorityCaps, verifyAgainstCv } from './fit-rules.mjs';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
+import { logCall } from './timing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = resolve(__dirname, '..');
@@ -326,6 +327,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, timeoutMs) 
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
     data = await res.json();
+    logCall('p1-score', model, data);
   } finally {
     clearTimeout(timer);
   }

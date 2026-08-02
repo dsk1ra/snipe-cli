@@ -14,6 +14,7 @@
 import { fileURLToPath } from 'url';
 import { embed, cosine } from './embeddings.mjs';
 import { cleanJd } from './text-utils.mjs';
+import { logCall } from './timing.mjs';
 
 // ── LLM rerank ────────────────────────────────────────────────────────────────
 
@@ -86,7 +87,9 @@ async function judgeGrades(items, reqs, jdText, opts = {}) {
       signal: AbortSignal.timeout(judgeTimeoutMs),
     });
     if (!res.ok) return null;
-    const parsed = JSON.parse((await res.json())?.message?.content || '{}');
+    const judged = await res.json();
+    logCall('p3-judge', judgeModel, judged, { extra: `items=${items.length}` });
+    const parsed = JSON.parse(judged?.message?.content || '{}');
     const out = new Map();
     for (const e of parsed.grades || []) {
       const it = items[Number(e.id) - 1];

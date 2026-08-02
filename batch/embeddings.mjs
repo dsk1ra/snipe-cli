@@ -20,6 +20,7 @@ import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
+import { logCall } from './timing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
@@ -40,6 +41,7 @@ export async function embed(texts, { model = EMBED_MODEL, ollamaUrl = 'http://lo
   });
   if (!res.ok) throw new Error(`Ollama embed HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
+  logCall('embed', model, data, { extra: `n=${input.length}` });
   if (!data.embeddings?.length) throw new Error('Ollama embed returned no embeddings');
   return data.embeddings;
 }
