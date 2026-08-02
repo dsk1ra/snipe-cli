@@ -21,6 +21,7 @@ import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
          reconcileExperience, verifyBulletNumbers, cvCompanies,
          stripUnsupportedTenure } from './cv-select.mjs';
+import { logCall } from './timing.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -250,6 +251,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
 
   if (!resp.ok) throw new Error(`Ollama HTTP ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
+  logCall(format ? 'p3-tailor' : 'p3-summary', model, data);
   return data.response || '';
 }
 
