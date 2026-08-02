@@ -275,3 +275,50 @@ Ollama's embed endpoint already applies the model's template and the manual
 
 **Keep `snipe-embed`.** "Upgrade the embedder" is the natural next idea and it
 is measured here as a regression.
+
+## How much more labelling is worth it
+
+More JDs do not help. The binding constraint is *labelled* offers: 186 JDs are
+cached, 12 carry ticks, and a sweep over unlabelled JDs has nothing to score
+against.
+
+Power, from the observed per-offer SD of the paired delta (paired t, 80% power,
+α=0.05):
+
+| improvement worth detecting | labelled offers needed | labelling time at ~25 min / 12 |
+|---|---|---|
+| +0.05 | 50 | ~1h 45m |
+| +0.03 | 137 | ~4h 45m |
+| +0.02 | 308 | ~10h 40m |
+
+The shipped +0.095 needed n=14 and had n=10; it landed because the effect was
+large. What remains is not:
+
+| candidate | Δ | SD | n needed |
+|---|---|---|---|
+| cos+judge-0.10 (shipped) | +0.095 | 0.125 | 14 |
+| rrf-cos-bm25 | +0.042 | 0.081 | 29 |
+| hyb-0.10 | +0.035 | 0.063 | 26 |
+| top2-cos | +0.017 | 0.044 | 54 |
+
+So variant-hunting is done, not for lack of ideas but because the effects left
+are smaller than the available ground truth can resolve. One more sheet (n≈22)
+is worth it — it confirms the winner on offers that played no part in choosing
+it, which nothing so far has done. Beyond that the return falls off fast.
+
+## Degeneracy check (label-free, scales)
+
+The risk the gold set cannot see is the reranker collapsing to one favourite
+set regardless of posting. Over the 12 graded offers:
+
+```
+distinct top-6 sets      11 / 12
+per-atom entropy         0.68   (1.0 = maximally JD-dependent)
+always selected          1 atom   (800+ students, Java and C++ teaching)
+never selected           1 atom   (Terms & Conditions / GDPR documentation)
+```
+
+No collapse, and both extremes are the right ones. This class of check needs no
+labels and is what a 150-JD run is actually good for — alongside the
+`ats_coverage` / `product_fab` metrics in PHASE3-TAILORING-STRATEGY.md, which
+are also label-free and currently unbuilt.
