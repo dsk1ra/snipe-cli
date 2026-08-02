@@ -103,3 +103,91 @@ they are training data.
 Every CI straddles zero. The lexical hybrid is the most consistent direction
 (6 wins, 2 losses) and is the reason BM25 stays in the portfolio despite being
 poor alone.
+
+## Sweep 2 — 28 variants, judge as a feature (n=10, exemplars dropped)
+
+| variant | pair | Δ vs base | CI95 | w/l | sig |
+|---|---|---|---|---|---|
+| rrf-cos-judge-bm25 | 0.852 | +0.096 | [0.029, 0.163] | 8/1 | **YES** |
+| cos+judge-0.10 | 0.851 | +0.095 | [0.029, 0.175] | 8/1 | **YES** |
+| cos+judge-0.05 | 0.844 | +0.088 | [0.029, 0.157] | 8/1 | **YES** |
+| rrf-cos-judge | 0.829 | +0.073 | [0.008, 0.131] | 7/3 | **YES** |
+| cos+judge-0.02 | 0.823 | +0.067 | [0.027, 0.112] | 8/1 | **YES** |
+| rrf-cos-bm25 | 0.797 | +0.041 | [−0.002, 0.093] | 7/2 | no |
+| hyde+cos+bm25 | 0.790 | +0.034 | [−0.008, 0.077] | 6/3 | no |
+| hyb-0.10 | 0.789 | +0.033 | [−0.002, 0.075] | 5/1 | no |
+| top2-cos | 0.773 | +0.017 | [−0.005, 0.046] | 4/2 | no |
+| **base-cos** | **0.756** | — | — | — | — |
+| zscore | 0.753 | −0.004 | | 3/5 | no |
+| hyde+cos | 0.746 | −0.010 | | 6/3 | no |
+| judge (alone) | 0.730 | −0.026 | | 4/6 | no |
+| bm25 | 0.726 | −0.031 | | 3/7 | no |
+| csls | 0.695 | −0.061 | | 3/6 | no |
+| hyde | 0.651 | −0.106 | [−0.204, −0.033] | 1/9 | WORSE |
+| prior-only | 0.644 | −0.112 | [−0.187, −0.036] | 1/8 | WORSE |
+| instruct | 0.633 | −0.123 | [−0.197, −0.061] | 1/9 | WORSE |
+| random | 0.595 | −0.161 | | 1/9 | WORSE |
+
+Twenty-eight variants against ten offers would produce roughly one false
+positive at α=0.05. Five significant results, all from one family, is not that
+shape.
+
+### Robustness: swap the exemplars
+
+The judge's two exemplars are the one place the human's labels enter the
+ranker, so the obvious failure is a gain fitted to two lucky offers. Regraded
+with a disjoint exemplar pair (167, 182 instead of 5, 50):
+
+| variant | pair | Δ | CI95 | w/l |
+|---|---|---|---|---|
+| cos+judge-0.10 | 0.886 | +0.102 | [0.027, 0.190] | 7/0 |
+| rrf-cos-judge-bm25 | 0.870 | +0.087 | [0.015, 0.160] | 7/2 |
+| cos+judge-0.05 | 0.865 | +0.081 | [0.031, 0.142] | 8/0 |
+| base-cos | 0.783 | — | — | — |
+
+The gain holds and slightly strengthens. `cos+judge-0.10` is top or joint-top
+under both exemplar pairs (8/1 and 7/0), so that is what shipped.
+
+### Two clean negatives worth not repeating
+
+**Qwen3-Embedding's instruction prefix — 0.633, significantly worse.** The
+model documents a query-side `Instruct: …\nQuery:…` format and it is reported
+to help on MTEB. Here it is the second-worst variant tested, below the JD-blind
+prior. `snipe-embed` is a Modelfile over the base, so the template may already
+account for it; either way, do not add it.
+
+**HyDE — 0.651 alone, significantly worse.** Rewriting each requirement into a
+hypothetical CV bullet before embedding was meant to fix the register mismatch
+between a demand ("Strong commercial C++ experience") and an achievement
+("Built a Rust microservice testbed…"). The rewrite loses more than the
+mismatch costs. It survives only inside a three-way ensemble, marginally, and
+is not worth a 7B call per requirement.
+
+## Shipped
+
+`cos + 0.10 × judge_grade`, in `selectCvForJd`.
+
+- Exemplars live in `batch/judge-shots.json`, written by
+  `node batch/goldset.mjs export-shots --ids 5,50`. Keyed by bullet **text**,
+  not id — ids are positional in cv.md, so adding one bullet renumbers
+  everything after it and a baked id would silently point at the wrong bullet.
+  Any exemplar whose text no longer matches is dropped rather than guessed.
+- No exemplars means no judge call at all. 0-shot scores 0.670 against cosine's
+  0.756, so degrading to it would be worse than not running.
+- Any failure — model missing, timeout, malformed JSON — returns null and the
+  cosine ranking stands. Covered by self-checks.
+- **Cost: +44s per Phase 3 run** (3.2s → 47.4s on a 12-requirement offer).
+  One 30B call. Phase 2 already runs the same model for minutes, and Phase 3
+  only runs above the score threshold, so this is a small share of a run.
+
+## Still open
+
+- **Label noise is unmeasured**, so the true ceiling is unknown. The cheapest
+  fix is a second gold sheet that repeats two offers from the first.
+- **n=10 after exemplars.** A second sheet would roughly double the power and
+  let the winner be confirmed on offers that played no part in selecting it.
+- The lexical hybrid (`rrf-cos-bm25`, +0.041, 7/2) is free and consistently
+  positive across both sweeps but never significant. It is a reasonable thing
+  to combine with the judge — `rrf-cos-judge-bm25` was the top variant under
+  the original exemplars — but on this evidence it is not distinguishable from
+  `cos+judge-0.10`, which is simpler.

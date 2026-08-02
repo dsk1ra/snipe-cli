@@ -511,8 +511,17 @@ const profileNarrative = extractProfileNarrative(profileText);
 // falls back to the full CV.
 let cvForPrompt = cvText;
 try {
+  // Exemplars turn on the 30B reranker inside selectCvForJd (+0.10 pair
+  // accuracy on the gold set). Loaded here rather than there because goldset
+  // imports cv-select, and the reverse edge is a cycle.
+  let judgeShots = [];
+  try {
+    const { loadExemplars } = await import('./goldset.mjs');
+    judgeShots = loadExemplars(cvText);
+  } catch { /* no exemplars: cosine-only selection, same as before */ }
   cvForPrompt = await selectCvForJd(
-    cvText, extractBlockBRequirements(reportText), jdText, { ollamaUrl: args.ollamaUrl });
+    cvText, extractBlockBRequirements(reportText), jdText,
+    { ollamaUrl: args.ollamaUrl, judgeShots });
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
 }

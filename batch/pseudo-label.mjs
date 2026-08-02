@@ -275,7 +275,11 @@ async function cmdGrades(opts, nshot) {
     items.push({ id, o, want, reqs, jd: readFileSync(resolve(PROJECT, o.jd), 'utf8') });
   }
   items.sort((a, b) => Number(a.id) - Number(b.id));
-  const shots = items.slice(0, nshot);
+  // --shot-ids picks the exemplars explicitly. Swapping them is the robustness
+  // check that matters: if the gain only holds for one lucky pair, the feature
+  // is fitted to those two offers rather than to the human's taste.
+  const pick = String(arg('--shot-ids', '')).split(',').filter(Boolean);
+  const shots = pick.length ? items.filter(i => pick.includes(i.id)) : items.slice(0, nshot);
   const shotIds = shots.map(s => s.id);
   const store = { model: opts.model, nshot, shotIds, offers: {} };
   for (const it of items) {
@@ -286,8 +290,9 @@ async function cmdGrades(opts, nshot) {
     } catch (e) { process.stderr.write(`  skip: ${String(e.message).slice(0, 100)}\n`); }
   }
   mkdirSync(BENCH, { recursive: true });
-  writeFileSync(GRADES, JSON.stringify(store, null, 1));
-  console.log(`wrote ${Object.keys(store.offers).length} graded offers to ${GRADES}`);
+  const outPath = String(arg('--out', GRADES));
+  writeFileSync(outPath, JSON.stringify(store, null, 1));
+  console.log(`wrote ${Object.keys(store.offers).length} graded offers to ${outPath}`);
   console.log(`exemplars (excluded from evaluation): ${shotIds.join(', ')}`);
 }
 
@@ -340,13 +345,13 @@ else if (cmd === 'grades') await cmdGrades(opts, Number(arg('--shots', 2)));
 else if (cmd === 'run') await cmdRun(Number(arg('--n', 80)), opts);
 else if (cmd === 'stats') cmdStats();
 else if (cmd === 'selfcheck') {
-  const { strict: assert } = await import('assert');
+  const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
   const atoms = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
   const perfect = compare(new Set([1, 2]), new Set([1, 2]), atoms);
-  assert.equal(perfect.jaccard, 1); assert.equal(perfect.pair, 1);
+  assert(perfect.jaccard === 1 && perfect.pair === 1, 'identical sets agree perfectly');
   const wrong = compare(new Set([3, 4]), new Set([1, 2]), atoms);
-  assert.equal(wrong.jaccard, 0); assert.equal(wrong.pair, 0);
-  assert.equal(compare(new Set([1, 2, 3, 4]), new Set([1, 2]), atoms).pair, 0.5, 'selecting everything is chance');
+  assert(wrong.jaccard === 0 && wrong.pair === 0, 'disjoint sets agree not at all');
+  assert(compare(new Set([1, 2, 3, 4]), new Set([1, 2]), atoms).pair === 0.5, 'selecting everything is chance');
   console.log('pseudo-label selfcheck ok');
 } else console.log('usage: agree | agree2 [--shots N] | run [--n 80] | stats | selfcheck');
 

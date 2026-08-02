@@ -11,6 +11,7 @@
  * disagrees with the human, the proxy is what changes.
  */
 import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { createHash } from 'crypto';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { eligible, buildSample } from './tailor-harness.mjs';
@@ -20,6 +21,68 @@ import { embed, cosine } from './embeddings.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
 const SHEET = resolve(__dirname, 'bench/goldset.md');
+/** Exemplars for the Phase 3 reranker. In batch/, not batch/bench/, because
+ *  production reads it and bench/ is gitignored scratch. */
+const SHOTS = resolve(__dirname, 'judge-shots.json');
+
+export const cvHash = (cvText) => createHash('sha256').update(cvText).digest('hex').slice(0, 16);
+
+/**
+ * Freeze N gold offers into a self-contained exemplar file for the production
+ * reranker: requirements, a JD excerpt, and the ticked atoms **as text**.
+ *
+ * Text, not ids. Atom ids are positional in cv.md, so adding one bullet
+ * renumbers everything after it and a baked id would silently point at the
+ * wrong bullet. Text is matched back exactly at load time, and anything that
+ * fails to match disables the exemplar rather than guessing.
+ */
+function exportShots(ids) {
+  const cvText = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
+  const atoms = cvAtoms(cvText);
+  const byId = new Map(atoms.map(a => [a.id, a]));
+  const picks = parseSheet(readFileSync(SHEET, 'utf8'));
+  const offers = new Map(eligible().map(o => [o.id, o]));
+  const shots = [];
+  for (const id of ids) {
+    const want = picks.get(id);
+    const o = offers.get(id);
+    if (!want?.size || !o) throw new Error(`offer ${id} is not a ticked gold offer`);
+    shots.push({
+      id, company: o.company, role: o.role,
+      reqs: extractBlockBRequirements(readFileSync(resolve(PROJECT, o.report), 'utf8')),
+      jd: readFileSync(resolve(PROJECT, o.jd), 'utf8').slice(0, 2500),
+      wantText: [...want].map(i => byId.get(i)?.text).filter(Boolean),
+    });
+  }
+  writeFileSync(SHOTS, JSON.stringify({ cvHash: cvHash(cvText), shots }, null, 1));
+  console.log(`wrote ${shots.length} exemplars to ${SHOTS}`);
+}
+
+/**
+ * Load exemplars for the current cv.md, or [] if they cannot be trusted.
+ *
+ * `want` comes back as a Set of bullet **text**, not ids: the consumer is
+ * cv-select, which works in bullet text, and keeping ids out of the contract
+ * means cv-select never has to import this module. That matters — goldset
+ * imports cv-select, so the reverse edge would be a cycle, and a dynamic import
+ * across it deadlocks while cv-select is still evaluating.
+ */
+export function loadExemplars(cvText, shotsPath = SHOTS) {
+  if (!existsSync(shotsPath)) return [];
+  let d;
+  try { d = JSON.parse(readFileSync(shotsPath, 'utf8')); } catch { return []; }
+  const known = new Set(cvAtoms(cvText).map(a => a.text));
+  const out = [];
+  for (const s of d.shots || []) {
+    const texts = s.wantText || [];
+    // A bullet reworded since labelling makes that exemplar a lie about what
+    // the human picked. Drop it; a missing exemplar is recoverable, a wrong one
+    // teaches the judge the opposite of the intended taste.
+    if (!texts.length || texts.some(t => !known.has(t))) continue;
+    out.push({ ...s, want: new Set(texts) });
+  }
+  return out;
+}
 
 /**
  * Every selectable atom on the CV: experience bullets and whole projects.
@@ -162,17 +225,31 @@ const arg = (f, d) => { const i = process.argv.indexOf(f); return i === -1 ? d :
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
+else if (cmd === 'export-shots') exportShots(String(arg('--ids', '5,50')).split(','));
 else if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'));
 else if (cmd === 'score') await scoreSheet();
 else if (cmd === 'selfcheck') {
-  const { strict: assert } = await import('assert');
+  const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
   const a = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
-  assert.ok(a.length > 10, 'atoms extracted');
-  assert.ok(a.some(x => x.kind === 'project') && a.some(x => x.kind === 'bullet'), 'both kinds');
-  assert.deepEqual(a.map(x => x.id), a.map((_, i) => i + 1), 'ids are 1..n');
+  assert(a.length > 10, 'atoms extracted');
+  assert(a.some(x => x.kind === 'project') && a.some(x => x.kind === 'bullet'), 'both kinds');
+  assert(JSON.stringify(a.map(x => x.id)) === JSON.stringify(a.map((_, i) => i + 1)), 'ids are 1..n');
   const p = parseSheet('## 42 · X — Y\n- [x] **3** a\n- [ ] **4** b\n## 43 · Z — W\n- [X] **1** c');
-  assert.deepEqual([...p.get('42')], [3], 'ticked only');
-  assert.deepEqual([...p.get('43')], [1], 'second offer separate');
-  assert.throws(() => writeSheet(2, 3.5, false), /already has ticks/, 'refuses to clobber labels');
+  assert(JSON.stringify([...p.get('42')]) === JSON.stringify([3]), 'ticked only');
+  assert(JSON.stringify([...p.get('43')]) === JSON.stringify([1]), 'second offer separate');
+  let clobbered = false;
+  try { writeSheet(2, 3.5, false); clobbered = true; } catch (e) { assert(/already has ticks/.test(e.message), 'refuses for the right reason'); }
+  assert(!clobbered, 'refuses to clobber labels');
+  // Exemplars are keyed by atom text, so a reworded bullet must drop the
+  // exemplar rather than silently point the judge at a different bullet.
+  const cvT = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
+  const real = cvAtoms(cvT);
+  const tmp = resolve(PROJECT, 'batch/bench/.shots-selfcheck.json');
+  writeFileSync(tmp, JSON.stringify({ cvHash: 'x', shots: [{ reqs: ['r'], jd: 'j', wantText: [real[0].text] }] }));
+  assert(loadExemplars(cvT, tmp).length === 1, 'exemplar resolves by text');
+  assert(loadExemplars(cvT, tmp)[0].want.has(real[0].text), 'want is bullet text, not ids');
+  writeFileSync(tmp, JSON.stringify({ cvHash: 'x', shots: [{ reqs: ['r'], jd: 'j', wantText: ['a bullet that is not on the CV'] }] }));
+  assert(loadExemplars(cvT, tmp).length === 0, 'unmatched atom text drops the exemplar');
+  assert(loadExemplars(cvT, resolve(PROJECT, 'batch/bench/.nope.json')).length === 0, 'missing file is empty, not fatal');
   console.log('goldset selfcheck ok');
-} else console.log('usage: sheet [--n 12] [--min-score 3.5] | score | selfcheck');
+} else console.log('usage: sheet [--n 12] [--min-score 3.5] | score | export-shots [--ids 5,50] | selfcheck');

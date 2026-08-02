@@ -15,6 +15,89 @@ import { fileURLToPath } from 'url';
 import { embed, cosine } from './embeddings.mjs';
 import { cleanJd } from './text-utils.mjs';
 
+// ── LLM rerank ────────────────────────────────────────────────────────────────
+
+const JUDGE_SYSTEM = `You are a recruiter deciding which items from a candidate's master CV to keep on a CV tailored to one specific job posting.
+
+Grade EVERY item from 0 to 3:
+  3 - directly evidences a requirement of this posting; must appear
+  2 - clearly relevant; earns its place if there is room
+  1 - tangential; only if nothing better
+  0 - not relevant to this posting
+
+Judge on what the item DEMONSTRATES, not keyword overlap: a project in a
+different language still grades high if it shows the engineering this posting
+asks for. Being impressive is not relevance. Use the full range — a grading
+where most items are 2 or 3 is not a grading.
+
+Return one entry per item id.`;
+
+const JUDGE_SCHEMA = {
+  type: 'object',
+  properties: {
+    grades: {
+      type: 'array',
+      items: { type: 'object',
+               properties: { id: { type: 'integer' }, grade: { type: 'integer' } },
+               required: ['id', 'grade'] },
+    },
+  },
+  required: ['grades'],
+};
+
+const judgeUser = (reqs, jd, list) =>
+  `## Requirements\n\n${reqs.map(r => `- ${r}`).join('\n')}`
+  + (jd ? `\n\n## Posting (excerpt)\n\n${String(jd).slice(0, 2500)}` : '')
+  + `\n\n## Candidate CV items\n\n${list}\n\nGrade every item 0-3 for this posting.`;
+
+/**
+ * Grade each bullet 0-3 with snipe-eval, few-shot from the gold set.
+ *
+ * Without exemplars the judge grades almost everything 2 or 3 and scores 0.670
+ * pair accuracy — worse than plain cosine at 0.756 — so this returns null
+ * rather than run 0-shot. Two exemplars lift it to 0.739 alone and to 0.851
+ * blended with cosine, which is what makes it worth a 30B call.
+ *
+ * @returns {Promise<Map<string, number>|null>} bullet text -> grade, or null
+ */
+async function judgeGrades(items, reqs, jdText, opts = {}) {
+  const { ollamaUrl = 'http://localhost:11434', judgeModel = 'snipe-eval',
+          judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch } = opts;
+  // No exemplars means 0-shot, and 0-shot the judge scores 0.670 against plain
+  // cosine's 0.756 — actively worse. Refuse rather than degrade.
+  if (!judgeShots.length) return null;
+  const shots = judgeShots;
+
+  const list = items.map((it, i) => `${i + 1}. ${it.text}`).join('\n');
+  const messages = [{ role: 'system', content: JUDGE_SYSTEM }];
+  for (const s of shots) {
+    messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list) });
+    messages.push({ role: 'assistant', content: JSON.stringify({
+      grades: items.map((it, i) => ({ id: i + 1, grade: s.want.has(it.text) ? 3 : 0 })) }) });
+  }
+  messages.push({ role: 'user', content: judgeUser(reqs, jdText, list) });
+
+  try {
+    const res = await _fetch(`${ollamaUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: JUDGE_SCHEMA,
+                             options: { temperature: 0, num_ctx: 12288, num_predict: 1536 } }),
+      signal: AbortSignal.timeout(judgeTimeoutMs),
+    });
+    if (!res.ok) return null;
+    const parsed = JSON.parse((await res.json())?.message?.content || '{}');
+    const out = new Map();
+    for (const e of parsed.grades || []) {
+      const it = items[Number(e.id) - 1];
+      if (it) out.set(it.text, Math.max(0, Math.min(3, Number(e.grade) || 0)));
+    }
+    return out.size ? out : null;
+  } catch {
+    return null; // model missing, timeout, bad JSON — cosine alone still works
+  }
+}
+
 // ── Block B requirement extraction ────────────────────────────────────────────
 
 // Anchor on the "Candidate evidence" column so Block F's STAR table (which also
@@ -134,7 +217,7 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
       // ranking. Measured against the gold set: pair accuracy 0.689 prefixed
       // vs 0.757 bare, better on 11 of 12 offers. Prefixing projects only
       // (their titles being the informative ones) scored 0.720 — worse too.
-      for (const b of e.bullets) items.push({ entry: e, text: b, ctx: b });
+      for (const b of e.bullets) items.push({ entry: e, text: b, ctx: b, score: 0 });
     }
   }
   if (!items.length) return cvText;
@@ -144,7 +227,17 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   for (let i = 0; i < items.length; i++) {
     const v = vecs[queries.length + i];
     const it = items[i];
-    it.entry.scored.push({ text: it.text, score: Math.max(...qv.map(q => cosine(q, v))) });
+    it.score = Math.max(...qv.map(q => cosine(q, v)));
+  }
+
+  // Rerank with the 30B judge, if exemplars are available. Measured on the gold
+  // set at +0.10 pair accuracy over cosine alone (CI [0.027, 0.190], 7 offers
+  // better 0 worse), and the gain held when the exemplar pair was swapped, so
+  // it is not fitted to two lucky offers. Grades are 0-3; the weight is the one
+  // benchmarked. Any failure leaves the cosine scores untouched.
+  const grades = await judgeGrades(items, queries, jdText, opts);
+  for (const it of items) {
+    it.entry.scored.push({ text: it.text, score: it.score + (grades ? 0.10 * (grades.get(it.text) ?? 0) : 0) });
   }
 
   // Keep the top-N bullets per entry (relevance order — the tailor prompt asks
@@ -517,6 +610,38 @@ Text.
   assert(!out.includes('Mentored two juniors'), 'weakest experience bullet cut at keep=2');
   assert(out.includes('## Skills') && out.includes('## Summary'), 'untouched sections preserved');
   assert(out.indexOf('Implemented AES-256-GCM') !== -1, 'top project bullet kept');
+
+  // Reranker: a stub judge that grades one otherwise-weak bullet 3 must pull it
+  // above a bullet cosine ranked higher, and a judge failure must change nothing.
+  const shots = [{ reqs: ['r'], jd: 'j', want: new Set(['Built Rust encryption service']) }];
+  // Near-identical vectors, so cosines land in a narrow band the way real ones
+  // do (0.4-0.7). Against the original stub's 1.00-vs-0.07 gap a 0.3 grade
+  // boost correctly cannot win, which tests nothing about the blend.
+  // keep=2, not 1: at keep=1 trim()'s metric-bullet guarantee replaces whatever
+  // won with the only bullet carrying a number, which masks the judge entirely.
+  const tightStub = async (texts) => texts.map(t => [1, /rust|encrypt/i.test(t) ? 0.62 : 0.55, 0.2]);
+  const gradeFor = (t) => (/Mentored two juniors/.test(t) ? 3 : 0);
+  const fakeFetch = async (_u, init) => {
+    const body = JSON.parse(init.body);
+    const list = body.messages[body.messages.length - 1].content.split('## Candidate CV items\n\n')[1].split('\n\n')[0];
+    const grades = list.split('\n').map(l => {
+      const m = l.match(/^(\d+)\.\s*(.*)$/);
+      return { id: Number(m[1]), grade: gradeFor(m[2]) };
+    });
+    return { ok: true, json: async () => ({ message: { content: JSON.stringify({ grades }) } }) };
+  };
+  const reranked = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: tightStub,
+    judgeShots: shots, _fetch: fakeFetch });
+  assert(reranked.includes('Mentored two juniors'), 'judge grade 3 promotes a bullet cosine ranked last');
+  const dead = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: tightStub,
+    judgeShots: shots, _fetch: async () => { throw new Error('ollama down'); } });
+  assert(!dead.includes('Mentored two juniors'), 'judge failure falls back to cosine order');
+  const noShots = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: tightStub,
+    _fetch: async () => { throw new Error('must not be called'); } });
+  assert(!noShots.includes('Mentored two juniors'), 'no exemplars means no judge call at all');
 
   // Metric guarantee: force a no-digit top-2 by querying something both metric
   // bullets miss.

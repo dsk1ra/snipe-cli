@@ -253,7 +253,7 @@ async function hydeFor(reqs, { ollamaUrl = 'http://localhost:11434', model = 'sn
  * vectors, and per-offer requirement vectors. A variant is a pure function of
  * this, which is what keeps the comparison paired.
  */
-export async function buildContext(gold, atoms, { withHyde = true } = {}) {
+export async function buildContext(gold, atoms, { withHyde = true, gradesFile = null } = {}) {
   await initCache();
   const flat = atoms.flatMap(a => a.parts);
   const span = [];
@@ -265,7 +265,7 @@ export async function buildContext(gold, atoms, { withHyde = true } = {}) {
   // Background requirements for the hubness estimate, taken from reports that
   // are NOT under test. Using the test offers' own requirements would let each
   // atom's correction absorb the very signal being measured.
-  const gradesPath = resolve(BENCH, 'judge-grades.json');
+  const gradesPath = gradesFile || resolve(BENCH, 'judge-grades.json');
   const graded = existsSync(gradesPath) ? JSON.parse(readFileSync(gradesPath, 'utf8')) : { offers: {}, shotIds: [] };
   const goldIds = new Set(gold.map(g => g.id));
   const bg = [];
@@ -528,10 +528,10 @@ export function evaluate(ctx, variant) {
 
 const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-async function run({ only, boot, dropExemplars }) {
+async function run({ only, boot, dropExemplars, gradesFile }) {
   const atoms = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
   const gold = loadGold();
-  const ctx = await buildContext(gold, atoms);
+  const ctx = await buildContext(gold, atoms, { gradesFile });
   // Offers used as judge exemplars are training data for any judge-based
   // variant. Evaluating on them would flatter those variants and only those,
   // so they come out for every variant or none — otherwise the comparison is
@@ -576,24 +576,26 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
 else if (cmd === 'list') console.log(Object.keys(VARIANTS).join('\n'));
-else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars') });
+else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars'), gradesFile: arg('--grades', null) });
 else if (cmd === 'selfcheck') {
-  const { strict: assert } = await import('assert');
+  // Same shape as cv-select's self-check: a plain predicate, not node:assert,
+  // whose assertion signatures tsc will not accept through a dynamic import.
+  const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
   const perfect = [{ id: 1, s: 9 }, { id: 2, s: 8 }, { id: 3, s: 1 }];
-  assert.equal(pairAccuracy(perfect, new Set([1, 2])), 1, 'perfect ranking');
-  assert.equal(pairAccuracy(perfect, new Set([3])), 0, 'inverted ranking');
-  assert.equal(pairAccuracy([{ id: 1, s: 5 }, { id: 2, s: 5 }], new Set([1])), 0.5, 'ties are half credit');
-  assert.equal(precisionAtK(perfect, new Set([1, 2])), 1, 'p@k');
-  assert.ok(Math.abs(ndcg(perfect, new Set([1, 2])) - 1) < 1e-9, 'ndcg perfect');
+  assert(pairAccuracy(perfect, new Set([1, 2])) === 1, 'perfect ranking');
+  assert(pairAccuracy(perfect, new Set([3])) === 0, 'inverted ranking');
+  assert(pairAccuracy([{ id: 1, s: 5 }, { id: 2, s: 5 }], new Set([1])) === 0.5, 'ties are half credit');
+  assert(precisionAtK(perfect, new Set([1, 2])) === 1, 'p@k');
+  assert(Math.abs(ndcg(perfect, new Set([1, 2])) - 1) < 1e-9, 'ndcg perfect');
   const ci = bootstrapCI([0.1, 0.1, 0.1, 0.1]);
-  assert.ok(Math.abs(ci.mean - 0.1) < 1e-9 && ci.lo > 0, 'constant positive delta is significant');
-  assert.ok(bootstrapCI([-0.3, 0.3, -0.2, 0.2]).lo < 0, 'symmetric noise is not significant');
-  assert.ok(signTest([1, 1, 1, 1, 1, 1]).p < 0.05, 'six wins, no losses');
-  assert.ok(signTest([1, -1, 1, -1]).p > 0.5, 'even split');
+  assert(Math.abs(ci.mean - 0.1) < 1e-9 && ci.lo > 0, 'constant positive delta is significant');
+  assert(bootstrapCI([-0.3, 0.3, -0.2, 0.2]).lo < 0, 'symmetric noise is not significant');
+  assert(signTest([1, 1, 1, 1, 1, 1]).p < 0.05, 'six wins, no losses');
+  assert(signTest([1, -1, 1, -1]).p > 0.5, 'even split');
   const idf = jdIdf();
-  assert.ok(idf.get('rust') > idf.get('kubernetes'), 'rarer term scores higher idf');
-  assert.ok(bm25(tokens('Rust systems'), tokens('built a Rust microservice'), idf) > 0, 'bm25 matches');
-  assert.equal(bm25(tokens('Rust'), tokens('a Java servlet'), idf), 0, 'bm25 no match is 0');
+  assert(idf.get('rust') > idf.get('kubernetes'), 'rarer term scores higher idf');
+  assert(bm25(tokens('Rust systems'), tokens('built a Rust microservice'), idf) > 0, 'bm25 matches');
+  assert(bm25(tokens('Rust'), tokens('a Java servlet'), idf) === 0, 'bm25 no match is 0');
   console.log('retrieval-bench selfcheck ok');
 } else console.log('usage: list | run [--only a,b] [--boot 5000] | selfcheck');
 
