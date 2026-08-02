@@ -114,16 +114,21 @@ export function cvAtoms(cvText) {
   return out.map((a, i) => ({ ...a, id: i + 1 }));
 }
 
-function writeSheet(n, minScore, force) {
+function writeSheet(n, minScore, force, sheetPath = SHEET, excludePath = null) {
   // The ticks are hand-labelled and cost ~25 minutes to reproduce; regenerating
   // the sheet over them is unrecoverable. batch/bench/ is gitignored, so there
   // is no working copy to fall back on either.
-  if (!force && existsSync(SHEET) && [...parseSheet(readFileSync(SHEET, 'utf8')).values()].some(s => s.size)) {
-    throw new Error(`${SHEET} already has ticks — pass --force to discard them`);
+  if (!force && existsSync(sheetPath) && [...parseSheet(readFileSync(sheetPath, 'utf8')).values()].some(s => s.size)) {
+    throw new Error(`${sheetPath} already has ticks — pass --force to discard them`);
   }
   const cvText = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
   const atoms = cvAtoms(cvText);
-  const offers = buildSample(n, {}, minScore);
+  // A second sheet must not re-ask about offers the first one already covers,
+  // or the extra labels buy no extra power.
+  const seen = excludePath && existsSync(excludePath)
+    ? new Set([...parseSheet(readFileSync(excludePath, 'utf8'))].filter(([, v]) => v.size).map(([k]) => k))
+    : new Set();
+  const offers = buildSample(n + seen.size, {}, minScore).filter(o => !seen.has(o.id)).slice(0, n);
   const L = [
     '# Phase 3 selection gold set',
     '',
@@ -153,8 +158,8 @@ function writeSheet(n, minScore, force) {
     }
     L.push('');
   }
-  writeFileSync(SHEET, L.join('\n'));
-  console.log(`wrote ${SHEET} — ${offers.length} offers × ${atoms.length} atoms`);
+  writeFileSync(sheetPath, L.join('\n'));
+  console.log(`wrote ${sheetPath} — ${offers.length} offers × ${atoms.length} atoms`);
 }
 
 /** Parse the marked sheet back into { offerId → Set(atomId) }. */
@@ -170,9 +175,9 @@ export function parseSheet(md) {
   return picks;
 }
 
-async function scoreSheet() {
-  if (!existsSync(SHEET)) throw new Error(`no sheet — run: node batch/goldset.mjs sheet`);
-  const picks = parseSheet(readFileSync(SHEET, 'utf8'));
+async function scoreSheet(sheetPath = SHEET) {
+  if (!existsSync(sheetPath)) throw new Error(`no sheet — run: node batch/goldset.mjs sheet`);
+  const picks = parseSheet(readFileSync(sheetPath, 'utf8'));
   const marked = [...picks].filter(([, s]) => s.size);
   if (!marked.length) throw new Error('sheet has no ticks yet');
   const cvText = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
@@ -226,8 +231,8 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
 else if (cmd === 'export-shots') exportShots(String(arg('--ids', '5,50')).split(','));
-else if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'));
-else if (cmd === 'score') await scoreSheet();
+else if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'), String(arg('--out', SHEET)), arg('--exclude', null));
+else if (cmd === 'score') await scoreSheet(String(arg('--sheet', SHEET)));
 else if (cmd === 'selfcheck') {
   const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
   const a = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
@@ -238,7 +243,7 @@ else if (cmd === 'selfcheck') {
   assert(JSON.stringify([...p.get('42')]) === JSON.stringify([3]), 'ticked only');
   assert(JSON.stringify([...p.get('43')]) === JSON.stringify([1]), 'second offer separate');
   let clobbered = false;
-  try { writeSheet(2, 3.5, false); clobbered = true; } catch (e) { assert(/already has ticks/.test(e.message), 'refuses for the right reason'); }
+  try { writeSheet(2, 3.5, false, SHEET); clobbered = true; } catch (e) { assert(/already has ticks/.test(e.message), 'refuses for the right reason'); }
   assert(!clobbered, 'refuses to clobber labels');
   // Exemplars are keyed by atom text, so a reworded bullet must drop the
   // exemplar rather than silently point the judge at a different bullet.

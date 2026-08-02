@@ -191,3 +191,62 @@ is not worth a 7B call per requirement.
   to combine with the judge — `rrf-cos-judge-bm25` was the top variant under
   the original exemplars — but on this evidence it is not distinguishable from
   `cos+judge-0.10`, which is simpler.
+
+## Sweep 3 — tuning the shipped variant
+
+**Judge weight is a plateau, not a peak.**
+
+| weight | pair |
+|---|---|
+| 0.05 | 0.844 |
+| 0.10 | 0.851 |
+| 0.15 / 0.25 / 0.50 | 0.849 |
+
+Everything from 0.10 up is the same answer: past that point the grade decides
+the ordering and the cosine only breaks ties within a grade. 0.10 is the
+smallest weight on the plateau, so it keeps the most cosine information for the
+ties, and it is not a value that had to be found precisely.
+
+**More exemplars do not pay.** Four exemplars instead of two: Δ +0.107 at n=8
+against +0.095 at n=10, absolute 0.838 against 0.851. Flat, while costing
+prompt tokens and two more offers of held-out data. The jump is entirely
+0-shot → 2-shot (0.670 → 0.739); the curve is level after that.
+
+**Block B is not lossy.** Requirement-shaped sentences taken straight from the
+posting score 0.757 against Block B's 0.756 — indistinguishable. Everything
+downstream depends on the 30B's parse of the posting, and this says that parse
+is not throwing away retrievable signal. Hypothesis eliminated, no change.
+
+**BM25 on top of the judge** is ahead in two of three exemplar configurations
+and behind in the third, by ~0.006 each way. Not distinguishable; not shipped,
+on grounds of simplicity.
+
+## What the change actually does
+
+C++ / HFT posting (#111), requirements "strong commercial C++", "algorithms,
+data structures and concurrency", "high-performance or low-latency systems".
+Bullets the reranker changed:
+
+```
+- Built the Axum signalling server with a broadcast-channel push handler
+- Designed a blind rendezvous protocol with client-side end-to-end encryption
+- Migrating the ephemeral state store from Redis to Valkey
++ Implemented an actor-based async file-transfer engine over WebRTC
++ Engineered a lock-free, pre-allocated video frame ring (atomic ...)
++ Built a GStreamer/PipeWire screen-capture pipeline for Wayland
+```
+
+A lock-free pre-allocated ring buffer is the single most on-target thing on the
+CV for a low-latency C++ role, and cosine ranked it below a Redis migration.
+
+## Still open
+
+- **Label noise is unmeasured**, so the true ceiling is unknown. Cheapest fix is
+  a second sheet that repeats two offers from the first.
+- **A second gold sheet is generated and unlabelled** at
+  `batch/bench/goldset-2.md` — 12 further offers, none overlapping the first.
+  Labelling it would roughly double the power and, more importantly, let
+  `cos+judge-0.10` be confirmed on offers that played no part in choosing it.
+  Everything above selected a winner and validated it only by swapping
+  exemplars, which is a weaker check than fresh offers.
+  Score it with `node batch/goldset.mjs score --sheet batch/bench/goldset-2.md`.

@@ -296,12 +296,20 @@ export async function buildContext(gold, atoms, { withHyde = true, gradesFile = 
       return { mu, sd };
     });
     const instructVecs = await embedCached(g.reqs.map(withInstruct));
+    // Requirement-looking sentences straight from the posting. Block B is the
+    // 30B's parse of the same text, so anything it dropped is invisible to
+    // every requirement-based variant; this is the check on that.
+    const jdSents = String(g.jd).split(/\n|(?<=[.;])\s+/)
+      .map(x => x.replace(/^[-*\u2022\s]+/, '').trim())
+      .filter(x => x.length > 25 && x.length < 300 && /[a-z]/.test(x))
+      .slice(0, 60);
+    const jdSentVecs = jdSents.length ? await embedCached(jdSents) : null;
     let hydeVecs = null;
     if (withHyde) {
       const hyp = await hydeFor(g.reqs);
       hydeVecs = await embedCached(hyp);
     }
-    offers.push({ ...g, reqVecs, reqStats, instructVecs, hydeVecs, reqToks: g.reqs.map(tokens),
+    offers.push({ ...g, reqVecs, reqStats, instructVecs, hydeVecs, jdSentVecs, reqToks: g.reqs.map(tokens),
                   grades: graded.offers[g.id] || null, isExemplar: (graded.shotIds || []).includes(g.id) });
   }
   return { atoms, flat, span, partVecs, partToks, idf, hubness, offers, bgCount: bgVecs.length,
@@ -502,6 +510,14 @@ export const VARIANTS = {
   'cos+judge-0.02':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.02 * ((o.grades || {})[r.id] ?? 0) })),
   'cos+judge-0.05':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.05 * ((o.grades || {})[r.id] ?? 0) })),
   'cos+judge-0.10':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.10 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.15':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.15 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.25':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.25 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.50':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.50 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.10+bm25': (c, o) => perAtom((x, y, i) => maxCos(x, y, i) + 0.10 * ((y.grades || {})[x.atoms[i].id] ?? 0) + 0.10 * Math.tanh(bm25Score(x, y, i) / 4))(c, o),
+  // query source: Block B is the 30B's parse of the posting and may drop things
+  'jdsent':          perAtom((c, o, i) => altCos(c, o, i, 'jdSentVecs')),
+  'cos+jdsent':      perAtom((c, o, i) => maxCos(c, o, i) + altCos(c, o, i, 'jdSentVecs')),
+  'cos+jdsent+judge': (c, o) => perAtom((x, y, i) => maxCos(x, y, i) + altCos(x, y, i, 'jdSentVecs') + 0.20 * ((y.grades || {})[x.atoms[i].id] ?? 0))(c, o),
   'rrf-cos-judge':   (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), c.atoms.map(a => ({ id: a.id, s: (o.grades || {})[a.id] ?? 0 }))]),
   'rrf-cos-judge-bm25': (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), c.atoms.map(a => ({ id: a.id, s: (o.grades || {})[a.id] ?? 0 })), perAtom(bm25Score)(c, o)]),
   // controls
