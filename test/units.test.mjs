@@ -2,6 +2,7 @@
 // scripts themselves. Everything here runs in-process with no model, browser or
 // network, so these are the assertions that pin exact numbers; the end-to-end
 // suites only check that the wiring holds.
+import { readFileSync } from 'fs';
 import { pass, fail, ROOT, join, pathToFileURL } from './harness.mjs';
 
 const eq = (actual, expected, label) =>
@@ -243,6 +244,15 @@ try {
   eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
   eq([...ex].some(s => s.includes('membership platform')), true,
     'exampleShingles covers the worked-example experience bullets');
+  // The detector must not be definable purely by the live prompt: deleting the
+  // worked example would then zero example_copy_pct by construction and score a
+  // win the model never earned. The snapshot is what keeps the question honest.
+  const snapOnly = h.exampleShingles.length === 0 && (() => {
+    const fixture = JSON.parse(readFileSync(join(ROOT, 'batch/bench/example-bullets.json'), 'utf8'));
+    return fixture.length > 0 && fixture.every(b => typeof b === 'string');
+  })();
+  eq(snapOnly, true,
+    'a committed snapshot of the worked example exists, so the copy detector survives its deletion');
 
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';

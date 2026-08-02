@@ -215,8 +215,14 @@ const STAGE2_SCHEMA = {
   required: ['matches'],
 };
 
-async function stage2Evidence(requirements, args) {
-  const cvIndex = await loadCvIndex({ ollamaUrl: args.ollamaUrl });
+/**
+ * @param {any[]} requirements
+ * @param {any} args
+ * @param {any} [preloadedIndex] the CV index loaded in the embedder block above;
+ *   falls back to loading it here so the function stays callable on its own.
+ */
+async function stage2Evidence(requirements, args, preloadedIndex = null) {
+  const cvIndex = preloadedIndex || await loadCvIndex({ ollamaUrl: args.ollamaUrl });
   const reqTexts = requirements.map(r => r.text);
   const reqVecs = await embed(reqTexts, { ollamaUrl: args.ollamaUrl });
 
@@ -651,6 +657,27 @@ async function main() {
 
   const today = new Date().toISOString().split('T')[0];
 
+  // ── Embedder block ──────────────────────────────────────────────────────────
+  // Only one model stays resident in 6 GB, so every switch between the 18.5 GB
+  // 30B and the 0.6 GB embedder costs a reload. Measured on Phase 3: 4 reloads
+  // across 5 calls. Everything the embedder can do *without* stage 1's output —
+  // loading the CV index and the calibration RAG — therefore runs here, before
+  // the 30B is ever loaded, instead of between the two 30B calls.
+  //
+  // stage2's own `embed(reqTexts)` genuinely depends on stage1's requirements
+  // and cannot be hoisted; it stays a single small request rather than a whole
+  // index load plus a RAG query.
+  const cvIndex = await loadCvIndex({ ollamaUrl: args.ollamaUrl }).catch(() => null);
+
+  let calibration = [];
+  if (args.rag) {
+    try {
+      calibration = await similarPastOffers(jd, args.id, 3, { ollamaUrl: args.ollamaUrl });
+    } catch (e) {
+      process.stderr.write(`[staged-evaluator] calibration RAG failed (offer ${args.id}): ${e.message}\n`);
+    }
+  }
+
   // Stage 1 — JD parse
   const parsed = await stage1JdParse(jd, args).catch(e => fatal(`stage1 (JD parse) failed: ${e.message}`));
   if (!parsed.requirements?.length) fatal('stage1 returned no requirements');
@@ -661,19 +688,9 @@ async function main() {
   const compDim = compScoreFromSalary(salary, compTargets);
 
   // Stage 2 — evidence matching
-  const evidence = await stage2Evidence(parsed.requirements, args)
+  const evidence = await stage2Evidence(parsed.requirements, args, cvIndex)
     .catch(e => fatal(`stage2 (evidence match) failed: ${e.message}`));
   const coverage = coverageMetric(evidence);
-
-  // Calibration RAG (best-effort — never blocks the eval)
-  let calibration = [];
-  if (args.rag) {
-    try {
-      calibration = await similarPastOffers(jd, args.id, 3, { ollamaUrl: args.ollamaUrl });
-    } catch (e) {
-      process.stderr.write(`[staged-evaluator] calibration RAG failed (offer ${args.id}): ${e.message}\n`);
-    }
-  }
 
   // Stage 3 — judgment
   const judgment = await stage3Judgment({ jd, parsed, evidence, coverage, calibration, salary, cv, profile, args })
