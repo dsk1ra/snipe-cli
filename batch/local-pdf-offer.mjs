@@ -367,23 +367,63 @@ function caseKeyword(kw) {
   return kw.replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Rank the CV's own skill items by JD token overlap. Definitionally grounded —
+// they are lifted verbatim from cv.md — so this is the top-up source when the
+// report's keywords do not survive the grounding filter below.
+function rankCvSkills(cv, jd) {
+  const sec = (cv || '').split(/^##\s+/m).find(s => /^Skills/i.test(s)) || '';
+  // Drop the parenthesised asides BEFORE splitting: several items carry commas
+  // inside them ("Kubernetes (working knowledge, self-study …)"), and splitting
+  // first shipped "Kubernetes (Working Knowledge" as a competency tag.
+  const items = [...sec.matchAll(/^\*\*[^*]+:\*\*\s*(.+)$/gm)]
+    .flatMap(m => m[1].replace(/\([^)]*\)/g, '').split(','))
+    .map(s => s.trim())
+    .filter(s => s.length >= 2 && s.length <= 34);
+  const jdTok = new Set(tokenize(jd));
+  return items
+    .map((item, idx) => ({ item, idx, score: tokenize(item).filter(t => jdTok.has(t)).length }))
+    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .map(s => s.item);
+}
+
 // Build 6-9 competency tags from the report keywords (already JD-extracted by the
-// evaluator), de-duplicated and cased. Falls back to the model's competencies if
-// the report has too few usable keywords.
-function deriveCompetencies(report, fallback) {
+// evaluator), de-duplicated and cased.
+//
+// The keywords come from the JD, so they describe the ROLE, not the candidate —
+// printing them unfiltered put "Clinical AI Agents", "Dora Platform" and "NHS
+// Consultations" on a CV as claimed competencies (report 152). A tag only ships
+// if it appears in cv.md AS A PHRASE; the shortfall is topped up from the CV's
+// own skills, ranked by JD overlap. The model's own competencies are the last
+// resort and are held to the same filter.
+//
+// Word-by-word grounding is not enough: it cleared "Graph Analytics" for the Neo4j
+// CV (report 155) because "graph" occurs inside "federated graph" and "analytics"
+// inside "Security Analytics Dashboard" — two unrelated places, and the candidate
+// has never touched a graph database. The phrase has to be there.
+function deriveCompetencies(report, fallback, cvText, jdText) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9+#.]+/g, ' ').trim();
+  const cvNorm = ` ${norm(cvText)} `;
+  const grounded = (kw) => {
+    const n = norm(kw);
+    return n.length >= 2 && cvNorm.includes(` ${n} `);
+  };
   const seen = new Set();
   const out = [];
-  for (const kw of extractReportKeywords(report)) {
-    if (kw.length < 2 || kw.length > 34) continue;
-    const norm = kw.toLowerCase();
-    if (seen.has(norm)) continue;
-    seen.add(norm);
+  const add = (kw) => {
+    if (out.length >= 9) return;
+    if (kw.length < 2 || kw.length > 34) return;
+    const n = norm(kw);
+    // Overlap, not just equality: "TypeScript" from the JD and "TypeScript /
+    // JavaScript" from the CV skills are one tag, not two.
+    if (seen.has(n) || [...seen].some(s => s.includes(n) || n.includes(s))) return;
+    seen.add(n);
     out.push(caseKeyword(kw));
-    if (out.length >= 9) break;
-  }
-  if (out.length >= 6) return out;
-  if (Array.isArray(fallback) && fallback.length >= 6) return fallback;
-  return out.length ? out : (Array.isArray(fallback) ? fallback : []);
+  };
+
+  for (const kw of extractReportKeywords(report)) if (grounded(kw)) add(kw);
+  if (out.length < 6) for (const kw of rankCvSkills(cvText, jdText)) { if (out.length >= 9) break; add(kw); }
+  if (out.length < 6 && Array.isArray(fallback)) for (const kw of fallback) if (grounded(kw)) add(kw);
+  return out;
 }
 
 // Parse the CV's "Key Modules:" list.
@@ -551,7 +591,7 @@ if (Array.isArray(cvContent.projects)) {
 // Tier 3 — replace the coder model's two weakest fields with deterministic,
 // JD-grounded selections. Competencies come from the report's already-extracted
 // keywords; education modules are ranked by JD token overlap.
-cvContent.competencies = deriveCompetencies(reportText, cvContent.competencies);
+cvContent.competencies = deriveCompetencies(reportText, cvContent.competencies, cvText, jdText);
 const rankedModules = rankModules(cvText, jdText, 5);
 if (rankedModules.length) cvContent.education_modules = rankedModules;
 
@@ -662,6 +702,20 @@ function runFill(maxSkills, maxBullets) {
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
 }
 
+// Keep the N projects most relevant to the JD, in their existing (chronological)
+// order. enforceChronoOrder has already re-sorted by date, so the tail slice this
+// replaces dropped the OLDEST project rather than the weakest — on the Edenred
+// Java/Spring JD that silently cut the Java/Spring project (report 149), the one
+// thing the CV most needed to show.
+function trimProjectsByRelevance(list, n, jdTok) {
+  if (!Array.isArray(list) || list.length <= n) return list;
+  const score = p => [...new Set(tokenize(`${p.name} ${p.description || ''}`))]
+    .filter(t => jdTok.has(t)).length;
+  const keep = new Set([...list].sort((a, b) => score(b) - score(a)).slice(0, n));
+  return list.filter(p => keep.has(p));
+}
+const jdTokens = new Set(tokenize(jdText));
+
 // Tier 5 — relevance-preserving density ladder. The summary and competencies are
 // NEVER cut to fit the page; we only reduce experience-bullet depth (fill caps
 // per role, hitting the least-relevant backfilled roles too), skill breadth, and
@@ -681,9 +735,7 @@ let pdfError = null;
 for (let step = 0; step < LADDER.length; step++) {
   const { skills, bullets, projects } = LADDER[step];
 
-  if (Array.isArray(cvContent.projects) && cvContent.projects.length > projects) {
-    cvContent.projects = cvContent.projects.slice(0, projects);
-  }
+  cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
   writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 
   try {
