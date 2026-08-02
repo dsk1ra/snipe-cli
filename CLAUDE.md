@@ -90,6 +90,16 @@ Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both ph
 `cv-select.mjs` ranks CV bullets against Block B requirements via embeddings
 first, so the 7B only rewrites — it never selects. PDF is hard-capped at 2 pages.
 
+That ranking is then reranked by `snipe-eval`, which grades each bullet 0–3 for
+the posting and is blended in at `cos + 0.10 × grade` (+0.10 pair accuracy
+against the human gold set, holds under a disjoint exemplar pair — see
+`docs/PHASE3-RETRIEVAL-LEDGER.md`). It is few-shot from two hand-labelled
+offers in `batch/judge-shots.json`; **0-shot it is worse than no rerank at
+all**, so a missing or unmatched exemplar file disables it rather than
+degrading it, as does any model failure. Costs one 30B call, ~44s.
+Regenerate exemplars after editing cv.md:
+`node batch/goldset.mjs export-shots --ids 5,50`.
+
 Embedding indexes (`batch/cv-index.json`, `batch/jd-index.json`) rebuild with
 `node batch/embeddings.mjs rebuild` (auto-invalidated by `cv.md` hash).
 
@@ -139,6 +149,20 @@ node batch/eval-harness.mjs compare --a batch/bench/7b --b batch/bench/30b [--la
 ```
 
 `--bench-dir` keeps benchmark runs out of real `reports/` and `evals/`.
+
+Phase 3 *selection* has its own ground truth and harness, because a tailored CV
+is a document with nothing to rank-correlate:
+
+```bash
+node batch/goldset.mjs sheet          # 12 offers x 14 CV atoms, for a human to tick
+node batch/goldset.mjs score          # does the shipped ranker agree with the human
+node batch/retrieval-bench.mjs run    # A/B every retrieval variant, paired, with CIs
+```
+
+`batch/bench/goldset.md` is hand-labelled ground truth force-added past
+.gitignore; `sheet` refuses to overwrite ticks without `--force`. Variants are
+compared **paired per offer** with a bootstrap CI over offers and a sign test —
+a dozen variants against twelve offers will otherwise always find a "winner".
 
 ### Benchmark rules (learned the hard way)
 
