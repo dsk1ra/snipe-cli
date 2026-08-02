@@ -35,7 +35,11 @@ import { embed, cosine, modelFingerprint, EMBED_MODEL } from './embeddings.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
 const BENCH = resolve(__dirname, 'bench');
-const CACHE = resolve(BENCH, 'embed-cache.json');
+// One cache file per model: the fingerprint check would otherwise discard the
+// whole cache on every switch, and re-embedding 900 background requirements
+// with a 4B model is not a thing to do twice.
+let EMBED_MODEL_NAME = EMBED_MODEL;
+const cachePath = () => resolve(BENCH, `embed-cache-${EMBED_MODEL_NAME.replace(/[^a-z0-9.-]/gi, '_')}.json`);
 const SHEET = resolve(BENCH, 'goldset.md');
 
 // ── embedding cache ───────────────────────────────────────────────────────────
@@ -46,7 +50,8 @@ let cacheDirty = false;
 let fingerprint = '';
 
 async function initCache() {
-  fingerprint = await modelFingerprint({ model: EMBED_MODEL });
+  fingerprint = await modelFingerprint({ model: EMBED_MODEL_NAME });
+  const CACHE = cachePath();
   if (existsSync(CACHE)) {
     const d = JSON.parse(readFileSync(CACHE, 'utf8'));
     // A cache keyed by a different embedder is silently wrong, not merely stale.
@@ -56,7 +61,7 @@ async function initCache() {
 function saveCache() {
   if (!cacheDirty) return;
   mkdirSync(BENCH, { recursive: true });
-  writeFileSync(CACHE, JSON.stringify({ fingerprint, vectors: cache }));
+  writeFileSync(cachePath(), JSON.stringify({ fingerprint, vectors: cache }));
   cacheDirty = false;
 }
 const keyOf = (t) => createHash('sha1').update(t).digest('hex').slice(0, 20);
@@ -66,7 +71,7 @@ export async function embedCached(texts) {
   const missing = [...new Set(texts.filter(t => !cache[keyOf(t)]))];
   for (let i = 0; i < missing.length; i += 64) {
     const chunk = missing.slice(i, i + 64);
-    const vecs = await embed(chunk);
+    const vecs = await embed(chunk, { model: EMBED_MODEL_NAME });
     chunk.forEach((t, j) => { cache[keyOf(t)] = vecs[j]; });
     cacheDirty = true;
   }
@@ -544,7 +549,8 @@ export function evaluate(ctx, variant) {
 
 const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-async function run({ only, boot, dropExemplars, gradesFile }) {
+async function run({ only, boot, dropExemplars, gradesFile, embedModel }) {
+  if (embedModel) EMBED_MODEL_NAME = embedModel;
   const atoms = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
   const gold = loadGold();
   const ctx = await buildContext(gold, atoms, { gradesFile });
@@ -556,6 +562,7 @@ async function run({ only, boot, dropExemplars, gradesFile }) {
     ctx.offers = ctx.offers.filter(o => !o.isExemplar);
     console.log(`dropped ${ctx.exemplars.length} judge exemplars: ${ctx.exemplars.join(', ')}`);
   }
+  console.log(`embedder ${EMBED_MODEL_NAME}`);
   console.log(`${ctx.offers.length} labelled offers · ${atoms.length} atoms · ${ctx.flat.length} parts · ${ctx.bgCount} background requirements\n`);
 
   const names = only ? only.split(',') : Object.keys(VARIANTS);
@@ -592,7 +599,7 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
 else if (cmd === 'list') console.log(Object.keys(VARIANTS).join('\n'));
-else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars'), gradesFile: arg('--grades', null) });
+else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars'), gradesFile: arg('--grades', null), embedModel: arg('--embed-model', null) });
 else if (cmd === 'selfcheck') {
   // Same shape as cv-select's self-check: a plain predicate, not node:assert,
   // whose assertion signatures tsc will not accept through a dynamic import.

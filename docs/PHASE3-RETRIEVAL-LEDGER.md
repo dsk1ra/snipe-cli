@@ -250,3 +250,28 @@ CV for a low-latency C++ role, and cosine ranked it below a Redis migration.
   Everything above selected a winner and validated it only by swapping
   exemplars, which is a weaker check than fresh offers.
   Score it with `node batch/goldset.mjs score --sheet batch/bench/goldset-2.md`.
+
+## Sweep 4 — a bigger embedder is worse
+
+`snipe-embed` is Qwen3-Embedding 0.6B at q8_0. Swapping in the 4B is the most
+obvious "just use a better model" move available locally, and it loses:
+
+| embedder | base-cos | cos+judge-0.10 |
+|---|---|---|
+| snipe-embed (0.6B q8_0) | **0.756** | **0.851** |
+| qwen3-embedding:0.6b-q8_0 (raw base) | 0.756 | 0.851 |
+| qwen3-embedding:4b | 0.715 | 0.791 |
+
+The raw base scoring identically to `snipe-embed` rules out the Modelfile as
+the cause — it is a bare `FROM` with no configuration — so this is size and
+quantization, not setup. The 4B ships at 2.5 GB for 4B parameters, roughly q4,
+against 0.6B at q8_0; on this task the heavier quantization costs more than the
+extra parameters buy. It is also a worse fit for a 6 GB card.
+
+The instruction prefix hurts the 4B as well (0.673 against 0.715), matching the
+0.6B result. Two models, same direction — the likely explanation is that
+Ollama's embed endpoint already applies the model's template and the manual
+`Instruct:` prefix double-applies it. Do not add it to either.
+
+**Keep `snipe-embed`.** "Upgrade the embedder" is the natural next idea and it
+is measured here as a regression.
