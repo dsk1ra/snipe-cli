@@ -189,6 +189,63 @@ export function signTest(xs, eps = 1e-9) {
   return { pos, neg, p: Math.min(1, 2 * tail / 2 ** n) };
 }
 
+// ── query-side rewrites ───────────────────────────────────────────────────────
+
+/**
+ * Qwen3-Embedding is trained with an instruction prefix on the query side only.
+ * Retrieval quality is reported to move a point or two with it, and it costs
+ * one string concatenation, so it is worth knowing whether it helps here.
+ */
+const INSTRUCT = 'Given a job requirement, retrieve the CV achievement bullet that evidences it';
+const withInstruct = (q) => `Instruct: ${INSTRUCT}\nQuery:${q}`;
+
+/**
+ * HyDE. A requirement ("Strong commercial C++ experience, C++17/20 preferred")
+ * and a CV bullet ("Built a Rust microservice testbed comparing NIST post-
+ * quantum signatures...") are the same subject in two different registers: one
+ * is a demand, the other a past achievement with metrics. Cosine between
+ * registers measures style as much as topic.
+ *
+ * So the requirement is first rewritten into the register it is searching —
+ * one invented CV bullet that would satisfy it — and that hypothetical is
+ * embedded instead. The hypothetical is never shown to anyone and never
+ * reaches the CV; it exists only as a query vector.
+ *
+ * Generated with snipe-cv (7B) at temperature 0 and cached on disk, so the
+ * whole sweep pays for it once.
+ */
+const HYDE_CACHE = resolve(BENCH, 'hyde-cache.json');
+const HYDE_SYSTEM = 'Write ONE CV bullet point, 20-30 words, that a strong candidate would have on their CV to evidence the given job requirement. Past tense, concrete, include a plausible technology and a metric. Output only the bullet, no preamble, no leading dash.';
+
+async function hydeFor(reqs, { ollamaUrl = 'http://localhost:11434', model = 'snipe-cv' } = {}) {
+  let store = existsSync(HYDE_CACHE) ? JSON.parse(readFileSync(HYDE_CACHE, 'utf8')) : {};
+  let dirty = false;
+  const out = [];
+  for (const r of reqs) {
+    const k = keyOf(r);
+    if (!store[k]) {
+      const res = await fetch(`${ollamaUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'system', content: HYDE_SYSTEM }, { role: 'user', content: r }],
+          stream: false,
+          options: { temperature: 0, num_ctx: 2048, num_predict: 96 },
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!res.ok) throw new Error(`hyde HTTP ${res.status}`);
+      const txt = String((await res.json())?.message?.content || '').trim().replace(/^[-*]\s*/, '').split('\n')[0];
+      store[k] = txt || r;
+      dirty = true;
+    }
+    out.push(store[k]);
+  }
+  if (dirty) { mkdirSync(BENCH, { recursive: true }); writeFileSync(HYDE_CACHE, JSON.stringify(store)); }
+  return out;
+}
+
 // ── scoring context ───────────────────────────────────────────────────────────
 
 /**
@@ -196,7 +253,7 @@ export function signTest(xs, eps = 1e-9) {
  * vectors, and per-offer requirement vectors. A variant is a pure function of
  * this, which is what keeps the comparison paired.
  */
-export async function buildContext(gold, atoms) {
+export async function buildContext(gold, atoms, { withHyde = true } = {}) {
   await initCache();
   const flat = atoms.flatMap(a => a.parts);
   const span = [];
@@ -208,6 +265,8 @@ export async function buildContext(gold, atoms) {
   // Background requirements for the hubness estimate, taken from reports that
   // are NOT under test. Using the test offers' own requirements would let each
   // atom's correction absorb the very signal being measured.
+  const gradesPath = resolve(BENCH, 'judge-grades.json');
+  const graded = existsSync(gradesPath) ? JSON.parse(readFileSync(gradesPath, 'utf8')) : { offers: {}, shotIds: [] };
   const goldIds = new Set(gold.map(g => g.id));
   const bg = [];
   for (const o of eligible()) {
@@ -236,9 +295,17 @@ export async function buildContext(gold, atoms) {
       const sd = Math.sqrt(sims.reduce((a, b) => a + (b - mu) ** 2, 0) / sims.length);
       return { mu, sd };
     });
-    offers.push({ ...g, reqVecs, reqStats, reqToks: g.reqs.map(tokens) });
+    const instructVecs = await embedCached(g.reqs.map(withInstruct));
+    let hydeVecs = null;
+    if (withHyde) {
+      const hyp = await hydeFor(g.reqs);
+      hydeVecs = await embedCached(hyp);
+    }
+    offers.push({ ...g, reqVecs, reqStats, instructVecs, hydeVecs, reqToks: g.reqs.map(tokens),
+                  grades: graded.offers[g.id] || null, isExemplar: (graded.shotIds || []).includes(g.id) });
   }
-  return { atoms, flat, span, partVecs, partToks, idf, hubness, offers, bgCount: bgVecs.length };
+  return { atoms, flat, span, partVecs, partToks, idf, hubness, offers, bgCount: bgVecs.length,
+           exemplars: (graded.shotIds || []).filter(id => goldIds.has(id)) };
 }
 
 // ── lexical machinery ─────────────────────────────────────────────────────────
@@ -377,6 +444,31 @@ function looPrior(ctx, offer) {
   return ctx.atoms.map(a => ({ id: a.id, s: count.get(a.id) / (n || 1) }));
 }
 
+/**
+ * Mean of the top-n requirement similarities instead of the max. A single
+ * requirement can match by accident; agreeing with two or three at once is
+ * harder to do by chance.
+ */
+function topNCos(ctx, offer, atomIdx, n) {
+  const [lo, hi] = ctx.span[atomIdx];
+  const per = offer.reqVecs.map(q => {
+    let best = -Infinity;
+    for (let j = lo; j < hi; j++) best = Math.max(best, cosine(q, ctx.partVecs[j]));
+    return best;
+  }).sort((a, b) => b - a).slice(0, n);
+  return per.reduce((a, b) => a + b, 0) / (per.length || 1);
+}
+
+/** Queries embedded through the alternate view (instruct-prefixed, or HyDE). */
+function altCos(ctx, offer, atomIdx, key) {
+  const alt = offer[key];
+  if (!alt) return -Infinity;
+  const [lo, hi] = ctx.span[atomIdx];
+  let best = -Infinity;
+  for (let j = lo; j < hi; j++) for (const q of alt) best = Math.max(best, cosine(q, ctx.partVecs[j]));
+  return best;
+}
+
 /** @type {Record<string, Variant>} */
 export const VARIANTS = {
   // production today
@@ -392,6 +484,26 @@ export const VARIANTS = {
   'hyb-0.35':        perAtom((c, o, i) => maxCos(c, o, i) + 0.35 * Math.tanh(bm25Score(c, o, i) / 4)),
   'csls+bm25-0.20':  perAtom((c, o, i) => csls(c, o, i) + 0.20 * Math.tanh(bm25Score(c, o, i) / 4)),
   'rrf-cos-bm25':    (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), perAtom(bm25Score)(c, o)]),
+  // aggregation over requirements
+  'top2-cos':        perAtom((c, o, i) => topNCos(c, o, i, 2)),
+  'top3-cos':        perAtom((c, o, i) => topNCos(c, o, i, 3)),
+  'max+top3':        perAtom((c, o, i) => maxCos(c, o, i) + topNCos(c, o, i, 3)),
+  // query-side rewrites
+  'instruct':        perAtom((c, o, i) => altCos(c, o, i, 'instructVecs')),
+  'hyde':            perAtom((c, o, i) => altCos(c, o, i, 'hydeVecs')),
+  'hyde+cos':        perAtom((c, o, i) => maxCos(c, o, i) + altCos(c, o, i, 'hydeVecs')),
+  'hyde+cos+bm25':   perAtom((c, o, i) => maxCos(c, o, i) + altCos(c, o, i, 'hydeVecs') + 0.2 * Math.tanh(bm25Score(c, o, i) / 4)),
+  'rrf-cos-hyde':    (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), perAtom((x, y, i) => altCos(x, y, i, 'hydeVecs'))(c, o)]),
+  'rrf-cos-hyde-bm25': (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), perAtom((x, y, i) => altCos(x, y, i, 'hydeVecs'))(c, o), perAtom(bm25Score)(c, o)]),
+  // LLM reranker as a feature, not as a label source. Grades are 0-3 from
+  // snipe-eval with two fixed exemplars; the exemplar offers are dropped from
+  // evaluation by the runner because they are training data.
+  'judge':           (c, o) => c.atoms.map(a => ({ id: a.id, s: (o.grades || {})[a.id] ?? 0 })),
+  'cos+judge-0.02':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.02 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.05':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.05 * ((o.grades || {})[r.id] ?? 0) })),
+  'cos+judge-0.10':  (c, o) => perAtom(maxCos)(c, o).map(r => ({ id: r.id, s: r.s + 0.10 * ((o.grades || {})[r.id] ?? 0) })),
+  'rrf-cos-judge':   (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), c.atoms.map(a => ({ id: a.id, s: (o.grades || {})[a.id] ?? 0 }))]),
+  'rrf-cos-judge-bm25': (c, o) => rrf(c, o, [perAtom(maxCos)(c, o), c.atoms.map(a => ({ id: a.id, s: (o.grades || {})[a.id] ?? 0 })), perAtom(bm25Score)(c, o)]),
   // controls
   'prior-only':      looPrior,
   'random':          (c, o) => c.atoms.map((a, i) => ({ id: a.id, s: Math.sin(i * 12.9898 + Number(o.id)) })),
@@ -416,11 +528,19 @@ export function evaluate(ctx, variant) {
 
 const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-async function run({ only, boot }) {
+async function run({ only, boot, dropExemplars }) {
   const atoms = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
   const gold = loadGold();
   const ctx = await buildContext(gold, atoms);
-  console.log(`${gold.length} labelled offers · ${atoms.length} atoms · ${ctx.flat.length} parts · ${ctx.bgCount} background requirements\n`);
+  // Offers used as judge exemplars are training data for any judge-based
+  // variant. Evaluating on them would flatter those variants and only those,
+  // so they come out for every variant or none — otherwise the comparison is
+  // no longer paired over the same offers.
+  if (dropExemplars && ctx.exemplars.length) {
+    ctx.offers = ctx.offers.filter(o => !o.isExemplar);
+    console.log(`dropped ${ctx.exemplars.length} judge exemplars: ${ctx.exemplars.join(', ')}`);
+  }
+  console.log(`${ctx.offers.length} labelled offers · ${atoms.length} atoms · ${ctx.flat.length} parts · ${ctx.bgCount} background requirements\n`);
 
   const names = only ? only.split(',') : Object.keys(VARIANTS);
   const baseName = 'base-cos';
@@ -452,9 +572,11 @@ async function run({ only, boot }) {
 }
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i === -1 ? d : process.argv[i + 1]; };
-const cmd = process.argv[2];
-if (cmd === 'list') console.log(Object.keys(VARIANTS).join('\n'));
-else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)) });
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const cmd = isMain ? process.argv[2] : null;
+if (!isMain) { /* imported: expose helpers, run nothing */ }
+else if (cmd === 'list') console.log(Object.keys(VARIANTS).join('\n'));
+else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars') });
 else if (cmd === 'selfcheck') {
   const { strict: assert } = await import('assert');
   const perfect = [{ id: 1, s: 9 }, { id: 2, s: 8 }, { id: 3, s: 1 }];
