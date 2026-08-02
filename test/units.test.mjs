@@ -217,6 +217,9 @@ try {
 // here invalidates every comparison rather than failing loudly.
 try {
   const h = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+  // The product vocabulary lives with the pipeline guard that enforces it,
+  // not with the bench that only measures it.
+  const g = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
 
   // numsOf: what counts as a "number the CV must contain"
   deepEq([...h.numsOf('grew from 80 at launch to 170')], ['80', '170'],
@@ -256,20 +259,20 @@ try {
 
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
-  deepEq(h.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),
+  deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),
     ['gcp', 'kotlin', 'terraform'],
     'productFab reports every named product the CV never mentions');
-  deepEq(h.productFab('Built Rust services on AWS backed by PostgreSQL', cvMd), [],
+  deepEq(g.productFab('Built Rust services on AWS backed by PostgreSQL', cvMd), [],
     'productFab stays silent when every product is in the CV');
-  deepEq(h.productFab('Owned distributed low-latency event-driven architecture', cvMd), [],
+  deepEq(g.productFab('Owned distributed low-latency event-driven architecture', cvMd), [],
     'productFab ignores capability phrases — those are the tier that stays free');
-  deepEq(h.productFab('Shipped AZURE and Angular work', cvMd), ['azure', 'angular'],
+  deepEq(g.productFab('Shipped AZURE and Angular work', cvMd), ['azure', 'angular'],
     'productFab is case-insensitive, so shouting a fabrication does not hide it');
   // Substring safety: "ray" must not fire inside "array", "sap" inside "sapling".
-  deepEq(h.productFab('Optimised an array of sapling growth models', cvMd), [],
+  deepEq(g.productFab('Optimised an array of sapling growth models', cvMd), [],
     'productFab matches whole phrases, not substrings of unrelated words');
   // Multi-word products have to survive the normaliser that strips punctuation.
-  deepEq(h.productFab('Ran pipelines on Google Cloud and Power BI', cvMd),
+  deepEq(g.productFab('Ran pipelines on Google Cloud and Power BI', cvMd),
     ['google cloud', 'power bi'],
     'productFab catches multi-word product names');
 
