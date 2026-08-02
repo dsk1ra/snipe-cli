@@ -156,8 +156,13 @@ async function scoreSheet() {
 }
 
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i === -1 ? d : process.argv[i + 1]; };
-const cmd = process.argv[2];
-if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'));
+// Guarded: importing this module must not run its CLI. Without it, importing
+// goldset from another script made that script's argv[2] dispatch here too —
+// `retrieval-bench.mjs selfcheck` silently ran the goldset selfcheck as well.
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const cmd = isMain ? process.argv[2] : null;
+if (!isMain) { /* imported: expose helpers, run nothing */ }
+else if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'));
 else if (cmd === 'score') await scoreSheet();
 else if (cmd === 'selfcheck') {
   const { strict: assert } = await import('assert');
