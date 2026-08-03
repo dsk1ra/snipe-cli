@@ -298,7 +298,8 @@ export function cleanSummary(raw) {
  * which is what makes a single-run A/B valid on this stack.
  *
  * @param {{bullets: string[], role: string, cvText: string, incumbent?: string,
- *          call: (system: string, user: string) => Promise<string>}} opts
+ *          call: (system: string, user: string) => Promise<string>,
+ *          margin?: number}} opts
  * @returns {Promise<string|null>} the winning summary, or null if neither works
  */
 export async function generateSummary({ bullets, role, cvText, incumbent = '', call, margin = 1.0 }) {
