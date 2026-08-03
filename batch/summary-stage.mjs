@@ -142,6 +142,45 @@ export function verifyBulletProducts(items, cvText) {
   return revertUnsupportedBullets(items, cvText, b => productFab(b, cvText).length > 0);
 }
 
+/**
+ * Drop skill items naming a product `cv.md` never mentions.
+ *
+ * The skills array is model-written, unlike `competencies` and
+ * `education_modules` which are code-derived from `cv.md` and so cannot
+ * fabricate. It was the one generated surface T2 initially missed, and it was
+ * the single surviving `product_fab` on the benchmark: a Flock posting asking
+ * for AWS Lambda/SQS/EventBridge produced the skill row
+ * "AWS (Lambda, SQS, EventBridge), Spring Boot, RabbitMQ, PostgreSQL" against a
+ * CV that names AWS but never SQS.
+ *
+ * Item-level, because a skills row is already a comma-separated list — dropping
+ * the offending item is the natural repair and keeps the true ones. A row left
+ * empty is removed rather than shipped as a bare heading. Parenthesised asides
+ * are pruned in place, so "AWS (Lambda, SQS)" becomes "AWS (Lambda)".
+ *
+ * @param {any[]} skills
+ * @param {string} cvText
+ */
+export function filterSkillItems(skills, cvText) {
+  if (!Array.isArray(skills)) return skills;
+  const clean = (item) => {
+    // Prune inside the parentheses first, so one bad sub-item does not cost the
+    // whole entry ("AWS (Lambda, SQS)" must not lose AWS).
+    const withAside = item.replace(/\(([^)]*)\)/g, (whole, inner) => {
+      const kept = inner.split(',').map(x => x.trim())
+        .filter(x => x && !productFab(x, cvText).length);
+      return kept.length ? `(${kept.join(', ')})` : '';
+    }).replace(/\s+/g, ' ').trim();
+    return productFab(withAside, cvText).length ? '' : withAside;
+  };
+  return skills
+    .map(s => {
+      const items = String(s?.items || '').split(',').map(x => clean(x.trim())).filter(Boolean);
+      return { ...s, items: items.join(', ') };
+    })
+    .filter(s => s.items);
+}
+
 // ── Summary stage ─────────────────────────────────────────────────────────────
 
 /**
@@ -170,7 +209,7 @@ const SUMMARY_SYSTEM = [
   'no JSON, no quotes, no preamble, no label.',
   '',
   'Rules:',
-  '- Length: 50 to 70 words. Count them. This is mandatory.',
+  '- Length: 60 to 70 words. Count them. This is mandatory. Under 60 is too short.',
   '- Implied first person: never use a name, never "he"/"she"/"they".',
   '- EVERY claim must be traceable to a specific line of the evidence below. The',
   '  evidence is the ONLY source of fact. You are describing this candidate, not',
@@ -180,6 +219,10 @@ const SUMMARY_SYSTEM = [
   '  technology, product, cloud or framework absent from the evidence. Describing',
   '  the KIND of work ("distributed systems", "low-latency") is fine.',
   '- Never name the target company, and never claim to have worked for them.',
+  '- BE SPECIFIC. Name the actual systems, technologies and figures that appear',
+  '  in the evidence. A summary that could describe any engineer is a failed',
+  '  summary. Never write "proven track record", "high-impact", "diverse',
+  '  domains", "innovative solutions", "cutting-edge" or "passionate about".',
 ].join('\n');
 
 /**
@@ -262,6 +305,23 @@ export function looksLikeProse(text) {
 }
 
 /**
+ * CV filler: phrases that describe nobody. They survive every truth guard —
+ * nothing about "a proven track record in diverse domains" is false — so only
+ * an explicit penalty keeps them out.
+ */
+const FILLER = [
+  'proven track record', 'high-impact', 'diverse domains', 'innovative solutions',
+  'cutting-edge', 'passionate about', 'results-driven', 'team player',
+  'thinking outside', 'wide range of', 'various domains', 'dynamic environment',
+];
+
+/** How many filler phrases a candidate leans on. */
+export function fillerCount(text) {
+  const t = String(text || '').toLowerCase();
+  return FILLER.filter(f => t.includes(f)).length;
+}
+
+/**
  * Deterministic quality score for one candidate summary. Higher is better.
  * Label-free: word-count distance, fabricated products, and how much of it is
  * traceable to the evidence. Non-prose scores -Infinity — see looksLikeProse.
@@ -272,6 +332,7 @@ export function scoreSummary(text, { bullets, cvText }) {
   const lenPenalty = w < 50 ? 50 - w : w > 70 ? w - 70 : 0;
   return -lenPenalty
          - 5 * productFab(text, cvText).length
+         - 4 * fillerCount(text)
          + 8 * evidenceOverlap(text, bullets);
 }
 

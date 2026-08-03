@@ -23,7 +23,7 @@ import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChr
          stripUnsupportedTenure } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
-         verifyBulletProducts } from './summary-stage.mjs';
+         verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -656,6 +656,7 @@ if (typeof cvContent.summary === 'string') {
 // revert to their CV source rather than losing the sentence; project blurbs and
 // the summary get clause surgery, since they have no single source line.
 cvContent.experience = verifyBulletProducts(cvContent.experience, cvText);
+cvContent.skills = filterSkillItems(cvContent.skills, cvText);
 if (Array.isArray(cvContent.projects)) {
   for (const p of cvContent.projects) {
     if (typeof p.description === 'string') {
