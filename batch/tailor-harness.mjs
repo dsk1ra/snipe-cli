@@ -141,8 +141,12 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
       process.stderr.write(`  FAILED: ${String(err.stderr || err.message).slice(0, 200)}\n`);
     }
   }
+  // Env-gated behaviour is invisible in the output dir, so a run that forgot the
+  // flag is indistinguishable from one that had it. Record which arm this was.
+  const flags = Object.fromEntries(Object.entries(process.env)
+    .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
   const meta = { label, temperature, model, n: sample.length, limit: limit || null, ok, failed,
-                 minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
+                 flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   return meta;
 }

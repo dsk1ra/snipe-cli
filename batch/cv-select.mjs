@@ -499,6 +499,32 @@ export function verifyBulletNumbers(items, cvText) {
 }
 
 /**
+ * Revert a bullet that silently dropped the figures its CV source stated.
+ *
+ * The mirror of `verifyBulletNumbers`: that one catches a figure the model
+ * invented, this one catches a figure it deleted. Measured across 12 shipped
+ * CVs, 44 % of source figures survived the rewrite — the 7B truncates to the
+ * first clause, so "Authored troubleshooting documentation and standardised
+ * environment setup guides, cutting configuration time from 2+ hours to 30
+ * minutes per student and reducing staff escalations by 90 %" ships as
+ * "Authored troubleshooting documentation for students". Nothing is false, so
+ * every existing guard passes it.
+ *
+ * Reverting is a real trade: the bullet loses its JD keywords along with the
+ * truncation, so this is gated until measured. `num_retention` in
+ * tailor-harness.mjs is the metric, `ats_coverage` the thing it can cost.
+ *
+ * @param {any[]} items
+ * @param {string} cvText
+ */
+export function verifyBulletFigures(items, cvText) {
+  return revertUnsupportedBullets(items, cvText, (b, src) => {
+    const kept = numbersIn(b);
+    return [...numbersIn(src)].some(n => !kept.has(n));
+  });
+}
+
+/**
  * Revert every bullet failing `isUnsupported` to the `cv.md` bullet it was
  * rewritten from — untailored but true beats tailored and false.
  *
@@ -507,9 +533,14 @@ export function verifyBulletNumbers(items, cvText) {
  * repair. A bullet is one sentence, so deleting it would cost a whole slot;
  * reverting keeps the slot and loses only the tailoring.
  *
+ * The predicate is handed the source bullet as well as the rewrite, because
+ * "this dropped something" is only answerable against the line it came from.
+ * That means the argmax now runs for every bullet rather than only the failing
+ * ones — a few token-set intersections per CV, against four model calls.
+ *
  * @param {any[]} items experience entries, `{company, bullets}`
  * @param {string} cvText
- * @param {(bullet: string) => boolean} isUnsupported
+ * @param {(bullet: string, source: string) => boolean} isUnsupported
  */
 export function revertUnsupportedBullets(items, cvText, isUnsupported) {
   if (!Array.isArray(items)) return items;
@@ -523,7 +554,7 @@ export function revertUnsupportedBullets(items, cvText, isUnsupported) {
   return items.map(entry => {
     const source = byCompany.get(String(entry?.company || '').trim().toLowerCase()) || [];
     const bullets = (entry?.bullets || []).map(b => {
-      if (!isUnsupported(b) || !source.length) return b;
+      if (!source.length) return b;
       // Prefer the CV bullet this rewrite came from; overlap picks it out.
       const bt = toks(b);
       let best = source[0], bestN = -1;
@@ -532,7 +563,7 @@ export function revertUnsupportedBullets(items, cvText, isUnsupported) {
         for (const t of toks(cb)) if (bt.has(t)) n++;
         if (n > bestN) { bestN = n; best = cb; }
       }
-      return best;
+      return isUnsupported(b, best) ? best : b;
     });
     // Reverting can collide two bullets onto the same CV line.
     return { ...entry, bullets: [...new Set(bullets)] };

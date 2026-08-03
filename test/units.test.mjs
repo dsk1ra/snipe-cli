@@ -439,6 +439,22 @@ try {
     'an employer absent from the CV has no source to revert to and is left alone');
   eq(Array.isArray(verifyBulletNumbers(/** @type {any} */ (null), cv)), false,
     'a non-array is returned untouched');
+
+  // The mirror guard: figures the rewrite DELETED. Shares the same revert, so
+  // it inherits the source-matching and the collision handling above.
+  const { verifyBulletFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const figs = bs => verifyBulletFigures([{ company: 'Acme SaaS', bullets: bs }], cv)[0].bullets;
+
+  eq(figs(['Automated billing with Stripe.'])[0].includes('80%'), true,
+    'a rewrite truncated past its figure reverts to the CV line that stated it');
+  deepEq(figs(['Cut onboarding by over 80% with Stripe subscriptions.']),
+    ['Cut onboarding by over 80% with Stripe subscriptions.'],
+    'a rewrite keeping every source figure keeps its tailoring');
+  eq(figs(['Led a team, MVP in 4 weeks.'])[0].includes('80 at launch to 170'), true,
+    'keeping one figure but dropping the rest still reverts');
+  deepEq(verifyBulletFigures([{ company: 'Nowhere Ltd', bullets: ['Anything at all.'] }], cv)[0].bullets,
+    ['Anything at all.'],
+    'no CV source means nothing to compare against, so the bullet is left alone');
 } catch (e) {
   fail(`bullet-number verification unit tests crashed: ${e.message}`);
 }
