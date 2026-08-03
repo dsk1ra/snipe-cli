@@ -161,6 +161,44 @@ every id missed, and the run reported the judge at exactly chance (0.500) with
 is not a null result, it is a plumbing failure — worth treating as a smoke alarm
 rather than a finding.
 
-## 5. Changes
+## 5. The metrics would have passed a regression
+
+Worth recording on its own, because it is the clearest argument in this whole
+campaign for looking at output rather than dashboards.
+
+The first version of the summary stage was handed the Block B requirement list
+as "emphasis context", with a prompt rule saying to use it only for emphasis.
+On the first offer it wrote, for a C++/HFT posting:
+
+> "Highly skilled software engineer with **over a decade of experience** ...
+> Expertise in networking, **HFT, and financial markets**."
+
+against a CV that shows none of that. This is a straight regression, and **every
+metric would have reported success**:
+
+- `summary_jd_fit` would have gone **up** — it parrots the posting.
+- `product_fab` does not fire: "HFT" and "financial markets" are domains, not
+  named products.
+- `metric_fab` does not fire: "a decade" contains no digit.
+- `role_retention`, `grounding`, `example_copy_pct` are all untouched by the
+  summary field.
+
+The plan named this exact risk ("the pairing needs eyes on actual output, not
+just numbers") and it fired on the first offer of the first run.
+
+Three fixes, in order of how much they matter:
+
+1. **The requirement list is gone from the prompt.** Handing a 7B the posting's
+   vocabulary and asking it not to use that vocabulary does not work. It is also
+   redundant: `cv-select` has already ranked and trimmed these bullets against
+   Block B, so the JD signal is encoded in *which* evidence is present.
+2. **`evidenceOverlap`** — the fraction of the summary's content words traceable
+   to the evidence. This is the direct measure of parroting, because the
+   posting's vocabulary is not the CV's. On the failing pair it separates the
+   drafts cleanly: 0.139 parroted vs 0.564 grounded.
+3. **The tenure guard grew a word-form branch.** "over a decade of experience"
+   carries no digit, so every numeric branch missed it.
+
+## 6. Changes
 
 Recorded per change, with the metric it targeted and what actually moved.
