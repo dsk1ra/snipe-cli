@@ -199,6 +199,28 @@ Three fixes, in order of how much they matter:
 3. **The tenure guard grew a word-form branch.** "over a decade of experience"
    carries no digit, so every numeric branch missed it.
 
-## 6. Changes
+## 6. A second exploit, found the same way
+
+The summary selector scores candidates on `evidenceOverlap`. That created an
+obvious exploit and the model took it on the first run:
+
+> "Senior Software Engineer (Graduate) / Production-Grade Backend Systems /
+> SRE-adjacent Operations / 99.9% Uptime on Live Subscription Platform (170+
+> users) / Kubernetes & Observability (Prometheus/Grafana) / ..."
+
+A dense keyword dump maximises overlap with the evidence while being unreadable,
+and it **scored well**. The lesson generalises past this metric: any score term
+that rewards resemblance to a source can be maximised by copying the source
+without writing anything.
+
+Shape is therefore a gate, not a score term — `looksLikeProse` rejects a
+candidate outright on function-word ratio (prose runs 0.20–0.40 of tokens,
+a tag list near zero), slash count and sentence punctuation. Overlap's weight
+dropped 20 → 8 once it could no longer be gamed this way.
+
+The incumbent also now holds ties. On offer 182 the challenger was blander than
+the JSON field it displaced, and a bare `>` gave it the slot.
+
+## 7. Changes
 
 Recorded per change, with the metric it targeted and what actually moved.
