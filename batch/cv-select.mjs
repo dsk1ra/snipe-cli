@@ -61,7 +61,7 @@ const judgeUser = (reqs, jd, list) =>
  *
  * @returns {Promise<Map<string, number>|null>} bullet text -> grade, or null
  */
-async function judgeGrades(items, reqs, jdText, opts = {}) {
+export async function judgeGrades(items, reqs, jdText, opts = {}) {
   const { ollamaUrl = 'http://localhost:11434', judgeModel = 'snipe-eval',
           judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch } = opts;
   // No exemplars means 0-shot, and 0-shot the judge scores 0.670 against plain

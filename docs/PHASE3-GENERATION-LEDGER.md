@@ -98,6 +98,30 @@ is worth having at equal quality.
 Caveat that bounds the claim: n = 2 offers. Both landed on exactly 0.875, which
 is reassuring but is not a tight interval.
 
+### 3.1 Where the ranker actually sits
+
+All three measured the same day with the same code, `goldset.mjs score`
+(cosine-only — the production ranking function, judge excluded):
+
+```
+gold sheet 1 (user-labelled, 12 offers)        cosine  0.764
+gold sheet 2 (held out, 12 fresh offers)       cosine  0.814
+inter-labeller ceiling (M2, n=2)                       0.875
+shipped cos + 0.10 x judge, sheet 1 (recorded)         0.851
+```
+
+Sheet 2 is the first genuinely held-out measurement of this ranker — offers
+that played no part in selecting `cos + 0.10 × judge`. Cosine alone reaches
+0.814 there, 0.061 off the ceiling.
+
+**Confound, stated rather than buried:** sheet 2 was labelled by an agent and
+sheet 1 by the repository's owner. Sheet 2 scoring higher may mean it is an
+easier set, or it may mean an agent labeller reasons more like an embedding
+model than a human does. The two numbers are therefore not strictly
+comparable, and sheet 2 should not be treated as evidence that the ranker
+improved. It is used below only to ask whether the *judge* still earns its
+66 s, which is a within-sheet comparison and immune to this confound.
+
 ## 4. Changes
 
 Recorded per change, with the metric it targeted and what actually moved.
