@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         reconcileExperience, verifyBulletNumbers, cvCompanies,
+         reconcileExperience, verifyBulletNumbers, verifyBulletFigures, cvCompanies,
          stripUnsupportedTenure } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
@@ -578,6 +578,13 @@ cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
 // Tier 3 — revert any bullet asserting a figure cv.md does not state. The
 // prompt-side fix for this measured zero effect (ledger V4).
 cvContent.experience = verifyBulletNumbers(cvContent.experience, cvText);
+// Tier 3 — and the mirror: revert a bullet that dropped figures its source had.
+// Off until benchmarked, because reverting also discards the JD keywords the
+// rewrite added; SNIPE_REVERT_FIGURES runs the other arm without editing this
+// file mid-benchmark, which would split the run (benchmark rule 4).
+if (process.env.SNIPE_REVERT_FIGURES === '1') {
+  cvContent.experience = verifyBulletFigures(cvContent.experience, cvText);
+}
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
