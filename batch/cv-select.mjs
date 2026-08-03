@@ -457,7 +457,10 @@ const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
 // The experience-anchored branch takes an optional leading "with" so it wins the
 // whole span at that position — listing the bare "with N years" branch first
 // clipped it to "with 2+ years" and left "of hands-on experience" dangling.
-const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\bwith\s+\d[\d.,]*\+?\s*years?\b/gi;
+// The word forms matter as much as the digits. A tailored summary produced
+// "over a decade of experience" against a CV claiming no duration at all — no
+// digit anywhere, so the numeric branches could not see it.
+const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\bwith\s+\d[\d.,]*\+?\s*years?\b|\b(?:over|nearly|almost|more\s+than)?\s*(?:a|one|two|three|several|many)?\s*decades?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\b(?:over|more\s+than)\s+(?:a|one)\s+decade\b/gi;
 
 /**
  * Strip a years-of-experience claim the CV does not make.

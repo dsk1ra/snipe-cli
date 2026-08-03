@@ -172,38 +172,78 @@ const SUMMARY_SYSTEM = [
   'Rules:',
   '- Length: 50 to 70 words. Count them. This is mandatory.',
   '- Implied first person: never use a name, never "he"/"she"/"they".',
-  '- EVERY claim must be supported by the evidence below. The evidence is the only',
-  '  source of fact. If the role asks for something the evidence does not show, do',
-  '  not claim it — say nothing about it.',
+  '- EVERY claim must be traceable to a specific line of the evidence below. The',
+  '  evidence is the ONLY source of fact. You are describing this candidate, not',
+  '  the job.',
+  '- Do not state a number of years of experience. The evidence does not contain one.',
+  '- Do not name a domain or industry the evidence does not show. Do not name a',
+  '  technology, product, cloud or framework absent from the evidence. Describing',
+  '  the KIND of work ("distributed systems", "low-latency") is fine.',
   '- Never name the target company, and never claim to have worked for them.',
-  '- Never name a technology, product, cloud or framework that does not appear in',
-  '  the evidence. Describing the *kind* of work ("distributed systems",',
-  '  "low-latency") is fine; naming a product you cannot see is not.',
-  '- Lead with what the evidence shows. Use the role context only to decide which',
-  '  parts of the evidence to foreground, never as material to copy.',
 ].join('\n');
 
 /**
- * @param {string[]} bullets  the selected CV bullets — the ONLY source of fact
- * @param {string[]} reqs     Block B requirements, for emphasis only
+ * The role title is the only JD-derived input, and even that is only a target.
+ *
+ * The Block B requirement list used to be passed here as "emphasis context",
+ * and the 7B copied it wholesale — for an HFT posting it produced "expertise in
+ * networking, HFT, and financial markets" and "over a decade of experience"
+ * against a CV showing none of those. Handing a weak model the posting's
+ * vocabulary and asking it not to use it does not work.
+ *
+ * The requirements are also redundant: `cv-select` has already ranked and
+ * trimmed these bullets against Block B, so the JD signal is encoded in *which*
+ * evidence is here. Describing the evidence faithfully is the tailoring.
+ *
+ * @param {string[]} bullets the selected CV bullets — the ONLY source of fact
  * @param {string} role
  */
-export function summaryUser(bullets, reqs, role) {
+export function summaryUser(bullets, role) {
   const ev = bullets.length ? bullets.map(b => `- ${b}`).join('\n') : '(none)';
-  const rq = (reqs || []).length ? reqs.slice(0, 10).map(r => `- ${r}`).join('\n') : '(unspecified)';
   return [
     '## Evidence — the bullets that will appear on this CV',
     '',
     ev,
     '',
-    `## The role being targeted: ${role || 'software engineering'}`,
+    `## Target role title: ${role || 'software engineering'}`,
     '',
-    'It asks for:',
-    '',
-    rq,
-    '',
-    'Write the 50-70 word summary now, grounded entirely in the evidence.',
+    'Write the 50-70 word summary now. Every claim must come from the evidence above.',
   ].join('\n');
+}
+
+// ── Code-side candidate scoring ───────────────────────────────────────────────
+
+const CONTENT = /[a-z0-9+#.]{3,}/g;
+const contentToks = (s) => new Set((String(s || '').toLowerCase().match(CONTENT) || []));
+
+/**
+ * Fraction of the summary's content words that actually appear in the evidence.
+ *
+ * This is the direct measure of parroting: a summary lifted from the posting
+ * scores low here even when it reads well, because the posting's vocabulary is
+ * not the CV's. It is the term that stops `summary_jd_fit` being gamed.
+ */
+export function evidenceOverlap(text, bullets) {
+  const t = contentToks(text);
+  if (!t.size) return 0;
+  const ev = contentToks(bullets.join(' '));
+  let n = 0;
+  for (const w of t) if (ev.has(w)) n++;
+  return n / t.size;
+}
+
+/**
+ * Deterministic quality score for one candidate summary. Higher is better.
+ * Label-free: word-count distance, fabricated products, and how much of it is
+ * traceable to the evidence.
+ */
+export function scoreSummary(text, { bullets, cvText }) {
+  if (!text) return -Infinity;
+  const w = wordCount(text);
+  const lenPenalty = w < 50 ? 50 - w : w > 70 ? w - 70 : 0;
+  return -lenPenalty
+         - 5 * productFab(text, cvText).length
+         + 20 * evidenceOverlap(text, bullets);
 }
 
 const wordCount = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
@@ -219,34 +259,31 @@ export function cleanSummary(raw) {
 }
 
 /**
- * Generate the summary from the selected evidence.
+ * Generate the summary from the selected evidence, and return it only if it
+ * beats the candidate the main JSON call already produced.
  *
- * Samples up to `attempts` times and keeps the best by a code-side score, which
- * turns a generation problem into a selection problem — selection is code, and
- * therefore reliable. Scoring is deterministic and label-free: land the word
- * count, name no fabricated product, and stay close to the evidence.
+ * Best-of-N by resampling is pointless at the benchmark's temperature 0 — greedy
+ * decoding is byte-identical, so N samples are one sample N times. Using the
+ * JSON field as the second candidate gives a genuinely different draft for free
+ * (it is already generated and paid for) and keeps the whole thing deterministic,
+ * which is what makes a single-run A/B valid on this stack.
  *
- * @param {{bullets: string[], reqs: string[], role: string, cvText: string,
- *          call: (system: string, user: string) => Promise<string>,
- *          attempts?: number}} opts
- * @returns {Promise<string|null>}
+ * @param {{bullets: string[], role: string, cvText: string, incumbent?: string,
+ *          call: (system: string, user: string) => Promise<string>}} opts
+ * @returns {Promise<string|null>} the winning summary, or null if neither works
  */
-export async function generateSummary({ bullets, reqs, role, cvText, call, attempts = 2 }) {
-  const user = summaryUser(bullets, reqs, role);
+export async function generateSummary({ bullets, role, cvText, incumbent = '', call }) {
+  const candidates = [];
+  try {
+    const text = cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role)));
+    if (text) candidates.push(stripFabricatedProducts(text, cvText));
+  } catch { /* the incumbent still stands */ }
+  if (incumbent) candidates.push(stripFabricatedProducts(incumbent, cvText));
+
   let best = null, bestScore = -Infinity;
-  for (let i = 0; i < attempts; i++) {
-    let text;
-    try { text = cleanSummary(await call(SUMMARY_SYSTEM, user)); } catch { continue; }
-    if (!text) continue;
-    const stripped = stripFabricatedProducts(text, cvText);
-    const w = wordCount(stripped);
-    // Distance outside the 50-70 band dominates; a fabrication that had to be
-    // stripped is a real penalty even though the strip already fixed it, because
-    // a model that reached for one will have shaded the rest too.
-    const score = -Math.abs(w < 50 ? 50 - w : w > 70 ? w - 70 : 0)
-                  - 5 * productFab(text, cvText).length;
-    if (score > bestScore) { best = stripped; bestScore = score; }
-    if (bestScore === 0) break;  // in range and clean — no reason to sample again
+  for (const c of candidates) {
+    const s = scoreSummary(c, { bullets, cvText });
+    if (s > bestScore) { best = c; bestScore = s; }
   }
   return best;
 }

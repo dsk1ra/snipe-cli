@@ -602,7 +602,7 @@ try {
   const bullets = selectedBullets(cvForPrompt);
   if (bullets.length) {
     const generated = await generateSummary({
-      bullets, reqs: blockBReqs, role: args.role, cvText,
+      bullets, role: args.role, cvText, incumbent: cvContent.summary,
       call: (sys, usr) => callOllama(args.ollamaUrl, args.model, sys, usr,
                                      args.numCtx, null, args.temperature),
     });
