@@ -17,7 +17,8 @@
  *      grounded — is aspirational until violations are actually rejected.
  */
 
-import { parseCvSections, parseEntries, revertUnsupportedBullets } from './cv-select.mjs';
+import { parseCvSections, parseEntries, revertUnsupportedBullets,
+         stripUnsupportedClauses } from './cv-select.mjs';
 
 // ── Named-product vocabulary ──────────────────────────────────────────────────
 /**
@@ -105,26 +106,7 @@ export function productFab(text, cvText) {
  * @returns {string}
  */
 export function stripFabricatedProducts(text, cvText) {
-  if (!text) return text;
-  if (!productFab(text, cvText).length) return text;
-
-  const sentences = String(text).split(/(?<=[.!?])\s+/);
-  const kept = [];
-  for (const sentence of sentences) {
-    if (!productFab(sentence, cvText).length) { kept.push(sentence); continue; }
-    // Try clause surgery before giving up on the whole sentence.
-    const clauses = sentence.split(/,\s*/);
-    const clean = clauses.filter(c => !productFab(c, cvText).length);
-    if (clean.length && clean.length < clauses.length) {
-      const rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
-      // Only keep the repair if it actually cleared the fabrication — a product
-      // sitting in the sentence's only clause survives the join otherwise.
-      if (rebuilt && !productFab(rebuilt, cvText).length) {
-        kept.push(/[.!?]$/.test(rebuilt) ? rebuilt : `${rebuilt}.`);
-      }
-    }
-  }
-  return kept.join(' ').replace(/\s+/g, ' ').trim();
+  return stripUnsupportedClauses(text, t => productFab(t, cvText).length > 0);
 }
 
 /**

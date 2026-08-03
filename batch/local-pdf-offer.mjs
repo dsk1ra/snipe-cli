@@ -19,7 +19,8 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         reconcileExperience, verifyBulletNumbers, verifyBulletFigures, cvCompanies,
+         reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
+         verifyProjectFigures, cvCompanies,
          stripUnsupportedTenure } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
@@ -670,6 +671,10 @@ if (Array.isArray(cvContent.projects)) {
       p.description = stripFabricatedProducts(p.description, cvText);
     }
   }
+  // ...and the figures, scoped to each project's own CV entry. Projects had no
+  // number guard at all, so both a wholly invented "970%+ revenue growth" and a
+  // real-but-borrowed "sub-500ms load times" shipped on the same CV.
+  cvContent.projects = verifyProjectFigures(cvContent.projects, cvText);
 }
 
 // Build output folder
