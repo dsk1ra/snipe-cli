@@ -96,9 +96,24 @@ against the human gold set, holds under a disjoint exemplar pair — see
 `docs/PHASE3-RETRIEVAL-LEDGER.md`). It is few-shot from two hand-labelled
 offers in `batch/judge-shots.json`; **0-shot it is worse than no rerank at
 all**, so a missing or unmatched exemplar file disables it rather than
-degrading it, as does any model failure. Costs one 30B call, ~44s.
+degrading it, as does any model failure. Costs one 30B call, **measured 66 s**
+— 80% of Phase 3's wall clock, and validated held-out on `goldset-2.md` at
+**+0.115 pair accuracy, 11 wins 0 losses, CI [0.074, 0.159]**. Alone it is worth
+nothing (0.801 vs cosine's 0.815); only the blend pays. Do not binarise the
+grades to shrink the output — that costs 0.03.
 Regenerate exemplars after editing cv.md:
 `node batch/goldset.mjs export-shots --ids 5,50`.
+
+The **summary** is a separate call (`batch/summary-stage.mjs`), fed the bullets
+that will actually appear on the CV. It is deliberately *not* given the JD's
+requirements: `cv-select` has already ranked the evidence against them, and
+handing the posting's vocabulary to a 7B produced straight parroting. Candidates
+must pass a prose gate before being scored, and the main JSON call's summary is
+the incumbent — the stage only displaces it by a clear margin.
+
+Named products absent from `cv.md` are **rejected, not counted**: experience
+bullets revert to their CV source line, summaries and project blurbs get clause
+surgery (`stripFabricatedProducts`).
 
 Embedding indexes (`batch/cv-index.json`, `batch/jd-index.json`) rebuild with
 `node batch/embeddings.mjs rebuild` (auto-invalidated by `cv.md` hash).
@@ -157,12 +172,34 @@ is a document with nothing to rank-correlate:
 node batch/goldset.mjs sheet          # 12 offers x 14 CV atoms, for a human to tick
 node batch/goldset.mjs score          # does the shipped ranker agree with the human
 node batch/retrieval-bench.mjs run    # A/B every retrieval variant, paired, with CIs
+node batch/retrieval-bench.mjs run --sheet batch/bench/goldset-2.md \
+  --grades batch/bench/judge-grades-2.json      # the held-out set
 ```
 
 `batch/bench/goldset.md` is hand-labelled ground truth force-added past
 .gitignore; `sheet` refuses to overwrite ticks without `--force`. Variants are
 compared **paired per offer** with a bootstrap CI over offers and a sign test —
 a dozen variants against twelve offers will otherwise always find a "winner".
+
+`goldset-2.md` is a second, disjoint sheet used as a **held-out** check.
+`bench-tools/gen-judge-grades.mjs` caches the 30B's grades for a sheet so a
+variant sweep costs no model calls. Everything in `batch/bench/` is gitignored,
+so a new fixture the code depends on must be `git add -f`ed or it exists only on
+one disk.
+
+Phase 3 *generation* has its own harness — eight label-free metrics, no model in
+the loop for six of them:
+
+```bash
+node batch/tailor-harness.mjs run <label> --temperature 0 [--model M] [--limit N]
+node batch/tailor-harness.mjs metrics <label> [--rows] [--no-embed]
+node batch/tailor-harness.mjs compare <a> <b>
+```
+
+`compare` pairs on the offers **both** runs produced and says how many. Timing
+comes free: `SNIPE_TIMING=path` makes every Ollama call append its own
+`load_duration` / `eval_count` (`batch/timing.mjs report`), which is how a model
+reload gets counted rather than guessed.
 
 ### Benchmark rules (learned the hard way)
 
@@ -179,7 +216,29 @@ a dozen variants against twelve offers will otherwise always find a "winner".
    improvement smaller than that is indistinguishable from label noise, no matter
    how many runs you average. Report **pair accuracy** (fraction of differently-
    labelled offer pairs ordered correctly) alongside rho — it is far less tied.
-4. **rho is corruptible here: the labels skew high, so generosity buys rho without
+4. **Never edit a phase's files while a benchmark of that phase is running.**
+   `local-pdf-offer.mjs` is spawned per offer and re-imports its modules each
+   time, so an edit mid-run silently splits the run: offers before the edit ran
+   one version, offers after ran another, and the mean is of neither. Kill and
+   restart instead of measuring the mongrel.
+5. **A metric defined against a thing you are about to delete is not a metric.**
+   `example_copy_pct` read the worked example out of the live prompt, so
+   deleting the example — the fix being tested — would have driven it to 0 by
+   construction and scored a perfect win. It now unions a committed snapshot
+   (`batch/bench/example-bullets.json`). Ask of any metric: what does this read
+   if the change lands?
+6. **A zero-width confidence interval is a plumbing failure, not a null result.**
+   `retrieval-bench.mjs` had no `--sheet` flag and always loaded sheet 1, so
+   sheet 2's grades matched no offer and the run reported delta 0.000, CI
+   [0.000, 0.000] — which reads like a clean negative and is not.
+7. **The summary metrics can both be satisfied by output that is wrong, and were.**
+   A summary parroting the posting raises `summary_jd_fit`; `product_fab` does
+   not know a *domain* ("HFT", "financial markets") from a product, and
+   `metric_fab` does not know "over a decade" is a number. Rewarding evidence
+   overlap then produced a slash-separated keyword dump that scored well and was
+   not prose. Read the actual output of the first few offers of any generation
+   change before trusting its table.
+8. **rho is corruptible here: the labels skew high, so generosity buys rho without
    buying truth.** Judge changes on row-level grounding too — how often a graded
    row cites evidence that does not contain the technology the requirement names,
    how often one CV atom is reused across many requirements, and whether any STAR
@@ -216,7 +275,7 @@ dedup: `tracker/dedup-tracker.mjs`
 
 ## Tests
 
-`node test-all.mjs` — 795 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 883 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
 
