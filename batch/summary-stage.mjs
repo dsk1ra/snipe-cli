@@ -17,7 +17,7 @@
  *      grounded — is aspirational until violations are actually rejected.
  */
 
-import { parseCvSections, parseEntries } from './cv-select.mjs';
+import { parseCvSections, parseEntries, revertUnsupportedBullets } from './cv-select.mjs';
 
 // ── Named-product vocabulary ──────────────────────────────────────────────────
 /**
@@ -125,6 +125,21 @@ export function stripFabricatedProducts(text, cvText) {
     }
   }
   return kept.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Revert every experience bullet naming a product `cv.md` never mentions.
+ *
+ * Bullets get reverted rather than clause-stripped because each one has a known
+ * source line in `cv.md` — the untailored truth is right there, and it fills the
+ * slot. Summaries and project blurbs have no single source line, so those get
+ * `stripFabricatedProducts` instead.
+ *
+ * @param {any[]} items
+ * @param {string} cvText
+ */
+export function verifyBulletProducts(items, cvText) {
+  return revertUnsupportedBullets(items, cvText, b => productFab(b, cvText).length > 0);
 }
 
 // ── Summary stage ─────────────────────────────────────────────────────────────
