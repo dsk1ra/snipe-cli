@@ -549,10 +549,14 @@ export function evaluate(ctx, variant) {
 
 const mean = xs => xs.reduce((a, b) => a + b, 0) / xs.length;
 
-async function run({ only, boot, dropExemplars, gradesFile, embedModel }) {
+async function run({ only, boot, dropExemplars, gradesFile, embedModel, sheet }) {
   if (embedModel) EMBED_MODEL_NAME = embedModel;
   const atoms = cvAtoms(readFileSync(resolve(PROJECT, 'cv.md'), 'utf8'));
-  const gold = loadGold();
+  // A second sheet is the only way to check a variant on offers that played no
+  // part in choosing it. Without this flag the runner silently scored sheet 1
+  // against sheet 2's grades — every id missed, so the judge read as chance and
+  // cos+judge read as identical to cosine.
+  const gold = loadGold(sheet ? resolve(PROJECT, sheet) : undefined);
   const ctx = await buildContext(gold, atoms, { gradesFile });
   // Offers used as judge exemplars are training data for any judge-based
   // variant. Evaluating on them would flatter those variants and only those,
@@ -599,7 +603,7 @@ const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(imp
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
 else if (cmd === 'list') console.log(Object.keys(VARIANTS).join('\n'));
-else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars'), gradesFile: arg('--grades', null), embedModel: arg('--embed-model', null) });
+else if (cmd === 'run') await run({ only: arg('--only', null), boot: Number(arg('--boot', 5000)), dropExemplars: !process.argv.includes('--keep-exemplars'), gradesFile: arg('--grades', null), embedModel: arg('--embed-model', null), sheet: arg('--sheet', null) });
 else if (cmd === 'selfcheck') {
   // Same shape as cv-select's self-check: a plain predicate, not node:assert,
   // whose assertion signatures tsc will not accept through a dynamic import.
