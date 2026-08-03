@@ -232,18 +232,47 @@ export function evidenceOverlap(text, bullets) {
   return n / t.size;
 }
 
+// Function words are what separate prose from a keyword dump. Prose runs
+// 0.20-0.40 of its tokens here; a slash-separated tag list runs near zero.
+const FUNCTION_WORDS = new Set([
+  'the', 'and', 'a', 'an', 'of', 'in', 'to', 'for', 'with', 'on', 'at', 'by',
+  'from', 'as', 'that', 'this', 'it', 'its', 'into', 'over', 'across', 'where',
+  'which', 'while', 'their', 'has', 'have', 'was', 'were', 'been', 'is', 'are',
+]);
+
+/**
+ * Is this prose at all?
+ *
+ * Rewarding evidence overlap creates an obvious exploit: a dense list of CV
+ * keywords maximises overlap while being unreadable. The stage produced exactly
+ * that — "Senior Software Engineer (Graduate) / Production-Grade Backend Systems
+ * / SRE-adjacent Operations / 99.9% Uptime ..." — and it scored *well*.
+ *
+ * So shape is a gate, not a score term: a candidate that is not prose is not a
+ * candidate, however well it overlaps.
+ */
+export function looksLikeProse(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length < 20) return false;
+  const slashes = (String(text).match(/\//g) || []).length;
+  if (slashes >= 3) return false;                       // tag list, not a sentence
+  if (!/[.!?]/.test(text)) return false;                // no sentence ever ends
+  const fn = words.filter(w => FUNCTION_WORDS.has(w.toLowerCase().replace(/[^a-z]/g, ''))).length;
+  return fn / words.length >= 0.12;
+}
+
 /**
  * Deterministic quality score for one candidate summary. Higher is better.
  * Label-free: word-count distance, fabricated products, and how much of it is
- * traceable to the evidence.
+ * traceable to the evidence. Non-prose scores -Infinity — see looksLikeProse.
  */
 export function scoreSummary(text, { bullets, cvText }) {
-  if (!text) return -Infinity;
+  if (!text || !looksLikeProse(text)) return -Infinity;
   const w = wordCount(text);
   const lenPenalty = w < 50 ? 50 - w : w > 70 ? w - 70 : 0;
   return -lenPenalty
          - 5 * productFab(text, cvText).length
-         + 20 * evidenceOverlap(text, bullets);
+         + 8 * evidenceOverlap(text, bullets);
 }
 
 const wordCount = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
@@ -272,18 +301,21 @@ export function cleanSummary(raw) {
  *          call: (system: string, user: string) => Promise<string>}} opts
  * @returns {Promise<string|null>} the winning summary, or null if neither works
  */
-export async function generateSummary({ bullets, role, cvText, incumbent = '', call }) {
-  const candidates = [];
+export async function generateSummary({ bullets, role, cvText, incumbent = '', call, margin = 1.0 }) {
+  let challenger = null;
   try {
     const text = cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role)));
-    if (text) candidates.push(stripFabricatedProducts(text, cvText));
+    if (text) challenger = stripFabricatedProducts(text, cvText);
   } catch { /* the incumbent still stands */ }
-  if (incumbent) candidates.push(stripFabricatedProducts(incumbent, cvText));
 
-  let best = null, bestScore = -Infinity;
-  for (const c of candidates) {
-    const s = scoreSummary(c, { bullets, cvText });
-    if (s > bestScore) { best = c; bestScore = s; }
-  }
-  return best;
+  const base = incumbent ? stripFabricatedProducts(incumbent, cvText) : null;
+  const baseScore = base ? scoreSummary(base, { bullets, cvText }) : -Infinity;
+  const chalScore = challenger ? scoreSummary(challenger, { bullets, cvText }) : -Infinity;
+
+  // The incumbent is the shipped behaviour and holds the tie. A new stage only
+  // displaces it by a clear margin, never on a rounding difference — measured
+  // on offer 182, where the challenger was blander than the JSON field and a
+  // bare `>` handed it the slot anyway.
+  if (chalScore > baseScore + margin) return challenger;
+  return base ?? challenger;
 }
