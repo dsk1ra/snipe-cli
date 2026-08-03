@@ -30,7 +30,6 @@ const arg = (name, def) => {
 const sheet = resolve(PROJECT, String(arg('sheet', 'batch/bench/goldset-2.md')));
 const out = resolve(PROJECT, String(arg('out', 'batch/bench/judge-grades-2.json')));
 const ollamaUrl = String(arg('ollama-url', 'http://localhost:11434'));
-const compact = process.argv.includes('--compact');
 
 if (!existsSync(sheet)) throw new Error(`no sheet at ${sheet}`);
 
@@ -48,7 +47,7 @@ const items = atoms.map(a => ({ text: a.parts[0], id: a.id }));
 const offers = {};
 for (const [i, g] of gold.entries()) {
   process.stderr.write(`[${i + 1}/${gold.length}] #${g.id} ${g.company}\n`);
-  const grades = await judgeGrades(items, g.reqs, g.jd, { ollamaUrl, judgeShots, compact });
+  const grades = await judgeGrades(items, g.reqs, g.jd, { ollamaUrl, judgeShots });
   if (!grades) { process.stderr.write('  judge returned nothing — skipped\n'); continue; }
   const byId = {};
   for (const it of items) byId[it.id] = grades.get(it.text) ?? 0;
@@ -56,7 +55,7 @@ for (const [i, g] of gold.entries()) {
 }
 
 writeFileSync(out, JSON.stringify({
-  model: 'snipe-eval', nshot: judgeShots.length, compact,
+  model: 'snipe-eval', nshot: judgeShots.length,
   shotIds: [],  // sheet 2 shares no offers with the exemplars, so none are training data
   sheet: sheet.replace(PROJECT + '/', ''),
   offers,
