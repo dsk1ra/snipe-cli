@@ -224,3 +224,45 @@ the JSON field it displaced, and a bare `>` gave it the slot.
 ## 7. Changes
 
 Recorded per change, with the metric it targeted and what actually moved.
+
+### `g-bundle` — G2 + G3/G4 + T2, vs `baseline-t0`
+
+24 offers, temperature 0, paired. 39.9 min.
+
+```
+metric            baseline-t0   g-bundle    delta
+example_copy_pct  0.583         0.042       -0.541   G2  ship
+product_fab       0.083         0.042       -0.041   T2  ship
+role_retention    1.000         1.000        0.000   invariant held
+metric_fab        0             0            0.000   invariant held
+grounding         0.869         0.848       -0.021
+ats_coverage      0.491         0.488       -0.003
+summary_cv_fit    0.585         0.555       -0.030   G4  FAILS GATE
+summary_jd_fit    0.561         0.549       -0.012   G4  FAILS GATE
+selection_regret  0.064         0.067       +0.003
+mean_bullets      4.54          4.92        +0.38
+```
+
+**G2 — drop the worked example. Shipped.** The single largest quality move in
+the campaign. 14 of 24 offers were lifting an 8-gram straight out of the
+prompt's own example; now 1. `TAILOR_SCHEMA` already guaranteed the JSON shape
+through constrained decoding, so the example was demonstrating nothing the
+grammar did not already enforce — pure downside, exactly as the plan predicted.
+
+**T2 — product gate. Shipped, then extended.** Halved on the first pass. The
+survivor was in `skills`, the one model-written surface the first pass did not
+cover, since `competencies` and `education_modules` are derived from `cv.md` in
+code and cannot fabricate.
+
+**G4 — summary as its own stage. Failed its gate.** The gate was *both*
+alignment numbers up; both fell. The cause is visible in the output rather than
+the numbers: filler appears in 4 of 9 sampled summaries against the baseline's
+0 of 24, and 67 % needed the deterministic length padding against 37 %.
+
+The mechanism is worth recording because it is a genuine cost of G2: **the
+worked example was also demonstrating what a specific summary looks like.**
+Removing it fixed copying and cost concreteness at the same time. The two
+defects had one shared cause, and fixing one exposed the other.
+
+`grounding` −0.021 rides on `mean_bullets` +0.38 — more bullets kept, and
+`grounding` is a mean over bullets, so the marginal ones dilute it.
