@@ -273,7 +273,9 @@ export function atsCoverage(jdText, cvText, outputText) {
 
 /**
  * @param {string} label
- * @param {{benchRoot?: string, cvPath?: string}} [paths] injectable for tests
+ * @param {{benchRoot?: string, cvPath?: string, keep?: Set<string>|null}} [paths]
+ *   injectable for tests; `keep` restricts to a set of run directories so two
+ *   runs of different sizes can be compared over the offers they share.
  */
 function metricsFor(label, paths = {}) {
   const { benchRoot = BENCH, cvPath = resolve(PROJECT, 'cv.md'), keep = null } = paths;
