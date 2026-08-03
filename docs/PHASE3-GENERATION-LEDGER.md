@@ -342,3 +342,82 @@ This closes every cheap latency route. Deleting the judge is off the table
 (+0.115), compacting it is off the table (−0.052), binarising it is off the
 table (−0.03). Only L1 remains: computing the same grades where the 30B is
 already resident instead of paying a second load.
+
+### G1 — 30B writer instead of the 7B coder. Not shipped; the trade is real.
+
+12 offers (a fixed prefix of the sample), paired against `g2`. The premise —
+"`snipe-cv` is a code-tuned model writing English prose, and that is a tool
+mismatch" — is partly vindicated.
+
+```
+metric            g2 (7B)   g1-30b    delta
+ats_coverage      0.457     0.586     +0.129
+summary_jd_fit    0.493     0.559     +0.066
+example_copy_pct  0.083     0.000     -0.083
+selection_regret  0.077     0.070     -0.007
+grounding         0.809     0.796     -0.013
+summary_cv_fit    0.610     0.584     -0.026
+mean_bullets      4.92      6.00      +1.08
+role_retention / metric_fab / product_fab: all held
+```
+
+`ats_coverage` +0.129 is the largest single-metric move any variant produced,
+and it survives rendering — no role exceeds the density ladder's 4-bullet cap in
+either run, so the extra depth reaches the PDF rather than being trimmed.
+
+**It costs 70 s per offer: 99 s → 169 s of Phase 3.** Against the pre-registered
+5-minute ceiling that is decisive, see §8. Recorded as an available trade rather
+than a rejected idea — `--phase3-model snipe-eval` switches it on, and for a
+small number of high-value applications the coverage is probably worth the wait.
+
+Worth noting against the plan's framing of G1 as "completely unverified": the
+`Modelfile.snipe-cv` header already records a 5×2 benchmark in which the coder
+base beat *qwen2.5-7b-instruct* on exactly these structured-output constraints.
+The premise was tested before, against a weaker comparator. What is new here is
+that a much larger general model does win on coverage — the original finding was
+about instruction-following at 7B, not about prose at any size.
+
+## 8. End-to-end latency, measured for the first time
+
+The plan flagged that no phase records its own wall clock and that the "~5 min
+per JD" figure was an estimate. It is now a number, per offer, at temperature 0:
+
+```
+Phase 1  (snipe-screen 4B)        12 s
+Phase 2  (snipe-eval 30B x3)     246 s   <- 69% of the pipeline
+Phase 3  (snipe-cv 7B, shipped)   99 s
+                                 ----
+                                 358 s = 5.96 min
+Phase 3 with the 30B writer      169 s   -> 427 s = 7.12 min
+```
+
+**The pipeline already exceeds its own 5-minute budget, before any change made
+here.** G2/G3/T2 did not cause it — Phase 3 got slightly *faster*, since
+deleting the worked example shortened every tailor prompt.
+
+The real target is not the Phase 3 reranker the plan focused on. It is
+**`p2-judgment`: 114–153 s per offer, ~2,765 output tokens**, the single largest
+cost in the pipeline and roughly a third of it. L3 was aimed at Phase 3's judge
+and found nothing; aimed at Phase 2's judgment call, where the plan originally
+pointed it (`num_predict: 5120`), there is a third of the pipeline to argue with.
+
+### An attempted latency fix that reverted, and why it matters
+
+Ollama keys a loaded model on its context size, so stages at 8192 sitting
+between stages at 12288 force a full reload of an 18.5 GB model. Aligning all
+three Phase 2 stages to 12288 worked exactly as predicted:
+
+```
+p2-judgment load   15.84 s -> 0.33 s     reloads 2 -> 0
+```
+
+**And it changed the answers.** On the same two offers at temperature 0, the
+score moved 1.6 → 1.1, requirement coverage 24 % → 12 %, and stage 1 parsed a
+different role title ("Engineer" vs "Software Engineer (C++)"). `num_ctx` is not
+a free knob on this stack: it changes the runtime configuration, and greedy
+determinism only holds *within* a fixed configuration.
+
+Reverted. It is an unvalidated quality change bought for ~8 s, and validating it
+properly needs a full Phase 2 benchmark (`eval-harness`, 18 offers, rho and pair
+accuracy) that did not fit the remaining budget. The mechanism is real and the
+saving is real; the neutrality claim was false and testing it is what caught it.
