@@ -521,17 +521,77 @@ differed, because the filler penalty landed after that run. Experience bullets
 were byte-identical, which is what confirmed the `revertUnsupportedBullets`
 refactor was a no-op. **Benchmark rule 1 held: two runs made now.**
 
-Two defects found by the same reading pass and not yet fixed:
+## 10. Cross-entry figure theft
 
-1. **Cross-entry figure theft in project blurbs.** `verifyBulletNumbers` allows
-   any number appearing anywhere in `cv.md`, so a DE-Store blurb can claim the
-   Zero Trust dashboard's `sub-500ms` and pass. Projects get no figure guard at
-   all, so a fully invented `970%` shipped too. The experience section is clean
-   by luck — two employers in clearly-labelled blocks — not by construction; the
-   same CV-global allowance applies there. Fix is to scope the allowed set to the
-   source *entry* and run the guard over projects, repairing by clause surgery
-   rather than revert (reverting joins a project's source bullets, which is what
-   produced the 55-word run-on PQC blurb on 3 of 12 CVs).
-2. **Selection is already per-entry** (`cv-select.mjs:228` carries `entry` on
-   every atom) — the blending happens in generation, not retrieval. Scoping the
-   *pool* would fix nothing; scoping the *verification* is the fix.
+Found by the same reading pass, on the Java/Kafka CV. Three project blurbs, two
+defects, two different mechanisms:
+
+| Blurb | Claim | Provenance |
+|---|---|---|
+| Re:Link | "serving 970%+ revenue growth" | `970` is nowhere in `cv.md` — invented |
+| DE-Store | "achieving sub-500ms load times" | real, `cv.md:60` — the Zero Trust dashboard's |
+| Zero Trust | "winning MongoDB as a client" | correctly attributed |
+
+Both shipped, for two different reasons, and neither is a retrieval failure:
+
+- `verifyBulletNumbers` allowed any figure appearing **anywhere** in `cv.md`. It
+  answers "does this number exist in the document", when the question is "does
+  it belong to the entry claiming it". `sub-500ms` passes a CV-global check by
+  construction.
+- Projects had no figure guard at all — only `stripFabricatedProducts`, which
+  knows product names and not numbers. So `970%` was never tested.
+
+**Selection was never the problem.** `cv-select.mjs:228` carries `entry` on every
+atom and `:248`/`:260` write the ranked bullets back into it, so the CV handed to
+the 7B is already partitioned by employer and project. The model receives a
+correctly-scoped document and blends across it while generating. Scoping the
+*pool* would have fixed nothing; scoping the *verification* is the fix.
+
+### The fix
+
+One entry-scoped rule subsumes both defects, because neither figure appears in
+the entry doing the claiming. `verifyBulletNumbers` now takes its allow-set from
+the employer's own entry (head included — the dates and tech-stack line carry
+figures a bullet may legitimately cite), and `verifyProjectFigures` applies the
+same test to project blurbs.
+
+Projects are repaired by **clause surgery, not revert**: a blurb is synthesised
+from several source bullets, so reverting joins them into a run-on — precisely
+the 55-word PQC paragraph that shipped next to 12-word siblings on 3 of 12 CVs.
+`stripUnsupportedClauses` is that surgery, lifted out of
+`stripFabricatedProducts` so both guards share it.
+
+Replayed against the CV that exposed it, prose intact and the correct blurb
+untouched:
+
+```
+FIXED  Re:Link      … end-to-end encryption (Rust / Flutter), serving 970%+ revenue growth for a client.
+            →       … end-to-end encryption (Rust / Flutter).
+FIXED  DE-Store     … using Spring Boot and Kafka, achieving sub-500ms load times.
+            →       … using Spring Boot and Kafka.
+KEPT   Zero Trust
+```
+
+### The experience section was clean by luck, and not entirely
+
+Two employers in clearly-labelled blocks is what was keeping it honest, not the
+guard — the CV-global allow-set applied there too. Re-running the 24 bench
+offers under the entry-scoped rule changed **1 of 118 bullets**, and that one is
+the same bug:
+
+```
+56_unknown [UBWIS]
+  old: Led a team on a Zero Trust SIEM dashboard serving 3M+ auth events with sub-500ms load times.
+  new: Led a two-developer team building a membership platform … grew paying subscribers from 80 at launch to 170
+```
+
+A UBWIS bullet wearing the Zero Trust dashboard's numbers, passed by the old
+rule because both figures are real.
+
+**Not re-benchmarked, deliberately.** Projects were previously unguarded, so the
+change can only remove figures that no CV entry supports — there is no quality
+axis to trade against, and the repair is verified directly on the defect above.
+On the experience side the blast radius is 0.8 % of bullets and the single hit
+is a true positive that reverts to a *longer* source bullet, which moves
+`num_retention` and `ats_coverage` the same direction §9 already measured. A
+40-minute arm to resolve one bullet would not be measuring anything.

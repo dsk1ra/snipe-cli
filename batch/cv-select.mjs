@@ -494,8 +494,79 @@ export function stripUnsupportedTenure(summary, cvText) {
 }
 
 export function verifyBulletNumbers(items, cvText) {
-  const allowed = numbersIn(cvText);   // hoisted: the CV is re-scanned per bullet otherwise
-  return revertUnsupportedBullets(items, cvText, b => [...numbersIn(b)].some(n => !allowed.has(n)));
+  // Scoped to the employer's own entry, not the whole CV. A CV-global allow-set
+  // answers "does this figure exist somewhere in the document", which is the
+  // wrong question: it lets a UBWIS bullet claim the Zero Trust dashboard's
+  // sub-500ms load times, because the number is real — just not theirs.
+  return revertUnsupportedBullets(items, cvText, (b, _src, entryText) => {
+    const allowed = numbersIn(entryText);
+    return [...numbersIn(b)].some(n => !allowed.has(n));
+  });
+}
+
+/**
+ * Strip a clause claiming a figure this project's own CV entry does not state.
+ *
+ * Projects had no figure guard at all — only `stripFabricatedProducts`, which
+ * knows product names and not numbers. Observed on one CV: a Re:Link blurb
+ * claiming "970%+ revenue growth" (a figure absent from `cv.md` entirely) and a
+ * DE-Store blurb claiming "sub-500ms load times" (real, but the Zero Trust
+ * dashboard's). One entry-scoped check catches both, because neither figure is
+ * in the entry doing the claiming.
+ *
+ * Clause surgery rather than revert: a blurb is synthesised from several source
+ * bullets, so reverting joins them into a run-on — which is exactly what shipped
+ * on 3 of 12 CVs as a 55-word PQC paragraph next to 12-word siblings.
+ *
+ * Runs after `remapProjectNames`, which has already resolved every `name` to a
+ * real CV project, so the lookup is exact. A project that resolves to nothing is
+ * left alone rather than gutted.
+ *
+ * @param {any[]} projects
+ * @param {string} cvText
+ */
+export function verifyProjectFigures(projects, cvText) {
+  if (!Array.isArray(projects)) return projects;
+  const sec = parseCvSections(cvText).find(s => s.name === 'Projects');
+  if (!sec) return projects;
+  const byName = new Map();
+  for (const e of parseEntries(sec.lines).entries) {
+    byName.set(e.head[0].replace(/^###\s+/, '').trim().toLowerCase(),
+               numbersIn(`${e.head.join(' ')} ${e.bullets.join(' ')}`));
+  }
+  return projects.map(p => {
+    const allowed = byName.get(String(p?.name || '').trim().toLowerCase());
+    if (!allowed || typeof p.description !== 'string') return p;
+    return { ...p, description: stripUnsupportedClauses(p.description,
+      t => [...numbersIn(t)].some(n => !allowed.has(n))) };
+  });
+}
+
+/**
+ * Drop the clauses of `text` that fail `isBad`, sentence by sentence.
+ *
+ * The repair for surfaces with no single source line to revert to — a summary or
+ * a project blurb, both synthesised from several bullets. A sentence is kept
+ * whole if it passes; otherwise its clean clauses are rejoined, and the rebuild
+ * is only accepted if it actually cleared the problem (a claim sitting in the
+ * sentence's only clause survives the join otherwise).
+ *
+ * @param {string} text
+ * @param {(fragment: string) => boolean} isBad
+ */
+export function stripUnsupportedClauses(text, isBad) {
+  if (!text || !isBad(text)) return text;
+  const kept = [];
+  for (const sentence of String(text).split(/(?<=[.!?])\s+/)) {
+    if (!isBad(sentence)) { kept.push(sentence); continue; }
+    const clauses = sentence.split(/,\s*/);
+    const clean = clauses.filter(c => !isBad(c));
+    if (clean.length && clean.length < clauses.length) {
+      const rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
+      if (rebuilt && !isBad(rebuilt)) kept.push(/[.!?]$/.test(rebuilt) ? rebuilt : `${rebuilt}.`);
+    }
+  }
+  return kept.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -541,9 +612,13 @@ export function verifyBulletFigures(items, cvText) {
  * That means the argmax now runs for every bullet rather than only the failing
  * ones — a few token-set intersections per CV, against four model calls.
  *
+ * It also gets the whole source *entry* as text, for the questions that are
+ * about ownership rather than about one line: a figure belonging to a different
+ * employer is unsupported here even though it is real somewhere in the CV.
+ *
  * @param {any[]} items experience entries, `{company, bullets}`
  * @param {string} cvText
- * @param {(bullet: string, source: string) => boolean} isUnsupported
+ * @param {(bullet: string, source: string, entryText: string) => boolean} isUnsupported
  */
 export function revertUnsupportedBullets(items, cvText, isUnsupported) {
   if (!Array.isArray(items)) return items;
@@ -551,11 +626,15 @@ export function revertUnsupportedBullets(items, cvText, isUnsupported) {
   const byCompany = new Map();
   if (sec) {
     for (const e of parseEntries(sec.lines).entries) {
-      byCompany.set(entryCompany(e).toLowerCase(), e.bullets);
+      byCompany.set(entryCompany(e).toLowerCase(), e);
     }
   }
   return items.map(entry => {
-    const source = byCompany.get(String(entry?.company || '').trim().toLowerCase()) || [];
+    const src = byCompany.get(String(entry?.company || '').trim().toLowerCase());
+    const source = src?.bullets || [];
+    // Head as well as bullets: the entry's dates and tech-stack line carry
+    // figures a bullet may legitimately reference.
+    const entryText = src ? `${src.head.join(' ')} ${src.bullets.join(' ')}` : '';
     const bullets = (entry?.bullets || []).map(b => {
       if (!source.length) return b;
       // Prefer the CV bullet this rewrite came from; overlap picks it out.
@@ -566,7 +645,7 @@ export function revertUnsupportedBullets(items, cvText, isUnsupported) {
         for (const t of toks(cb)) if (bt.has(t)) n++;
         if (n > bestN) { bestN = n; best = cb; }
       }
-      return isUnsupported(b, best) ? best : b;
+      return isUnsupported(b, best, entryText) ? best : b;
     });
     // Reverting can collide two bullets onto the same CV line.
     return { ...entry, bullets: [...new Set(bullets)] };

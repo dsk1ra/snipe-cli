@@ -455,6 +455,51 @@ try {
   deepEq(verifyBulletFigures([{ company: 'Nowhere Ltd', bullets: ['Anything at all.'] }], cv)[0].bullets,
     ['Anything at all.'],
     'no CV source means nothing to compare against, so the bullet is left alone');
+
+  // Cross-entry theft: a figure that is real, but belongs to a different entry.
+  // The allow-set is the employer's own entry, not the whole document.
+  const twoJobs = [
+    '## Experience', '',
+    '### Teaching Assistant', '**Northgate College** — Edinburgh | Sep 2025 – Present', '',
+    '- Cut configuration time to 30 minutes per student', '',
+    '### PM / Software Engineer', '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Grew paying subscribers from 80 at launch to 170',
+  ].join('\n');
+  const stolen = verifyBulletNumbers(
+    [{ company: 'Acme SaaS', bullets: ['Cut configuration time to 30 minutes for 170 members.'] }], twoJobs);
+  eq(stolen[0].bullets[0].includes('80 at launch'), true,
+    'a figure belonging to another employer is unsupported here and reverts');
+
+  // ── project figures, scoped to the project's own CV entry ──
+  const { verifyProjectFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const projCv = [
+    '## Projects', '',
+    '### Re:Link — Remote Access', '**Personal** | Rust, Flutter | Jan 2025 – Jun 2025', '',
+    '- Designed a blind rendezvous protocol with AES-256-GCM encryption', '',
+    '### Zero Trust Dashboard', '**Academic** | Django | Sep 2024 – Dec 2024', '',
+    '- Built an ingestion pipeline achieving sub-500ms dashboard load times',
+  ].join('\n');
+  const descOf = (name, description) =>
+    verifyProjectFigures([{ name, description }], projCv)[0].description;
+
+  eq(descOf('Re:Link — Remote Access',
+    'Built a P2P remote access system with AES-256-GCM, serving 970%+ revenue growth for a client.')
+    .includes('970'), false,
+    'a figure absent from the whole CV is stripped from a project blurb');
+  eq(descOf('Re:Link — Remote Access',
+    'Built a P2P remote access system with AES-256-GCM, achieving sub-500ms load times.')
+    .includes('500'), false,
+    "another project's real figure is stripped — the number is real, the owner is not");
+  eq(descOf('Zero Trust Dashboard', 'Built an ingestion pipeline achieving sub-500ms load times.'),
+    'Built an ingestion pipeline achieving sub-500ms load times.',
+    'the project that actually owns the figure keeps it');
+  eq(descOf('Re:Link — Remote Access', 'Built a P2P remote access system with AES-256-GCM.')
+    .includes('256'), true,
+    'a figure stated in the project\'s own entry survives');
+  eq(descOf('Nothing On The CV', 'Claims 999% of everything.').includes('999'), true,
+    'a project that resolves to no CV entry is left alone rather than gutted');
+  deepEq(verifyProjectFigures(/** @type {any} */ (null), projCv), null,
+    'a non-array is returned untouched');
 } catch (e) {
   fail(`bullet-number verification unit tests crashed: ${e.message}`);
 }
