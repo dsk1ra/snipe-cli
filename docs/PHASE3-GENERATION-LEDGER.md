@@ -74,7 +74,7 @@ Three facts the plan did not have:
    — ~19 tokens per `{"id":n,"grade":g}`. At 21 tok/s that is 35 s of generation
    for what its own exemplars teach as a binary decision.
 
-## 3. Label noise — the ceiling on all retrieval work
+## 3. Label noise
 
 Two of gold sheet 1's offers were re-labelled blind, with the original ticks
 withheld from the labeller (M2):
@@ -85,15 +85,18 @@ jaccard             0.750
 pair accuracy       0.875   identical on both offers, both directions
 ```
 
-**The shipped ranker scores 0.851. Two careful humans agree with each other at
-0.875.** The remaining headroom is 0.024, against a resolution limit that needs
-50 labelled offers to see 0.05.
+**The shipped ranker scores 0.851 on sheet 1. Two labellers agree with each
+other at 0.875.** On that sheet the remaining headroom is 0.024, against a
+resolution limit that needs 50 labelled offers to see 0.05.
 
-This retires retrieval as a work area, and it is the plan's own named risk #3
-firing. R1 (doc2query), R3 (MMR/assignment), R4 (other embedders), R5 (learned
-blend) and R6 (z-norm) are dropped, not attempted-and-failed. R2 (cross-encoder)
-survives only as a **latency** candidate: matching 0.851 in ~1 s instead of 66 s
-is worth having at equal quality.
+**Correction — this was initially over-read as "retrieval is finished".** It is
+not. 0.875 is the agreement between *two particular labellers on two offers*,
+not a universal ceiling, and one of those labellers was an agent. §4 below
+measures the judge on 12 held-out offers and finds it decisively valuable. What
+survives from M2 is narrower and still worth knowing: label noise here is
+substantial, so any *further* retrieval tuning measured against sheet 1 has
+almost no room to show itself. That is a statement about the instrument, not
+about the ranker.
 
 Caveat that bounds the claim: n = 2 offers. Both landed on exactly 0.875, which
 is reassuring but is not a tight interval.
@@ -111,8 +114,7 @@ shipped cos + 0.10 x judge, sheet 1 (recorded)         0.851
 ```
 
 Sheet 2 is the first genuinely held-out measurement of this ranker — offers
-that played no part in selecting `cos + 0.10 × judge`. Cosine alone reaches
-0.814 there, 0.061 off the ceiling.
+that played no part in selecting `cos + 0.10 × judge`.
 
 **Confound, stated rather than buried:** sheet 2 was labelled by an agent and
 sheet 1 by the repository's owner. Sheet 2 scoring higher may mean it is an
@@ -122,6 +124,43 @@ comparable, and sheet 2 should not be treated as evidence that the ranker
 improved. It is used below only to ask whether the *judge* still earns its
 66 s, which is a within-sheet comparison and immune to this confound.
 
-## 4. Changes
+## 4. Does the 66-second judge earn it? — yes, decisively
+
+The reranker is 80 % of Phase 3's wall clock, so before spending any budget on
+generation it was worth asking whether it still pays. Gold sheet 2 is the first
+set that can answer it honestly: 12 offers that played no part in choosing
+`cos + 0.10 × judge`.
+
+```
+variant           pair    Δpair    CI95              w/l     sig
+cos+judge-0.10    0.930   +0.115   [0.074, 0.159]    11/0    YES
+cos+judge-0.25    0.920   +0.105   [0.058, 0.154]    10/1    YES
+base-cos          0.815    0.000   —                  —      —
+judge alone       0.801   -0.014   [-0.092, 0.065]   6/6     no
+```
+
+The judge stays. Held out, it is worth **more** than the +0.095 recorded on
+sheet 1, it wins on 11 of 12 offers and loses on none, and the CI is nowhere
+near 0. The 0.10 weight remains the right one.
+
+Two things this also settles:
+
+- **The judge is a feature, not a ranker.** Alone it scores 0.801, statistically
+  indistinguishable from cosine's 0.815 and split 6/6. It is only valuable
+  *blended*. That matches the sheet-1 finding and is why the weight sweep
+  plateaus rather than peaking.
+- **Deleting the judge to buy back 66 s/offer is off the table.** The remaining
+  latency route is L1 — keeping the grades but computing them where the 30B is
+  already resident.
+
+A bug found while doing this, worth recording because it produced a confident
+wrong answer first: `retrieval-bench.mjs run` had no `--sheet` flag and always
+loaded sheet 1. Passing sheet 2's grades scored them against sheet 1's offers,
+every id missed, and the run reported the judge at exactly chance (0.500) with
+`cos+judge` delta 0.000 and a CI of [0.000, 0.000]. A CI of exactly zero width
+is not a null result, it is a plumbing failure — worth treating as a smoke alarm
+rather than a finding.
+
+## 5. Changes
 
 Recorded per change, with the metric it targeted and what actually moved.
