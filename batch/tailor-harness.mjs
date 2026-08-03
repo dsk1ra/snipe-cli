@@ -14,6 +14,14 @@
  *                   own worked example                             want 0
  *   grounding       mean token overlap of each output bullet with
  *                   the best-matching cv.md bullet for that role   higher
+ *   num_retention   figures in that source bullet that survived
+ *                   into the rewrite (`num_lost` = how many did
+ *                   not)                                           want 1.0
+ *
+ * `metric_fab` and `num_retention` are the two halves of the same question and
+ * neither implies the other: a rewrite that drops every quantified outcome
+ * invents nothing, so it scores a clean 0 fab and reads as healthy. It took a
+ * batch of 12 real CVs at 44 % retention to notice.
  *
  * CLI:
  *   node batch/tailor-harness.mjs sample --n 24        write the fixed sample
@@ -306,7 +314,7 @@ function metricsFor(label, paths = {}) {
     const exp = Array.isArray(c.experience) ? c.experience : [];
 
     const fabNums = [];
-    let groundSum = 0, groundN = 0, copied = 0, unmatched = 0;
+    let groundSum = 0, groundN = 0, copied = 0, unmatched = 0, numKept = 0, numLost = 0;
     const matchedRoles = new Set();
     for (const e of exp) {
       // A schema floor can be satisfied by padding, so an entry only counts as a
@@ -324,8 +332,23 @@ function metricsFor(label, paths = {}) {
         for (const n of numsOf(b)) if (!cvNums.has(n)) fabNums.push(n);
         for (const sh of shingles(b)) if (ex.has(sh)) { copied++; break; }
         if (match) {
-          groundSum += Math.max(0, ...match.bullets.map(cb => overlap(b, cb)));
+          // Which cv.md bullet was this rewritten from — argmax of the same
+          // overlap `grounding` already trusts. `overlap` is asymmetric
+          // (|b ∩ cb| / |b|), so a truncated bullet still scores near 1 against
+          // its own source, which is exactly the case being measured.
+          let src = '', bestOv = 0;
+          for (const cb of match.bullets) {
+            const o = overlap(b, cb);
+            if (o > bestOv) { bestOv = o; src = cb; }
+          }
+          groundSum += bestOv;
           groundN++;
+          // metric_fab counts numbers the model invented. Nothing counted the
+          // ones it deleted, and truncating to the first clause drops the
+          // quantified outcome — "cutting configuration time from 2+ hours to
+          // 30 minutes" becomes "authored documentation" and every guard passes.
+          const has = numsOf(b);
+          for (const num of numsOf(src)) (has.has(num) ? numKept++ : numLost++);
         }
       }
     }
@@ -370,6 +393,10 @@ function metricsFor(label, paths = {}) {
       copied,
       grounding: groundN ? groundSum / groundN : 0,
       bullets: groundN,
+      // ponytail: a CV whose source bullets carry no figures scores 1 — nothing
+      // to lose. num_lost is the absolute counterpart, immune to that.
+      num_retention: numKept + numLost ? numKept / (numKept + numLost) : 1,
+      num_lost: numLost,
     });
   }
 
@@ -386,6 +413,8 @@ function metricsFor(label, paths = {}) {
     fab_offers_pct: +(rows.filter(r => r.fab > 0).length / n).toFixed(3),
     example_copy_pct: +(rows.filter(r => r.copied > 0).length / n).toFixed(3),
     grounding: +mean('grounding').toFixed(3),
+    num_retention: +mean('num_retention').toFixed(3),
+    num_lost: +mean('num_lost').toFixed(2),
     product_fab: +mean('product_fab').toFixed(3),
     product_fab_pct: +(rows.filter(r => r.product_fab > 0).length / n).toFixed(3),
     ats_coverage: +mean('ats_coverage').toFixed(3),
@@ -573,7 +602,7 @@ if (!isMain) {
   const m = await allMetrics(positional[0], rest.includes('--no-embed'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const noEmbed = rest.includes('--no-embed');
@@ -589,7 +618,8 @@ if (!isMain) {
     B = await allMetrics(b, noEmbed, common);
   }
   const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
-                'example_copy_pct', 'grounding', 'product_fab', 'product_fab_pct', 'ats_coverage',
+                'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
+                'product_fab', 'product_fab_pct', 'ats_coverage',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets'];
   const pad = (s, w) => String(s).padEnd(w);
   const w = Math.max(14, a.length + 2, b.length + 2);

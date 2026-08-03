@@ -482,6 +482,20 @@ try {
     eq(good.all_roles_pct, 1, 'an offer keeping every role counts toward all_roles_pct');
     eq(good.invented_roles, 0, 'no entry is unmatched when both name real employers');
     eq(good.metric_fab, 0, 'figures present in the CV are not counted as fabricated');
+    eq(good.num_retention, 1, 'a rewrite carrying every source figure retains them all');
+    eq(good.num_lost, 0, 'nothing is reported lost when nothing was dropped');
+
+    // Truncation: each bullet keeps its first clause and drops the outcome. Every
+    // other metric reads clean, which is exactly why this one had to exist.
+    write('truncated', 'a', [
+      { company: 'Northgate College', bullets: ['Wrote setup guides'] },
+      { company: 'Acme SaaS', bullets: ['Automated billing'] },
+    ]);
+    const trunc = h.metricsFor('truncated', { benchRoot, cvPath });
+    eq(trunc.role_retention, 1, 'truncation keeps both roles, so role_retention misses it');
+    eq(trunc.metric_fab, 0, 'truncation invents no figures, so metric_fab misses it too');
+    eq(trunc.num_retention, 0, 'dropping 30 minutes and 80% scores zero retention');
+    eq(trunc.num_lost, 2, 'both deleted figures are counted');
 
     // Degenerate run: one role dropped, one employer duplicated, invented figure.
     write('bad', 'a', [
