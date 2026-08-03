@@ -510,9 +510,12 @@ export function verifyBulletNumbers(items, cvText) {
  * "Authored troubleshooting documentation for students". Nothing is false, so
  * every existing guard passes it.
  *
- * Reverting is a real trade: the bullet loses its JD keywords along with the
- * truncation, so this is gated until measured. `num_retention` in
- * tailor-harness.mjs is the metric, `ats_coverage` the thing it can cost.
+ * Reverting was expected to be a trade — the bullet loses its JD keywords along
+ * with the truncation — so it shipped only after measurement. Paired over 24
+ * offers it cost nothing and paid: ats_coverage +0.025, CI [0.014, 0.039],
+ * 16 wins 1 loss. The 7B's rewrite was net-negative on the one axis it existed
+ * to improve, because the full CV bullet already contains more of the posting's
+ * vocabulary than a truncation of it can.
  *
  * @param {any[]} items
  * @param {string} cvText

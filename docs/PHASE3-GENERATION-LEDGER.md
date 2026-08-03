@@ -243,11 +243,14 @@ selection_regret  0.064         0.067       +0.003
 mean_bullets      4.54          4.92        +0.38
 ```
 
-**G2 — drop the worked example. Shipped.** The single largest quality move in
-the campaign. 14 of 24 offers were lifting an 8-gram straight out of the
-prompt's own example; now 1. `TAILOR_SCHEMA` already guaranteed the JSON shape
-through constrained decoding, so the example was demonstrating nothing the
-grammar did not already enforce — pure downside, exactly as the plan predicted.
+**G2 — drop the worked example. Shipped, and it was not "pure downside".**
+14 of 24 offers were lifting an 8-gram straight out of the prompt's own example;
+now 1. What this entry originally claimed — that `TAILOR_SCHEMA`'s constrained
+decoding already guaranteed everything the example demonstrated, so removing it
+cost nothing — was wrong, and section 9 has the measurement. The example was
+also teaching bullet *shape*: keep the figure. Deleting it cost 0.258 of
+`num_retention`. The metric that would have caught this did not exist yet, which
+is the whole lesson.
 
 **T2 — product gate. Shipped, then extended.** Halved on the first pass. The
 survivor was in `skills`, the one model-written surface the first pass did not
@@ -421,3 +424,114 @@ Reverted. It is an unvalidated quality change bought for ~8 s, and validating it
 properly needs a full Phase 2 benchmark (`eval-harness`, 18 offers, rho and pair
 accuracy) that did not fit the remaining budget. The mechanism is real and the
 saving is real; the neutrality claim was false and testing it is what caught it.
+
+---
+
+## 9. The figures the model deleted — found by reading, not by measuring
+
+Reading the 12 CVs from a real production run surfaced a defect none of the
+eight metrics could see: **44 % of the figures stated in a source bullet
+survived into its rewrite.** The 7B truncates to the first clause, so
+
+> Authored troubleshooting documentation and standardised environment setup
+> guides, cutting configuration time from 2+ hours to 30 minutes per student and
+> reducing staff escalations by 90 %
+
+shipped as *"Authored troubleshooting documentation for students"*, and
+
+> Won MongoDB as client through a competitive pitch; served as Project Manager
+> and Lead Engineer for a 6-person cross-functional team, achieving Distinction
+
+shipped as *"Led a project partnership with MongoDB"* — a weakening rewrite, not
+even a truncation. Every PDF was 2 pages, so nothing forced the cut.
+
+### Why every metric passed it
+
+`metric_fab` asks whether a number was invented. Nothing asked whether the
+numbers already there were kept. Under a metric suite that only punishes
+falsity, **the optimum is an empty CV** — a bullet asserting nothing scores
+perfectly on all eight. Each guard added over the campaign moved toward that
+optimum and scored as a win doing it.
+
+The suite has the same blind spot as the code because the same process built
+both: every metric was written after a failure was observed, so the suite covers
+the failures already found and is structurally incapable of catching a class
+nobody has looked at. Twenty minutes of reading output found what eight hours of
+benchmarking could not.
+
+### `num_retention`, and what it says about G2
+
+Pairs each output bullet with the `cv.md` bullet it was rewritten from (argmax
+of the same overlap `grounding` uses) and counts which of that source's figures
+survived. `num_lost` is the absolute counterpart.
+
+Run against the campaign's own archived runs, it reverses section 7's headline:
+
+```
+baseline-t0 → g2 (drop the worked example), paired on 24 offers
+num_retention  0.726 → 0.469   delta -0.258, CI [-0.390, -0.128]
+                               worse on 14, better on 5, tied 5
+```
+
+G2 was reported as the campaign's biggest win on `example_copy_pct`
+0.583 → 0.042. It also cost a quarter of the CV's quantified evidence. Both
+statements are true; only one was measured at the time.
+
+`g1-30b` — the 30B writer rejected in section 7 for +70 s/offer — scores 0.866,
+the best of any run. That trade is worth revisiting now that there is a metric
+for the thing it was better at.
+
+### The repair: `verifyBulletFigures`
+
+The mirror of `verifyBulletNumbers`. That guard reverts a bullet asserting a
+figure the CV does not state; this one reverts a bullet that dropped a figure
+the CV *did* state. `revertUnsupportedBullets` now hands the predicate the
+source bullet as well as the rewrite, since "this dropped something" is only
+answerable against the line it came from.
+
+Gated behind `SNIPE_REVERT_FIGURES` for the benchmark, because reverting was
+expected to cost the JD keywords the rewrite added. Two fresh arms, 24 offers,
+temperature 0, paired:
+
+```
+metric            ctl-figures   rev-figures   delta    CI                 W/L
+num_retention     0.469         1.000         +0.531   (by construction)
+grounding         0.848         0.953         +0.105   [0.060, 0.160]     21/0
+ats_coverage      0.473         0.498         +0.025   [0.014, 0.039]     16/1
+mean_bullets      4.92          4.83          -0.083   [-0.208, 0.000]     0/2
+summary_jd_fit    0.527         0.531         +0.004
+summary_cv_fit    0.623         0.617         -0.006
+selection_regret  0.067         0.066         -0.001
+```
+
+**Only `ats_coverage` is evidence.** `num_retention` reaching exactly 1.000 and
+most of `grounding` are pinned by the guard firing — a reverted bullet *is* a CV
+bullet. The independent result is that the metric this was expected to cost went
+**up**: the full CV bullet already carries more of the posting's vocabulary than
+the 7B's truncation of it. The rewriting was net-negative on the one axis it
+existed to improve.
+
+Cost: 2 offers of 24 lost one bullet to a revert collision (two rewrites
+reverting onto the same source line, deduped). Shipped on by default.
+
+### Still open
+
+`g-bundle` was not a valid control — a 3-offer probe found 2 of 3 summaries
+differed, because the filler penalty landed after that run. Experience bullets
+were byte-identical, which is what confirmed the `revertUnsupportedBullets`
+refactor was a no-op. **Benchmark rule 1 held: two runs made now.**
+
+Two defects found by the same reading pass and not yet fixed:
+
+1. **Cross-entry figure theft in project blurbs.** `verifyBulletNumbers` allows
+   any number appearing anywhere in `cv.md`, so a DE-Store blurb can claim the
+   Zero Trust dashboard's `sub-500ms` and pass. Projects get no figure guard at
+   all, so a fully invented `970%` shipped too. The experience section is clean
+   by luck — two employers in clearly-labelled blocks — not by construction; the
+   same CV-global allowance applies there. Fix is to scope the allowed set to the
+   source *entry* and run the guard over projects, repairing by clause surgery
+   rather than revert (reverting joins a project's source bullets, which is what
+   produced the 55-word run-on PQC blurb on 3 of 12 CVs).
+2. **Selection is already per-entry** (`cv-select.mjs:228` carries `entry` on
+   every atom) — the blending happens in generation, not retrieval. Scoping the
+   *pool* would fix nothing; scoping the *verification* is the fix.

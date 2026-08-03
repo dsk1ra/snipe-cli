@@ -579,12 +579,12 @@ cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
 // prompt-side fix for this measured zero effect (ledger V4).
 cvContent.experience = verifyBulletNumbers(cvContent.experience, cvText);
 // Tier 3 — and the mirror: revert a bullet that dropped figures its source had.
-// Off until benchmarked, because reverting also discards the JD keywords the
-// rewrite added; SNIPE_REVERT_FIGURES runs the other arm without editing this
-// file mid-benchmark, which would split the run (benchmark rule 4).
-if (process.env.SNIPE_REVERT_FIGURES === '1') {
-  cvContent.experience = verifyBulletFigures(cvContent.experience, cvText);
-}
+// Gated behind a flag until measured, because reverting was expected to cost the
+// JD keywords the rewrite added. Paired over 24 offers it did the opposite:
+// ats_coverage +0.025, CI [0.014, 0.039], 16 wins 1 loss — the full CV bullet
+// carries more of the posting's vocabulary than the 7B's truncation of it did.
+// Cost is 2 offers of 24 losing one bullet to a revert collision.
+cvContent.experience = verifyBulletFigures(cvContent.experience, cvText);
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
