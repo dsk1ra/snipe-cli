@@ -3,7 +3,9 @@
 **Budget:** 8 hours wall clock, planning + execution + documentation.
 **Constraint:** RTX 3060 6 GB + 30 GB RAM, ≤50 GB of Ollama models on disk,
 ≤5 min per JD end-to-end (Phase 1 → tailored PDF).
-**Status:** proposed. Nothing below is implemented.
+**Status:** executed 2026-08-03. Results in `PHASE3-GENERATION-LEDGER.md`.
+Shipped: F1-F4, L2 (partial), G2, G3, G4, T2. Measured and not shipped: G1, L3.
+Dropped after measurement made them pointless: R1, R3, R4, R5, R6, M3.
 
 ---
 
