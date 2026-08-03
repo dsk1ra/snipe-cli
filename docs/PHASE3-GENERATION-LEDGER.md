@@ -309,3 +309,36 @@ met. **G4's stricter gate (*both up*) is not**, and a 6 % relative fall in
 `ats_coverage` −0.018 and `grounding` −0.021 are the same trade: a summary
 describing the CV rather than the posting shares fewer tokens with the posting.
 Neither is near a collapse, and both truth invariants held.
+
+### L3 — compact judge output. Rejected.
+
+The judge emits `{"id":n,"grade":g}` per item: 660–742 output tokens for 39
+items at 21 tok/s, about 35 s of its 61 s. The order is fixed by the prompt, so
+the id looks like pure redundancy and a positional array carries the same
+information in ~80 tokens.
+
+Measured on the held-out sheet:
+
+```
+cos + 0.10 x judge, verbose ids   0.930   +0.115 over cosine   11/0
+cos + 0.10 x judge, positional    0.878   +0.063 over cosine    9/2
+base-cos                          0.815
+```
+
+Compaction costs **0.052 pair accuracy — roughly half of what the judge buys —
+to save 35 s.** Rejected.
+
+Why it fails is the useful part: the id is not redundant *to the model*.
+Writing it per item is what keeps the grading aligned and deliberate; removing
+the scaffolding does not merely shorten the answer, it changes it. Same family
+of result as 0-shot grading scoring worse than no grading at all.
+
+Two earlier cheap variants died the same way, both free to test because the
+grades were already cached: binarising at ≥2 scores 0.894, at 3 scores 0.899,
+against 0.930 graded. **The 0–3 granularity is load-bearing.** The model does
+use the range — distribution over the held-out sheet is 0:60, 1:7, 2:46, 3:55.
+
+This closes every cheap latency route. Deleting the judge is off the table
+(+0.115), compacting it is off the table (−0.052), binarising it is off the
+table (−0.03). Only L1 remains: computing the same grades where the 30B is
+already resident instead of paying a second load.
