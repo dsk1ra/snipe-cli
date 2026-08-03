@@ -114,14 +114,27 @@ export function summarise(tsv, loadThresholdS = 1) {
     total: round(p.total), load: round(p.load),
     tok_per_s: p.outS ? round(p.outTok / p.outS, 1) : 0,
   })).sort((a, b) => b.total - a.total);
-  const grand = round(rows.reduce((a, r) => a + r.total, 0));
+
+  // Wall rows (logWall) ENCLOSE the model calls made inside that phase, so
+  // summing both double-counts every call. They are reported separately: the
+  // wall rows answer "how long did a JD take", the model rows answer "where did
+  // that time go". Adding them answers nothing.
+  const isWall = p => p.model === 'wall' || p.phase.endsWith('-wall');
+  const modelPhases = phases.filter(p => !isWall(p));
+  const wallPhases = phases.filter(isWall);
+  const modelTotal = round(modelPhases.reduce((a, p) => a + p.total, 0));
+  // Mean of each phase's mean, not total/runs: a JD that stopped at the Phase 1
+  // gate never entered Phase 2, so dividing by the Phase 1 count understates it.
+  const perJd = round(wallPhases.reduce((a, p) => a + p.total / p.calls, 0));
+
   return {
     offers,
     calls: rows.length,
-    total_s: grand,
-    per_offer_s: offers ? round(grand / offers) : grand,
-    reload_s: round(phases.reduce((a, p) => a + p.load, 0)),
-    reloads: phases.reduce((a, p) => a + p.loads, 0),
+    model_s: modelTotal,
+    load_s: round(modelPhases.reduce((a, p) => a + p.load, 0)),
+    reloads: modelPhases.reduce((a, p) => a + p.loads, 0),
+    per_jd_s: wallPhases.length ? perJd : (offers ? round(modelTotal / offers) : modelTotal),
+    per_jd_from: wallPhases.length ? 'phase wall clock' : 'model time / offers',
     phases,
   };
 }
@@ -134,12 +147,24 @@ if (process.argv[1] && process.argv[1].endsWith('timing.mjs') && process.argv[2]
   const file = process.argv[3] || process.env.SNIPE_TIMING;
   if (!file) { console.error('usage: timing.mjs report <timings.tsv>'); process.exit(1); }
   const s = summarise(readFileSync(file, 'utf8'));
-  console.log(`offers ${s.offers}  calls ${s.calls}  total ${s.total_s}s  per-offer ${s.per_offer_s}s`);
-  console.log(`reloads ${s.reloads} costing ${s.reload_s}s\n`);
   const pad = (v, w) => String(v).padEnd(w);
+  const isWall = p => p.model === 'wall' || p.phase.endsWith('-wall');
+  const wall = s.phases.filter(isWall);
+
+  console.log(`offers ${s.offers}  calls ${s.calls}`);
+  console.log(`per JD ${s.per_jd_s}s = ${(s.per_jd_s / 60).toFixed(2)} min  (${s.per_jd_from})`);
+  console.log(`model time ${s.model_s}s, of which ${s.load_s}s (${Math.round(100 * s.load_s / (s.model_s || 1))}%) is loading models — ${s.reloads} reloads\n`);
+
+  if (wall.length) {
+    console.log(`${pad('phase', 14)}${pad('runs', 7)}${pad('total_s', 10)}mean_s`);
+    console.log('-'.repeat(40));
+    for (const p of wall) console.log(`${pad(p.phase, 14)}${pad(p.calls, 7)}${pad(p.total, 10)}${(p.total / p.calls).toFixed(1)}`);
+    console.log('');
+  }
+
   console.log(`${pad('phase', 14)}${pad('calls', 7)}${pad('total_s', 10)}${pad('load_s', 9)}${pad('reloads', 9)}${pad('out_tok', 9)}tok/s`);
   console.log('-'.repeat(66));
-  for (const p of s.phases) {
+  for (const p of s.phases.filter(x => !isWall(x))) {
     console.log(`${pad(p.phase, 14)}${pad(p.calls, 7)}${pad(p.total, 10)}${pad(p.load, 9)}${pad(p.loads, 9)}${pad(p.outTok, 9)}${p.tok_per_s}`);
   }
 }
