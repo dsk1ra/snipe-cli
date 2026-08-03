@@ -266,3 +266,46 @@ defects had one shared cause, and fixing one exposed the other.
 
 `grounding` −0.021 rides on `mean_bullets` +0.38 — more bullets kept, and
 `grounding` is a mean over bullets, so the marginal ones dilute it.
+
+### `g2` — specificity + the skills surface, vs `baseline-t0`
+
+24 offers, temperature 0, paired. 39.8 min. **This is what ships.**
+
+```
+metric            baseline-t0   g2          delta
+example_copy_pct  0.583         0.042       -0.541
+product_fab       0.083         0.000       -0.083   T2 gate MET
+summary_cv_fit    0.585         0.623       +0.038   G3 gate MET
+summary_jd_fit    0.561         0.527       -0.034
+role_retention    1.000         1.000        0.000   invariant held
+metric_fab        0             0            0.000   invariant held
+grounding         0.869         0.848       -0.021
+ats_coverage      0.491         0.473       -0.018
+selection_regret  0.064         0.067       +0.003
+```
+
+Against the failed `g-bundle`, the specificity fix did exactly one thing:
+
+```
+filler summaries  11/24  ->  1/24
+summary_cv_fit    0.555  ->  0.623   +0.068
+product_fab       0.042  ->  0.000
+grounding, example_copy_pct, selection_regret, mean_bullets:
+    unchanged to three decimals
+```
+
+Four metrics moving by exactly 0.000 while two move sharply is the cleanest
+demonstration of the temperature-0 discipline in this ledger: the change was
+surgical, and the benchmark can prove it rather than assert it.
+
+**On the two summary numbers, stated plainly.** `summary_cv_fit` is up and
+`summary_jd_fit` is down. That is the intended direction, and it is exactly why
+the strategy doc insists on measuring both: a summary that parrots the posting
+scores high on `jd_fit` and low on `cv_fit`, so moving away from parroting must
+trade one against the other. G3's gate (*cv_fit up, jd_fit not collapsing*) is
+met. **G4's stricter gate (*both up*) is not**, and a 6 % relative fall in
+`jd_fit` is not a collapse but it is not an improvement either.
+
+`ats_coverage` −0.018 and `grounding` −0.021 are the same trade: a summary
+describing the CV rather than the posting shares fewer tokens with the posting.
+Neither is near a collapse, and both truth invariants held.
