@@ -486,8 +486,25 @@ export function stripUnsupportedTenure(summary, cvText) {
 }
 
 export function verifyBulletNumbers(items, cvText) {
+  const allowed = numbersIn(cvText);   // hoisted: the CV is re-scanned per bullet otherwise
+  return revertUnsupportedBullets(items, cvText, b => [...numbersIn(b)].some(n => !allowed.has(n)));
+}
+
+/**
+ * Revert every bullet failing `isUnsupported` to the `cv.md` bullet it was
+ * rewritten from — untailored but true beats tailored and false.
+ *
+ * Shared by the number guard and the named-product guard: both answer "this
+ * bullet asserts something cv.md does not support", and both want the same
+ * repair. A bullet is one sentence, so deleting it would cost a whole slot;
+ * reverting keeps the slot and loses only the tailoring.
+ *
+ * @param {any[]} items experience entries, `{company, bullets}`
+ * @param {string} cvText
+ * @param {(bullet: string) => boolean} isUnsupported
+ */
+export function revertUnsupportedBullets(items, cvText, isUnsupported) {
   if (!Array.isArray(items)) return items;
-  const allowed = numbersIn(cvText);
   const sec = parseCvSections(cvText).find(s => s.name === 'Experience');
   const byCompany = new Map();
   if (sec) {
@@ -498,8 +515,7 @@ export function verifyBulletNumbers(items, cvText) {
   return items.map(entry => {
     const source = byCompany.get(String(entry?.company || '').trim().toLowerCase()) || [];
     const bullets = (entry?.bullets || []).map(b => {
-      const bad = [...numbersIn(b)].filter(n => !allowed.has(n));
-      if (!bad.length || !source.length) return b;
+      if (!isUnsupported(b) || !source.length) return b;
       // Prefer the CV bullet this rewrite came from; overlap picks it out.
       const bt = toks(b);
       let best = source[0], bestN = -1;
