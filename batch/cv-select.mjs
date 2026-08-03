@@ -46,6 +46,20 @@ const JUDGE_SCHEMA = {
   required: ['grades'],
 };
 
+/**
+ * Positional form: one integer per item, in the order they were listed.
+ *
+ * The `id` field is pure redundancy — the order is fixed by the prompt — and it
+ * is expensive redundancy: measured at 742 output tokens for 39 items, ~19 per
+ * `{"id":n,"grade":g}`, which is 35 s of the judge's 66 s at 21 tok/s. A bare
+ * array of the same 39 integers is ~80 tokens.
+ */
+const JUDGE_SCHEMA_COMPACT = {
+  type: 'object',
+  properties: { grades: { type: 'array', items: { type: 'integer' } } },
+  required: ['grades'],
+};
+
 const judgeUser = (reqs, jd, list) =>
   `## Requirements\n\n${reqs.map(r => `- ${r}`).join('\n')}`
   + (jd ? `\n\n## Posting (excerpt)\n\n${String(jd).slice(0, 2500)}` : '')
@@ -63,7 +77,7 @@ const judgeUser = (reqs, jd, list) =>
  */
 export async function judgeGrades(items, reqs, jdText, opts = {}) {
   const { ollamaUrl = 'http://localhost:11434', judgeModel = 'snipe-eval',
-          judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch } = opts;
+          judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch, compact = false } = opts;
   // No exemplars means 0-shot, and 0-shot the judge scores 0.670 against plain
   // cosine's 0.756 — actively worse. Refuse rather than degrade.
   if (!judgeShots.length) return null;
@@ -73,8 +87,9 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
   const messages = [{ role: 'system', content: JUDGE_SYSTEM }];
   for (const s of shots) {
     messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list) });
-    messages.push({ role: 'assistant', content: JSON.stringify({
-      grades: items.map((it, i) => ({ id: i + 1, grade: s.want.has(it.text) ? 3 : 0 })) }) });
+    messages.push({ role: 'assistant', content: JSON.stringify(compact
+      ? { grades: items.map(it => (s.want.has(it.text) ? 3 : 0)) }
+      : { grades: items.map((it, i) => ({ id: i + 1, grade: s.want.has(it.text) ? 3 : 0 })) }) });
   }
   messages.push({ role: 'user', content: judgeUser(reqs, jdText, list) });
 
@@ -82,7 +97,8 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     const res = await _fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: JUDGE_SCHEMA,
+      body: JSON.stringify({ model: judgeModel, messages, stream: false,
+                             format: compact ? JUDGE_SCHEMA_COMPACT : JUDGE_SCHEMA,
                              options: { temperature: 0, num_ctx: 12288, num_predict: 1536 } }),
       signal: AbortSignal.timeout(judgeTimeoutMs),
     });
@@ -91,9 +107,13 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     logCall('p3-judge', judgeModel, judged, { extra: `items=${items.length}` });
     const parsed = JSON.parse(judged?.message?.content || '{}');
     const out = new Map();
-    for (const e of parsed.grades || []) {
-      const it = items[Number(e.id) - 1];
-      if (it) out.set(it.text, Math.max(0, Math.min(3, Number(e.grade) || 0)));
+    // A short positional array is a misalignment, not a partial answer: item k's
+    // grade would be wrong for every k past the gap. Refuse it.
+    if (compact && (parsed.grades || []).length !== items.length) return null;
+    for (const [i, e] of (parsed.grades || []).entries()) {
+      const it = compact ? items[i] : items[Number(e.id) - 1];
+      const g = compact ? e : e.grade;
+      if (it) out.set(it.text, Math.max(0, Math.min(3, Number(g) || 0)));
     }
     return out.size ? out : null;
   } catch {
