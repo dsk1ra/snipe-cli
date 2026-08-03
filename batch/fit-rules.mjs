@@ -229,11 +229,25 @@ export function stackMismatchCap(jdText, cvText, { cap = 3, minMentions = 2 } = 
  * is also what feeds Phase 3's bullet selection, so an ungrounded one propagates
  * into the tailored CV.
  *
- * Both default to '' so three-argument callers keep the old behaviour.
+ * `source` is the atom's CV section. A Skills or Education *catalogue* line is a
+ * claim, not a demonstration, and it cannot lose: it lexically contains every
+ * technology it lists, so it matches any requirement naming one and proves it.
+ * Measured over 573 requirement rows from 60 reports, 184 cited a catalogue line
+ * — 138 Strong, 46 Transferable, **0 Gap**. A surface that has never once failed
+ * is not grading anything. Capped at Transferable: the tool is genuinely on the
+ * CV, so this is not a Gap, but nothing here shows it being used.
+ *
+ * The prompt has carried an exemplar against exactly this since the stage was
+ * written ("Kubernetes internals" vs "Skills — Kubernetes (working knowledge)"
+ * → same_activity FALSE) and lost 138 times. Ledger V4's lesson: when the
+ * prompt-side fix measures zero, the repair belongs in code.
+ *
+ * All three default to '' so three-argument callers keep the old behaviour.
  */
-export function strengthFrom(pick, sameActivity, tooling, requirement = '', evidence = '') {
+export function strengthFrom(pick, sameActivity, tooling, requirement = '', evidence = '', source = '') {
   if (pick === 'none' || !sameActivity) return 'Gap';
   if (tooling === 'different') return 'Transferable';
+  if (source === 'skills' || source === 'education') return 'Transferable';
   // Same catalog as verifyAgainstCv but the opposite quantifier: a *claim*
   // naming two technologies asserts both, a *requirement* listing them ("AWS,
   // Azure or GCP") accepts any one. Demote rather than Gap — the activity still
@@ -298,6 +312,18 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(strengthFrom('A', false, 'different')      === 'Gap',          'different work = Gap');
   assert(strengthFrom('A', false, 'same')           === 'Gap',          'tooling match cannot rescue a different activity');
   assert(strengthFrom('none', true, 'same')         === 'Gap',          'no evidence picked outranks both axes');
+
+  // A catalogue line is a claim, not a demonstration, and cannot lose: it holds
+  // every technology it lists. Over 573 rows from 60 reports, 184 cited one —
+  // 138 Strong, 46 Transferable, 0 Gap.
+  assert(strengthFrom('A', true, 'same', 'AWS knowledge', 'Skills — Cloud: AWS, Docker', 'skills')
+         === 'Transferable', 'a skills catalogue caps at Transferable, never Strong');
+  assert(strengthFrom('A', true, 'not_applicable', 'A degree', 'Education — Modules: ...', 'education')
+         === 'Transferable', 'an education catalogue caps the same way');
+  assert(strengthFrom('A', true, 'same', 'AWS knowledge', 'Deployed services to AWS EC2', 'experience')
+         === 'Strong', 'a work bullet still reaches Strong');
+  assert(strengthFrom('A', false, 'same', '', '', 'skills') === 'Gap',
+         'the cap never rescues a row the model already called a Gap');
 
   // verifyAgainstCv: a strength may only name technology the CV actually has.
   // Fictional skills line, like the profile above — the assertions only need

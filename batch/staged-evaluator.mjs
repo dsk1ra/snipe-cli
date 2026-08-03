@@ -280,7 +280,11 @@ async function stage2Evidence(requirements, args, preloadedIndex = null) {
     const m = byReq.get(i + 1) || { pick: 'none', same_activity: false, same_tooling: 'not_applicable', note: 'no grade returned' };
     const pickIdx = LETTERS.indexOf(m.pick);
     const atomText = pickIdx >= 0 ? candidates[i][pickIdx].text : '';
-    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling, r.text, atomText);
+    // SNIPE_SKILLS_CAP=0 runs the pre-cap arm without editing this file
+    // mid-benchmark, which would split the run (benchmark rule 4).
+    const atomSource = pickIdx >= 0 && process.env.SNIPE_SKILLS_CAP !== '0'
+      ? (candidates[i][pickIdx].source || '') : '';
+    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling, r.text, atomText, atomSource);
     // A Gap has no evidence to show even when the model picked a line — showing
     // the rejected candidate would read as support for the requirement.
     const shownIdx = strength === 'Gap' ? -1 : pickIdx;
