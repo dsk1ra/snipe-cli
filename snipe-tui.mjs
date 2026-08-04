@@ -13,8 +13,8 @@
 //       batch/errors/<id>.txt, retry re-runs all three phases, debug opens the
 //       JD that phase read so it can be edited before the retry · Tab/
 //       Shift-Tab still cycles input ↔ ▶ ↔ list · Enter loops JD → URL → Add
-//       to queue (enqueues) · o open result folder · a mark applied ✉ ·
-//       x mark skip ⊘ (mutually exclusive) ·
+//       to queue (enqueues) · o open result folder · a mark applied > ·
+//       x mark skip - (mutually exclusive) ·
 //       Esc clear field/step out · q quit (outside input fields)
 //       Follow-ups tab: ↓ enters list · Enter mark nudged · u undo · o report
 // Slash commands (typed in the JD box, or just press /): /scan runs the
@@ -169,7 +169,7 @@ function labelFor(id) {
   return [pick('company'), pick('role')].filter(Boolean).join(' — ') || `#${id}`;
 }
 
-// ── activity data (Activity tab grid + ✉ applied marks) ──────────────────────
+// ── activity data (Activity tab grid + applied marks) ────────────────────────
 
 const APPLIED_FILE = path.join(BATCH, 'applied.tsv');
 const SKIPPED_FILE = path.join(BATCH, 'skipped.tsv'); // reviewed, decided not to apply
@@ -631,11 +631,11 @@ function syncTracker(rnum, from, to) {
   return false;
 }
 
-// a (applied ✉) and x (skip ⊘) are mutually exclusive triage marks: setting
+// a (applied >) and x (skip -) are mutually exclusive triage marks: setting
 // one clears the other, tracker status follows via syncTracker.
 const MARKS = {
-  applied: { file: APPLIED_FILE, state: 'Applied', label: 'applied ✉' },
-  skipped: { file: SKIPPED_FILE, state: 'SKIP', label: 'skip ⊘' },
+  applied: { file: APPLIED_FILE, state: 'Applied', label: 'applied >' },
+  skipped: { file: SKIPPED_FILE, state: 'SKIP', label: 'skip -' },
 };
 
 function toggleMark(kind) {
@@ -1089,9 +1089,14 @@ function QueueRow({ id, selected, width }) {
     info.kind === 'running' ? h(Text, { color: 'cyan' }, SPINNER[S.frame % SPINNER.length]) :
     info.kind === 'waiting' ? h(Text, { dimColor: true }, '○') :
     h(Text, { dimColor: true }, '·');
+  // The triage mark rides in the gutter beside the status icon: it is a property
+  // of the row, not an outcome of the run. Its column is reserved even when
+  // unmarked, so every company name starts at the same offset either way.
+  const mark =
+    S.applied.has(id) ? h(Text, { color: 'cyan' }, ' >') :
+    S.skipped.has(id) ? h(Text, { dimColor: true }, ' -') :
+    h(Text, null, '  ');
   const suffix = []; // [visible text, props]
-  if (S.applied.has(id)) suffix.push(['  ✉', { color: 'cyan' }]);
-  if (S.skipped.has(id)) suffix.push(['  ⊘', { dimColor: true }]);
   if (info.kind === 'running') suffix.push([`  ${info.phase}…`, { dimColor: true }]);
   if (info.kind === 'waiting') suffix.push(['  waiting', { dimColor: true }]);
   if (info.kind === 'pending') suffix.push(['  pending (press ▶)', { dimColor: true }]);
@@ -1123,10 +1128,11 @@ function QueueRow({ id, selected, width }) {
   // no columns, so measuring t.length would blow the reserved width apart.
   const suffixLen = scoreLen + suffix.reduce((a, [t, , vis]) => a + (vis ?? t).length, 0)
     + (info.kind === 'failed' ? 0 : url ? 6 : 9); // '  link' / '  no link'
-  const avail = Math.max(4, width - 2 - suffixLen); // 2 = icon + leading space
+  const avail = Math.max(4, width - 4 - suffixLen); // 4 = icon + mark + leading space
   const label = info.label.length > avail ? info.label.slice(0, avail - 1) + '…' : info.label;
   return h(Box, { height: 1, overflow: 'hidden' },
     icon,
+    mark,
     h(Text, { inverse: sel }, ` ${label}`),
     info.score != null ? h(ScoreText, { score: info.score }) : null,
     ...suffix.map(([t, p], i) => h(Text, { key: i, ...p }, t)),
@@ -1223,11 +1229,16 @@ function TabBar() {
 
 function FuRow({ e, selected, maxNudges }) {
   const due = e.urgency === 'urgent' || e.urgency === 'overdue';
+  // Four rungs of one ladder (urgent > overdue > waiting > cold, see
+  // tracker/followup-cadence.mjs:291), so the notation escalates rather than
+  // switching shape per state — and stays distinct without colour. Padded to a
+  // fixed 2 columns because '!!' is 2 wide and a ragged left edge otherwise
+  // indents every non-urgent row by one.
   const icon =
-    e.urgency === 'urgent' ? h(Text, { color: 'red', bold: true }, '!') :
-    e.urgency === 'overdue' ? h(Text, { color: 'yellow' }, '●') :
-    e.urgency === 'cold' ? h(Text, { dimColor: true }, '✕') :
-    h(Text, { dimColor: true }, '○');
+    e.urgency === 'urgent' ? h(Text, { color: 'red', bold: true }, '!!') :
+    e.urgency === 'overdue' ? h(Text, { color: 'yellow' }, ' !') :
+    e.urgency === 'cold' ? h(Text, { dimColor: true }, ' -') :
+    h(Text, { dimColor: true }, ' ·');
   const when = due ? `due now — applied ${e.daysSinceApplication}d ago`
     : e.urgency === 'cold' ? 'max nudges sent'
     : e.daysUntilNext != null ? `next in ${e.daysUntilNext}d` : '';

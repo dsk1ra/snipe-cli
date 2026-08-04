@@ -36,6 +36,7 @@ import {
   compScoreFromSalary, buildCompBlock,
 } from './text-utils.mjs';
 import { loadCvIndex, embed, topK, similarPastOffers } from './embeddings.mjs';
+import { logCall } from './timing.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = resolve(__dirname, '..');
@@ -97,7 +98,7 @@ const clampDim = (v) => {
 
 // ── Ollama (schema-constrained chat) ──────────────────────────────────────────
 
-async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0, numCtx = 8192 }) {
+async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, timeoutMs, temperature = 0, numCtx = 8192, label = 'p2' }) {
   // One retry. Two different failure modes need two different retries:
   //   done_reason=stop   → a bad sample; re-roll at a slightly higher temperature.
   //   done_reason=length → the answer did not FIT; re-rolling the same budget just
@@ -129,6 +130,7 @@ async function ollamaJson({ baseUrl, model, system, user, schema, numPredict, ti
     });
     if (!res.ok) throw new Error(`Ollama HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
+    logCall(label, model, data, { extra: `attempt=${attempt}` });
     const content = data?.message?.content || '';
     // Context-budget telemetry: prompt + output must fit num_ctx, and a prompt
     // that grows past it silently truncates the answer instead of erroring.
@@ -184,7 +186,7 @@ async function stage1JdParse(jd, args) {
   return ollamaJson({
     baseUrl: args.ollamaUrl, model: args.model, system,
     user: `## Job Description\n${cleanJd(jd, 8000)}`,
-    schema: STAGE1_SCHEMA, numPredict: 900, timeoutMs: args.timeout,
+    schema: STAGE1_SCHEMA, numPredict: 900, timeoutMs: args.timeout, label: 'p2-parse',
   });
 }
 
@@ -213,8 +215,14 @@ const STAGE2_SCHEMA = {
   required: ['matches'],
 };
 
-async function stage2Evidence(requirements, args) {
-  const cvIndex = await loadCvIndex({ ollamaUrl: args.ollamaUrl });
+/**
+ * @param {any[]} requirements
+ * @param {any} args
+ * @param {any} [preloadedIndex] the CV index loaded in the embedder block above;
+ *   falls back to loading it here so the function stays callable on its own.
+ */
+async function stage2Evidence(requirements, args, preloadedIndex = null) {
+  const cvIndex = preloadedIndex || await loadCvIndex({ ollamaUrl: args.ollamaUrl });
   const reqTexts = requirements.map(r => r.text);
   const reqVecs = await embed(reqTexts, { ollamaUrl: args.ollamaUrl });
 
@@ -260,7 +268,7 @@ async function stage2Evidence(requirements, args) {
 
   const out = await ollamaJson({
     baseUrl: args.ollamaUrl, model: args.model, system,
-    user: lines, schema: STAGE2_SCHEMA, numPredict: 1800, timeoutMs: args.timeout,
+    user: lines, schema: STAGE2_SCHEMA, numPredict: 1800, timeoutMs: args.timeout, label: 'p2-evidence',
   });
 
   // Normalize: exactly one entry per requirement, in order.
@@ -272,7 +280,11 @@ async function stage2Evidence(requirements, args) {
     const m = byReq.get(i + 1) || { pick: 'none', same_activity: false, same_tooling: 'not_applicable', note: 'no grade returned' };
     const pickIdx = LETTERS.indexOf(m.pick);
     const atomText = pickIdx >= 0 ? candidates[i][pickIdx].text : '';
-    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling, r.text, atomText);
+    // SNIPE_SKILLS_CAP=0 runs the pre-cap arm without editing this file
+    // mid-benchmark, which would split the run (benchmark rule 4).
+    const atomSource = pickIdx >= 0 && process.env.SNIPE_SKILLS_CAP !== '0'
+      ? (candidates[i][pickIdx].source || '') : '';
+    const strength = strengthFrom(m.pick, m.same_activity === true, m.same_tooling, r.text, atomText, atomSource);
     // A Gap has no evidence to show even when the model picked a line — showing
     // the rejected candidate would read as support for the requirement.
     const shownIdx = strength === 'Gap' ? -1 : pickIdx;
@@ -509,7 +521,7 @@ async function stage3Judgment({ jd, parsed, evidence, coverage, calibration, sal
     // 0.1 to match stages 1 and 2 — the 0.2 here was inherited, and this call's
     // primary output is a 1-5 judgment, not prose. Lower temperature also shrinks
     // run-to-run variance, which is what makes an 18-offer benchmark readable.
-    schema, numPredict: 5120, numCtx: 12288, timeoutMs: args.timeout, temperature: 0,
+    schema, numPredict: 5120, numCtx: 12288, timeoutMs: args.timeout, temperature: 0, label: 'p2-judgment',
   });
 
   // Resolve target numbers back to requirement text so report assembly is
@@ -649,6 +661,27 @@ async function main() {
 
   const today = new Date().toISOString().split('T')[0];
 
+  // ── Embedder block ──────────────────────────────────────────────────────────
+  // Only one model stays resident in 6 GB, so every switch between the 18.5 GB
+  // 30B and the 0.6 GB embedder costs a reload. Measured on Phase 3: 4 reloads
+  // across 5 calls. Everything the embedder can do *without* stage 1's output —
+  // loading the CV index and the calibration RAG — therefore runs here, before
+  // the 30B is ever loaded, instead of between the two 30B calls.
+  //
+  // stage2's own `embed(reqTexts)` genuinely depends on stage1's requirements
+  // and cannot be hoisted; it stays a single small request rather than a whole
+  // index load plus a RAG query.
+  const cvIndex = await loadCvIndex({ ollamaUrl: args.ollamaUrl }).catch(() => null);
+
+  let calibration = [];
+  if (args.rag) {
+    try {
+      calibration = await similarPastOffers(jd, args.id, 3, { ollamaUrl: args.ollamaUrl });
+    } catch (e) {
+      process.stderr.write(`[staged-evaluator] calibration RAG failed (offer ${args.id}): ${e.message}\n`);
+    }
+  }
+
   // Stage 1 — JD parse
   const parsed = await stage1JdParse(jd, args).catch(e => fatal(`stage1 (JD parse) failed: ${e.message}`));
   if (!parsed.requirements?.length) fatal('stage1 returned no requirements');
@@ -659,19 +692,9 @@ async function main() {
   const compDim = compScoreFromSalary(salary, compTargets);
 
   // Stage 2 — evidence matching
-  const evidence = await stage2Evidence(parsed.requirements, args)
+  const evidence = await stage2Evidence(parsed.requirements, args, cvIndex)
     .catch(e => fatal(`stage2 (evidence match) failed: ${e.message}`));
   const coverage = coverageMetric(evidence);
-
-  // Calibration RAG (best-effort — never blocks the eval)
-  let calibration = [];
-  if (args.rag) {
-    try {
-      calibration = await similarPastOffers(jd, args.id, 3, { ollamaUrl: args.ollamaUrl });
-    } catch (e) {
-      process.stderr.write(`[staged-evaluator] calibration RAG failed (offer ${args.id}): ${e.message}\n`);
-    }
-  }
 
   // Stage 3 — judgment
   const judgment = await stage3Judgment({ jd, parsed, evidence, coverage, calibration, salary, cv, profile, args })
