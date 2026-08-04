@@ -501,7 +501,7 @@ score_offer() {
   if jq -e '.status == "unavailable"' "$score_file" >/dev/null 2>&1; then
     local err; err=$(jq -r '.error' "$score_file")
     update_state "$id" "$url" "unavailable" "-" "-" "-" "-" "-" "$err" "0"
-    echo "    ⊘ Unavailable: $err"
+    echo "    - Unavailable: $err"
     return 0
   fi
 
@@ -920,7 +920,7 @@ main() {
         if [[ "$p1_status" == "score_failed" && "$RETRY_FAILED" != "true" ]]; then
           local retries; retries=$(get_field "$id" "retries"); retries=${retries:-0}
           if (( retries >= MAX_RETRIES )); then
-            echo "  ⊘  #$id skipped (score_failed, $retries/$MAX_RETRIES retries exhausted)"
+            echo "  -  #$id skipped (score_failed, $retries/$MAX_RETRIES retries exhausted)"
             continue
           fi
         fi
