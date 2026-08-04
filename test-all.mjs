@@ -20,7 +20,7 @@ console.log('\nsnipe test suite\n');
 const suites = [
   'smoke', 'liveness', 'contract', 'scan', 'cadence',
   'providers', 'tracker', 'pdf', 'pipeline', 'embeddings',
-  'phases', 'tui', 'scripts', 'providers-http', 'units',
+  'phases', 'tui', 'scripts', 'providers-http', 'units', 'bench',
 ];
 
 for (const name of suites) {

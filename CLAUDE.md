@@ -275,12 +275,12 @@ dedup: `tracker/dedup-tracker.mjs`
 
 ## Tests
 
-`node test-all.mjs` — 883 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 1121 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
 
 `npm run typecheck` — `tsc --noEmit` over the JSDoc types, also green, also in CI.
-`npm run coverage` — the same suite under c8 (~89% lines, ~75% branches); CI uploads
+`npm run coverage` — the same suite under c8 (~90% lines, ~77% branches); CI uploads
 `coverage/lcov.info` to Codecov. `all: true` in `.c8rc.json` counts never-loaded
 files, so the number stays honest rather than flattered by exclusions.
 `checkJs` is off in `tsconfig.json`: a file opts in by starting with `// @ts-check`
@@ -307,6 +307,15 @@ the whole problem:
 - **`SNIPE_PORTALS` + a temp cwd** — `scan.mjs` resolves its portal list from that
   env var and writes `data/` relative to the cwd, so a scan can run fully
   sandboxed. A `local-parser` portal makes it offline and deterministic.
+- **`SNIPE_BENCH_DIR`** — redirects the bench root that `retrieval-bench.mjs` and
+  `tailor-harness.mjs` resolve `BENCH` from, so a fixture run cannot touch the real
+  one. That matters more than sandboxing usually does: `batch/bench/` holds a 28 MB
+  embedding cache and `bench/tailor/` a 5 MB one, both keyed by model fingerprint,
+  so a run with a fake embedder overwrites them and the undo is a full re-embed.
+  `BENCH` is a module-level const, so the env var must be set **before the import**
+  — and `units.test.mjs` imports `tailor-harness.mjs` first without it, which is why
+  `test/bench.test.mjs` imports that one under a `?bench-root=` query to force a
+  fresh instance. Coverage still attributes to the same file.
 - **`SNIPE_HOME`** — `snipe-tui.mjs` splits its *data* root from its *code* root:
   state, queue, applied/skipped, `batch-input.tsv`, `reports/`, `output/` and the
   tracker all resolve from `SNIPE_HOME`, while the scripts it shells out to

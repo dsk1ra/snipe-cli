@@ -34,7 +34,11 @@ import { embed, cosine, modelFingerprint, EMBED_MODEL } from './embeddings.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
-const BENCH = resolve(__dirname, 'bench');
+// Overridable so a test can point the whole bench root at a temp dir. Without
+// it the embedding cache below is the developer's real 28 MB one, and any run
+// with a different embedder silently overwrites it — a fixture run would cost a
+// full re-embed to undo.
+const BENCH = process.env.SNIPE_BENCH_DIR ? resolve(process.env.SNIPE_BENCH_DIR) : resolve(__dirname, 'bench');
 // One cache file per model: the fingerprint check would otherwise discard the
 // whole cache on every switch, and re-embedding 900 background requirements
 // with a 4B model is not a thing to do twice.
