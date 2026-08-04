@@ -83,3 +83,4 @@ plan/
 # Regenerate: goldset.mjs sheet / export-shots (see batch/bench/README.md)
 cv.pdf
 batch/judge-shots.json
+batch/timings.tsv
