@@ -189,7 +189,11 @@ export function groundSkillItems(curated, cvRowItems, cvText) {
   const items = String(curated || '').split(/,(?![^(]*\))/).map(s => s.trim()).filter(Boolean);
   const kept = items.filter((item) => {
     const head = item.replace(/\(.*$/, '').trim().split(/[\s/-]+/)[0].toLowerCase();
-    return head.length < 2 || cvNorm.includes(` ${head} `);
+    // No length exemption. A single-character head used to skip the check
+    // entirely, so an invented "R" or "D" shipped as grounded; a real
+    // single-letter language still passes on its own token, since "C/C++"
+    // normalises to a bare " c ". An empty head is junk ("(", "-"), not an item.
+    return !!head && cvNorm.includes(` ${head} `);
   });
   return kept.length ? kept.join(', ') : cvRowItems;
 }
@@ -248,6 +252,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     'hyphenated item is not mistaken for an unknown word');
   assert(groundSkillItems('Terraform, Genesys', row, fakeCv) === row,
     'an entirely invented row falls back to the CV');
+
+  // Both directions of the single-character head, which used to bypass the check.
+  const langCv = fakeCv + '**Languages:** Rust, Java, C/C++, C#\n';
+  const langRow = 'Rust, Java, C/C++, C#';
+  assert(groundSkillItems('Rust, R', langRow, langCv) === 'Rust',
+    'invented single-letter item dropped, not waved through on length');
+  assert(groundSkillItems('C, C#', langRow, langCv) === 'C, C#',
+    'a real single-letter language still grounds on its own token');
+  assert(groundSkillItems('Docker, ()', row, fakeCv) === 'Docker',
+    'an item with no head is junk, not a grounded item');
 
   console.log('✓ text-utils self-check passed');
 }
