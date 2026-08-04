@@ -46,7 +46,10 @@ const readSafe = (p) => { try { return p && existsSync(p) ? readFileSync(p, 'utf
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
-const BENCH = resolve(__dirname, 'bench/tailor');
+// Same override as retrieval-bench.mjs, for the same reason: BENCH holds a real
+// embedding cache, and a fixture run that overwrote it would cost a full
+// re-embed to undo. Unset in production, where it resolves as it always did.
+const BENCH = resolve(process.env.SNIPE_BENCH_DIR || resolve(__dirname, 'bench'), 'tailor');
 const SAMPLE = resolve(BENCH, 'sample.tsv');
 
 // ── sample selection ──────────────────────────────────────────────────────────

@@ -97,8 +97,13 @@ export function summarise(tsv, loadThresholdS = 1) {
     });
   const byPhase = new Map();
   for (const r of rows) {
-    const p = byPhase.get(r.phase) || { phase: r.phase, calls: 0, total: 0, load: 0,
+    const p = byPhase.get(r.phase) || { phase: r.phase, model: r.model, calls: 0, total: 0, load: 0,
                                         loads: 0, promptTok: 0, outTok: 0, outS: 0 };
+    // The model has to survive aggregation or the `model === 'wall'` half of the
+    // wall test below reads undefined and never fires — only the `-wall` naming
+    // convention would be enforcing it. `time_phase pdf-render` in the runner
+    // would then have its wall time added to model time, double-counting every
+    // call inside it.
     p.calls++;
     p.total += r.total;
     p.load += r.load;

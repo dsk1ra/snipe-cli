@@ -126,8 +126,119 @@ try {
     if (got === expected) pass(`computeNextFollowupDate: ${label}`);
     else fail(`computeNextFollowupDate ${label}: expected ${expected}, got ${got}`);
   }
+
+  // The branches the cases above skip. Each is a decision about whether the user
+  // chases a real employer today, so a wrong one is either a missed follow-up or
+  // a second nudge that reads as pestering.
+  const moreUrgency = [
+    [['applied', 30, 7, 1], 'overdue', 'a follow-up sent applied_subsequent days ago is due again'],
+    [['applied', 30, 2, 1], 'waiting', 'and is not due before that'],
+    [['responded', 5, null, 0], 'overdue', 'a reply left responded_subsequent days without an answer is overdue'],
+    [['responded', 2, null, 0], 'waiting', 'and inside that window it is merely waiting'],
+    [['interview', 0, null, 0], 'waiting', 'an interview today has not missed its thank-you yet'],
+    [['rejected', 99, null, 0], 'waiting', 'a non-actionable status never becomes urgent'],
+  ];
+  for (const [args, expected, label] of moreUrgency) {
+    const got = cadence.computeUrgency(...args);
+    if (got === expected) pass(`computeUrgency: ${label}`);
+    else fail(`computeUrgency ${label}: expected ${expected}, got ${got}`);
+  }
+
+  const moreNext = [
+    [['applied', '2026-05-01', '2026-05-10', 1], '2026-05-17', 'a subsequent follow-up is counted from the last one, not the application'],
+    [['applied', '2026-05-01', null, 1], '2026-05-08', 'a counted follow-up with no recorded date falls back to the application date'],
+    [['responded', '2026-05-01', null, 0], '2026-05-04', 'a reply is chased responded_subsequent days after applying'],
+    [['responded', '2026-05-01', '2026-05-10', 1], '2026-05-13', 'and after the last follow-up once there is one'],
+    [['rejected', '2026-05-01', null, 0], null, 'a non-actionable status is never scheduled'],
+  ];
+  for (const [args, expected, label] of moreNext) {
+    const got = cadence.computeNextFollowupDate(...args);
+    if (got === expected) pass(`computeNextFollowupDate: ${label}`);
+    else fail(`computeNextFollowupDate ${label}: expected ${expected}, got ${got}`);
+  }
 } catch (e) {
   fail(`follow-up cadence module crashed: ${e.message}`);
+}
+
+// ── The dashboard itself, against a fixture tracker ──────────────────────────
+// SNIPE_TRACKER points the script at a fixture; SNIPE_PROFILE at a path that does
+// not exist, so the developer's own cadence overrides cannot change the answers.
+try {
+  const tmp = mkdtempSync(join(tmpdir(), 'co-cadence-cli-'));
+  const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().split('T')[0];
+  const header = '# Applications Tracker\n\n'
+    + '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |\n'
+    + '|---|------|---------|------|-------|--------|-----|--------|-------|\n';
+  const row = (num, date, company, status, notes) =>
+    `| ${num} | ${date} | ${company} | Engineer | 4.2/5 | ${status} | Y | [${num}](reports/${num}-x-${date}.md) | ${notes} |\n`;
+
+  // App numbers are deliberately high: follow-ups.md is not redirectable, so a
+  // low number could collide with the developer's real follow-up rows and change
+  // the count this asserts on.
+  const tracker = join(tmp, 'applications.md');
+  writeFileSync(tracker, header
+    + row(9001, daysAgo(30), 'Overdue Ltd', 'Applied', 'Emailed Jane Doe at jane@overdue.example — no reply')
+    + row(9002, daysAgo(0), 'Fresh GmbH', 'Applied', 'submitted via portal')
+    + row(9003, daysAgo(0), 'Replied Inc', 'Responded', 'recruiter replied')
+    + row(9004, daysAgo(99), 'Rejected SA', 'Rejected', 'closed')
+    + '| not a number | x | y | z | | | | | |\n'
+    + 'a line that is not a row at all\n');
+  const env = { ...process.env, SNIPE_TRACKER: tracker, SNIPE_PROFILE: join(tmp, 'no-profile.yml') };
+  const cli = (args) => {
+    try { return execFileSync(NODE, [join(ROOT, 'tracker/followup-cadence.mjs'), ...args], { cwd: ROOT, encoding: 'utf-8', timeout: 30000, env }); }
+    catch (e) { return `${e.stdout || ''}`; }
+  };
+
+  const json = JSON.parse(cli([]));
+  if (json.metadata.totalTracked === 4 && json.metadata.actionable === 3) {
+    pass('a rejected row is tracked but not actionable, and junk rows are skipped');
+  } else fail(`cadence CLI counted ${JSON.stringify(json.metadata)}`);
+  if (json.entries[0].urgency === 'urgent' && json.entries[0].company === 'Replied Inc') {
+    pass('entries are sorted urgent first, so the dashboard leads with what to do now');
+  } else fail(`cadence CLI sorted wrong: ${json.entries.map(e => e.urgency).join(',')}`);
+  const overdue = json.entries.find(e => e.company === 'Overdue Ltd');
+  if (overdue.urgency === 'overdue' && overdue.daysSinceApplication === 30) {
+    pass('an application 30 days old with no follow-up is overdue');
+  } else fail(`30-day-old application read as ${JSON.stringify(overdue.urgency)}`);
+  if (overdue.contacts[0]?.email === 'jane@overdue.example' && overdue.contacts[0]?.name === 'Jane Doe') {
+    pass('a contact name is lifted out of the note alongside the address');
+  } else fail(`contact extraction gave ${JSON.stringify(overdue.contacts)}`);
+  if (overdue.reportPath === null) pass('a report link pointing at nothing resolves to null, not a broken path');
+  else fail(`reportPath was ${overdue.reportPath}`);
+
+  const only = JSON.parse(cli(['--overdue-only']));
+  if (only.entries.length === 2 && only.metadata.actionable === 3) {
+    pass('--overdue-only filters the list but still reports the real actionable total');
+  } else fail(`--overdue-only gave ${only.entries.length} entries`);
+
+  const relaxed = JSON.parse(cli(['--applied-days', '60']));
+  if (relaxed.entries.find(e => e.company === 'Overdue Ltd').urgency === 'waiting') {
+    pass('--applied-days widens the window end to end, not just in the config object');
+  } else fail('--applied-days did not reach the urgency decision');
+
+  const summary = cli(['--summary']);
+  if (/Follow-up Cadence Dashboard —/.test(summary) && /4 total applications, 3 actionable/.test(summary)) {
+    pass('--summary prints the dashboard header');
+  } else fail(`--summary header wrong:\n${summary}`);
+  if (/1 urgent \| 1 overdue \| 1 waiting \| 0 cold/.test(summary)) pass('and the urgency counts');
+  else fail(`--summary counts wrong:\n${summary}`);
+  if (/9001\s+Overdue Ltd\s+applied\s+30\s+0\s+\S+\s+OVERDUE\s+jane@overdue\.example/.test(summary)) {
+    pass('and one padded row per entry, ending in the contact to write to');
+  } else fail(`--summary row wrong:\n${summary}`);
+
+  // Both of printSummary's early exits: nothing actionable, and no tracker at all.
+  writeFileSync(tracker, header + row(9004, daysAgo(99), 'Rejected SA', 'Rejected', 'closed'));
+  if (/No active applications to track/.test(cli(['--summary']))) {
+    pass('--summary with nothing actionable says so instead of printing an empty table');
+  } else fail('--summary printed a table with no entries');
+  writeFileSync(tracker, header);
+  if (/No applications found in tracker/.test(cli(['--summary']))) {
+    pass('--summary on an empty tracker reports the error rather than crashing');
+  } else fail('--summary did not report an empty tracker');
+
+  rmSync(tmp, { recursive: true, force: true });
+} catch (e) {
+  fail(`follow-up cadence dashboard tests crashed: ${e.message}`);
 }
 
 
