@@ -1,0 +1,7 @@
+[
+  "Led delivery of an inventory platform end to end, shipping the first release in 6 weeks.",
+  "Built the Node.js and PostgreSQL backend with OAuth 2.0 and webhook billing, cutting signup time by 60%.",
+  "Built an operator console with report builder, role management and audit trails, backed by Redis and 90% test coverage.",
+  "Migrated a legacy reporting job to a queue-backed worker, taking the nightly run from 4 hours to 25 minutes.",
+  "Wrote the onboarding guides that cut local environment setup to 20 minutes per developer."
+]
