@@ -19,7 +19,12 @@ import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
-         reconcileExperience, verifyBulletNumbers, cvCompanies } from './cv-select.mjs';
+         reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
+         verifyProjectFigures, cvCompanies,
+         stripUnsupportedTenure } from './cv-select.mjs';
+import { logCall } from './timing.mjs';
+import { generateSummary, selectedBullets, stripFabricatedProducts,
+         verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -249,6 +254,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
 
   if (!resp.ok) throw new Error(`Ollama HTTP ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
+  logCall(format ? 'p3-tailor' : 'p3-summary', model, data);
   return data.response || '';
 }
 
@@ -366,23 +372,63 @@ function caseKeyword(kw) {
   return kw.replace(/\b\w/g, c => c.toUpperCase());
 }
 
+// Rank the CV's own skill items by JD token overlap. Definitionally grounded —
+// they are lifted verbatim from cv.md — so this is the top-up source when the
+// report's keywords do not survive the grounding filter below.
+function rankCvSkills(cv, jd) {
+  const sec = (cv || '').split(/^##\s+/m).find(s => /^Skills/i.test(s)) || '';
+  // Drop the parenthesised asides BEFORE splitting: several items carry commas
+  // inside them ("Kubernetes (working knowledge, self-study …)"), and splitting
+  // first shipped "Kubernetes (Working Knowledge" as a competency tag.
+  const items = [...sec.matchAll(/^\*\*[^*]+:\*\*\s*(.+)$/gm)]
+    .flatMap(m => m[1].replace(/\([^)]*\)/g, '').split(','))
+    .map(s => s.trim())
+    .filter(s => s.length >= 2 && s.length <= 34);
+  const jdTok = new Set(tokenize(jd));
+  return items
+    .map((item, idx) => ({ item, idx, score: tokenize(item).filter(t => jdTok.has(t)).length }))
+    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .map(s => s.item);
+}
+
 // Build 6-9 competency tags from the report keywords (already JD-extracted by the
-// evaluator), de-duplicated and cased. Falls back to the model's competencies if
-// the report has too few usable keywords.
-function deriveCompetencies(report, fallback) {
+// evaluator), de-duplicated and cased.
+//
+// The keywords come from the JD, so they describe the ROLE, not the candidate —
+// printing them unfiltered put "Clinical AI Agents", "Dora Platform" and "NHS
+// Consultations" on a CV as claimed competencies (report 152). A tag only ships
+// if it appears in cv.md AS A PHRASE; the shortfall is topped up from the CV's
+// own skills, ranked by JD overlap. The model's own competencies are the last
+// resort and are held to the same filter.
+//
+// Word-by-word grounding is not enough: it cleared "Graph Analytics" for the Neo4j
+// CV (report 155) because "graph" occurs inside "federated graph" and "analytics"
+// inside "Security Analytics Dashboard" — two unrelated places, and the candidate
+// has never touched a graph database. The phrase has to be there.
+function deriveCompetencies(report, fallback, cvText, jdText) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9+#.]+/g, ' ').trim();
+  const cvNorm = ` ${norm(cvText)} `;
+  const grounded = (kw) => {
+    const n = norm(kw);
+    return n.length >= 2 && cvNorm.includes(` ${n} `);
+  };
   const seen = new Set();
   const out = [];
-  for (const kw of extractReportKeywords(report)) {
-    if (kw.length < 2 || kw.length > 34) continue;
-    const norm = kw.toLowerCase();
-    if (seen.has(norm)) continue;
-    seen.add(norm);
+  const add = (kw) => {
+    if (out.length >= 9) return;
+    if (kw.length < 2 || kw.length > 34) return;
+    const n = norm(kw);
+    // Overlap, not just equality: "TypeScript" from the JD and "TypeScript /
+    // JavaScript" from the CV skills are one tag, not two.
+    if (seen.has(n) || [...seen].some(s => s.includes(n) || n.includes(s))) return;
+    seen.add(n);
     out.push(caseKeyword(kw));
-    if (out.length >= 9) break;
-  }
-  if (out.length >= 6) return out;
-  if (Array.isArray(fallback) && fallback.length >= 6) return fallback;
-  return out.length ? out : (Array.isArray(fallback) ? fallback : []);
+  };
+
+  for (const kw of extractReportKeywords(report)) if (grounded(kw)) add(kw);
+  if (out.length < 6) for (const kw of rankCvSkills(cvText, jdText)) { if (out.length >= 9) break; add(kw); }
+  if (out.length < 6 && Array.isArray(fallback)) for (const kw of fallback) if (grounded(kw)) add(kw);
+  return out;
 }
 
 // Parse the CV's "Key Modules:" list.
@@ -406,27 +452,6 @@ function rankModules(cv, jd, n = 5) {
   const top = scored.slice(0, n);
   if (top.every(s => s.score === 0)) return mods.slice(0, n);
   return top.map(s => s.mod);
-}
-
-// ── Tier 4: targeted summary revision ───────────────────────────────────────────
-// The all-in-one pass reliably writes tight prose but under-hits the 50-70 word
-// floor. A focused single-field rewrite lands the length far more often than the
-// generic JSON repair retry.
-async function reviseSummary(current, jd, narrative, baseUrl, model, numCtx) {
-  const sys = `You rewrite ONE CV professional summary. Output ONLY the revised summary as plain text — no JSON, no quotes, no preamble, no label.
-Rules:
-- Length: 50 to 70 words. Count them. This is mandatory.
-- Implied first person: never use the candidate's name or "he/she/they".
-- Use only concrete, real achievements from the material below. Never invent.
-- Weave in 3-4 keywords relevant to the target role.`;
-  const user = `Target role (keyword context):\n${(jd || '').slice(0, 1000)}\n\nCandidate highlights:\n${narrative || '(none)'}\n\nCurrent summary to rewrite (wrong length or voice):\n${current}\n\nRewrite to 50-70 words.`;
-  const raw = await callOllama(baseUrl, model, sys, user, numCtx);
-  return raw
-    .trim()
-    .replace(/^```[\s\S]*?\n|```$/g, '')
-    .replace(/^["'`]+|["'`]+$/g, '')
-    .replace(/^(summary|professional summary)\s*[:\-]\s*/i, '')
-    .trim();
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -468,10 +493,22 @@ const profileNarrative = extractProfileNarrative(profileText);
 // entry and the top projects. The 7B then only rewrites — it no longer decides
 // what's relevant. Any failure (embedding model missing, odd report shape)
 // falls back to the full CV.
+// Block B is both what cv-select ranks against and what the summary stage
+// uses to decide which evidence to foreground, so it is parsed once.
+const blockBReqs = extractBlockBRequirements(reportText);
 let cvForPrompt = cvText;
 try {
+  // Exemplars turn on the 30B reranker inside selectCvForJd (+0.10 pair
+  // accuracy on the gold set). Loaded here rather than there because goldset
+  // imports cv-select, and the reverse edge is a cycle.
+  let judgeShots = [];
+  try {
+    const { loadExemplars } = await import('./goldset.mjs');
+    judgeShots = loadExemplars(cvText);
+  } catch { /* no exemplars: cosine-only selection, same as before */ }
   cvForPrompt = await selectCvForJd(
-    cvText, extractBlockBRequirements(reportText), jdText, { ollamaUrl: args.ollamaUrl });
+    cvText, blockBReqs, jdText,
+    { ollamaUrl: args.ollamaUrl, judgeShots });
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
 }
@@ -542,6 +579,13 @@ cvContent.experience = reconcileExperience(cvContent.experience, cvForPrompt);
 // Tier 3 — revert any bullet asserting a figure cv.md does not state. The
 // prompt-side fix for this measured zero effect (ledger V4).
 cvContent.experience = verifyBulletNumbers(cvContent.experience, cvText);
+// Tier 3 — and the mirror: revert a bullet that dropped figures its source had.
+// Gated behind a flag until measured, because reverting was expected to cost the
+// JD keywords the rewrite added. Paired over 24 offers it did the opposite:
+// ats_coverage +0.025, CI [0.014, 0.039], 16 wins 1 loss — the full CV bullet
+// carries more of the posting's vocabulary than the 7B's truncation of it did.
+// Cost is 2 offers of 24 losing one bullet to a revert collision.
+cvContent.experience = verifyBulletFigures(cvContent.experience, cvText);
 cvContent.experience = enforceChronoOrder(cvContent.experience, cvText, 'Experience', 'company');
 if (Array.isArray(cvContent.projects)) {
   cvContent.projects = enforceChronoOrder(cvContent.projects, cvText, 'Projects', 'name');
@@ -550,25 +594,38 @@ if (Array.isArray(cvContent.projects)) {
 // Tier 3 — replace the coder model's two weakest fields with deterministic,
 // JD-grounded selections. Competencies come from the report's already-extracted
 // keywords; education modules are ranked by JD token overlap.
-cvContent.competencies = deriveCompetencies(reportText, cvContent.competencies);
+cvContent.competencies = deriveCompetencies(reportText, cvContent.competencies, cvText, jdText);
 const rankedModules = rankModules(cvText, jdText, 5);
 if (rankedModules.length) cvContent.education_modules = rankedModules;
 
-// Tier 4 — if the summary still misses 50-70 words, run up to 2 targeted
-// rewrites and keep whichever lands closest to the range.
+// G4 — the summary is generated by its own call, from the bullets that will
+// actually appear on this CV. As one field in a large JSON blob it competed with
+// five other sections for attention, and its repair path built the prompt from
+// the JD and the profile narrative *without ever seeing the selected bullets* —
+// structurally guaranteed to pull the summary toward the posting.
+//
+// The JSON field is still generated and still the fallback: if this call fails
+// the offer ships the old summary rather than nothing.
+try {
+  const bullets = selectedBullets(cvForPrompt);
+  if (bullets.length) {
+    const generated = await generateSummary({
+      bullets, role: args.role, cvText, incumbent: cvContent.summary,
+      call: (sys, usr) => callOllama(args.ollamaUrl, args.model, sys, usr,
+                                     args.numCtx, null, args.temperature),
+    });
+    if (generated) cvContent.summary = generated;
+  }
+} catch (err) {
+  process.stderr.write(`summary stage failed (${err.message}) — keeping the JSON summary\n`);
+}
+
 const distOf = n => (n < 50 ? 50 - n : n > 70 ? n - 70 : 0);
 if (typeof cvContent.summary === 'string') {
-  let best = cvContent.summary;
-  let bestDist = distOf(wordCount(best));
-  for (let i = 0; i < 2 && bestDist > 0; i++) {
-    try {
-      const revised = await reviseSummary(
-        cvContent.summary, jdText, profileNarrative, args.ollamaUrl, args.model, args.numCtx);
-      const d = distOf(wordCount(revised));
-      if (revised && d < bestDist) { best = revised; bestDist = d; }
-    } catch { /* keep best-so-far */ }
-  }
-  cvContent.summary = best;
+  // Sibling strip: a years-of-experience claim the CV never makes. The number
+  // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the
+  // token is allowed; it is the tenure that is invented.
+  cvContent.summary = stripUnsupportedTenure(cvContent.summary, cvText);
 
   // Deterministic fabrication strip — if the target company name survived the
   // retries, drop the sentence claiming it (runs before the length-floor pad).
@@ -599,6 +656,25 @@ if (typeof cvContent.summary === 'string') {
   const stripped = cvContent.summary.replace(
     /\b(mid|junior|senior|entry|associate)[\s-]?level\s+/gi, '');
   cvContent.summary = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
+// T2 — a named product cv.md never mentions is stripped, not counted. The
+// two-tier vocabulary rule (capability phrases free, named products grounded)
+// is aspirational until violations are actually rejected. Experience bullets
+// revert to their CV source rather than losing the sentence; project blurbs and
+// the summary get clause surgery, since they have no single source line.
+cvContent.experience = verifyBulletProducts(cvContent.experience, cvText);
+cvContent.skills = filterSkillItems(cvContent.skills, cvText);
+if (Array.isArray(cvContent.projects)) {
+  for (const p of cvContent.projects) {
+    if (typeof p.description === 'string') {
+      p.description = stripFabricatedProducts(p.description, cvText);
+    }
+  }
+  // ...and the figures, scoped to each project's own CV entry. Projects had no
+  // number guard at all, so both a wholly invented "970%+ revenue growth" and a
+  // real-but-borrowed "sub-500ms load times" shipped on the same CV.
+  cvContent.projects = verifyProjectFigures(cvContent.projects, cvText);
 }
 
 // Build output folder
@@ -656,6 +732,20 @@ function runFill(maxSkills, maxBullets) {
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
 }
 
+// Keep the N projects most relevant to the JD, in their existing (chronological)
+// order. enforceChronoOrder has already re-sorted by date, so the tail slice this
+// replaces dropped the OLDEST project rather than the weakest — on the Edenred
+// Java/Spring JD that silently cut the Java/Spring project (report 149), the one
+// thing the CV most needed to show.
+function trimProjectsByRelevance(list, n, jdTok) {
+  if (!Array.isArray(list) || list.length <= n) return list;
+  const score = p => [...new Set(tokenize(`${p.name} ${p.description || ''}`))]
+    .filter(t => jdTok.has(t)).length;
+  const keep = new Set([...list].sort((a, b) => score(b) - score(a)).slice(0, n));
+  return list.filter(p => keep.has(p));
+}
+const jdTokens = new Set(tokenize(jdText));
+
 // Tier 5 — relevance-preserving density ladder. The summary and competencies are
 // NEVER cut to fit the page; we only reduce experience-bullet depth (fill caps
 // per role, hitting the least-relevant backfilled roles too), skill breadth, and
@@ -675,9 +765,7 @@ let pdfError = null;
 for (let step = 0; step < LADDER.length; step++) {
   const { skills, bullets, projects } = LADDER[step];
 
-  if (Array.isArray(cvContent.projects) && cvContent.projects.length > projects) {
-    cvContent.projects = cvContent.projects.slice(0, projects);
-  }
+  cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
   writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 
   try {
