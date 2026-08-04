@@ -260,6 +260,21 @@ async function hydeFor(reqs, { ollamaUrl = 'http://localhost:11434', model = 'sn
  */
 export async function buildContext(gold, atoms, { withHyde = true, gradesFile = null } = {}) {
   await initCache();
+  // A sheet's ticks are atom ids frozen at labelling time. Edit cv.md and the
+  // deleted atoms' ids survive in `want` but not in `atoms`, so every metric
+  // indexes a rank that is not there — pairAccuracy died on `sorted[undefined].s`.
+  // Intersect once here, where all three metrics route, and say so loudly: the
+  // run is still valid (variants are compared paired on the same reduced set)
+  // but it is no longer the same gold set the published number came from.
+  const liveIds = new Set(atoms.map(a => a.id));
+  let dropped = 0;
+  for (const o of gold) {
+    for (const w of o.want) if (!liveIds.has(w)) { o.want.delete(w); dropped++; }
+  }
+  if (dropped) {
+    console.warn(`WARN: ${dropped} tick(s) reference atoms no longer in cv.md — dropped. ` +
+      `Numbers are not comparable to runs made before the CV changed; re-sheet to restore full power.`);
+  }
   const flat = atoms.flatMap(a => a.parts);
   const span = [];
   for (let i = 0, c = 0; i < atoms.length; i++) span.push([c, c += atoms[i].parts.length]);
