@@ -78,3 +78,8 @@ reports/*-RESERVED.md
 
 # Planning (local scratchpad)
 plan/
+
+# Generated CV artefacts and the PII-bearing gold-set fixtures — local only.
+# Regenerate: goldset.mjs sheet / export-shots (see batch/bench/README.md)
+cv.pdf
+batch/judge-shots.json
