@@ -167,7 +167,12 @@ function extractContacts(notes) {
     // Try to extract name before email: "Emailed Name at" or "contact: Name"
     let name = null;
     const beforeEmail = notes.substring(0, notes.indexOf(email));
-    const nameMatch = beforeEmail.match(/(?:Emailed|emailed|contact[:\s]+|to\s+)([A-Z][a-z]+ ?[A-Z]?[a-z]*)\s*(?:at|@|$)/i);
+    // The separator has to be consumed. "Emailed" and "emailed" were both listed
+    // with no trailing \s, so "Emailed Jane Doe at …" — the shape named above —
+    // only ever matched if the name was jammed against the verb, and every note
+    // written the documented way came back with a null name. The /i flag already
+    // made the second spelling redundant.
+    const nameMatch = beforeEmail.match(/(?:emailed\s+|contact[:\s]+|to\s+)([A-Z][a-z]+ ?[A-Z]?[a-z]*)\s*(?:at|@|$)/i);
     if (nameMatch) name = nameMatch[1].trim();
     contacts.push({ email, name });
   }
