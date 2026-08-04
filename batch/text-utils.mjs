@@ -161,6 +161,43 @@ export function buildCompBlock(salary, compDim, targets) {
   return lines.join('\n');
 }
 
+/**
+ * Keep only the skill items a CV actually supports.
+ *
+ * The tailor model curates a skills row by subsetting and reordering the CV's own
+ * items — anything it adds is invented. It lifted "Terraform" straight out of the
+ * Sainsbury's essential criteria into the Cloud row (report 156) and "Azure" into
+ * Pharmlogic's (report 154); neither word has ever appeared in cv.md, so both
+ * shipped as fabricated tools on real PDFs.
+ *
+ * An item survives when its leading word occurs in the CV. That lets a genuine
+ * narrowing through — "AWS (EC2, Lambda)" out of "AWS (EC2, Lambda, S3, IAM)" —
+ * while catching wholesale invention, which always brings a new proper noun with
+ * it. Splitting respects parentheses, since several real items carry commas
+ * inside them, and hyphens are separators on both sides so "Event-Driven
+ * Architecture" is not mistaken for the unknown word "eventdriven".
+ *
+ * @param {string} curated model-written comma-separated items
+ * @param {string} cvRowItems the CV's own items for that row — the fallback
+ * @param {string} cvText full cv.md
+ * @returns {string} comma-separated grounded items
+ */
+export function groundSkillItems(curated, cvRowItems, cvText) {
+  const norm = s => ` ${String(s || '').toLowerCase().replace(/[^a-z0-9+#.]+/g, ' ').trim()} `;
+  const cvNorm = norm(cvText);
+  // Split on commas that are not inside parentheses.
+  const items = String(curated || '').split(/,(?![^(]*\))/).map(s => s.trim()).filter(Boolean);
+  const kept = items.filter((item) => {
+    const head = item.replace(/\(.*$/, '').trim().split(/[\s/-]+/)[0].toLowerCase();
+    // No length exemption. A single-character head used to skip the check
+    // entirely, so an invented "R" or "D" shipped as grounded; a real
+    // single-letter language still passes on its own token, since "C/C++"
+    // normalises to a bare " c ". An empty head is junk ("(", "-"), not an item.
+    return !!head && cvNorm.includes(` ${head} `);
+  });
+  return kept.length ? kept.join(', ') : cvRowItems;
+}
+
 // ── Self-check (ponytail: one runnable check) ─────────────────────────────────
 
 import { fileURLToPath } from 'url';
@@ -202,6 +239,29 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   assert(compScoreFromSalary(null, targets) === null, 'no salary = null');
 
   assert(cleanCvForPrompt('a  \n   \n\n\nb') === 'a\n\nb', 'cv cleaning');
+
+  // groundSkillItems — the model may narrow the CV's items, never add to them.
+  const fakeCv = '**Cloud & Infrastructure:** AWS (EC2, Lambda, S3, IAM), Docker, Kubernetes\n'
+               + '**Backend:** Event-Driven Architecture, Saga Pattern\n';
+  const row = 'AWS (EC2, Lambda, S3, IAM), Docker, Kubernetes';
+  assert(groundSkillItems('Docker, Terraform, Kubernetes', row, fakeCv) === 'Docker, Kubernetes',
+    'invented tool dropped from a curated skills row');
+  assert(groundSkillItems('AWS (EC2, Lambda), Docker', row, fakeCv) === 'AWS (EC2, Lambda), Docker',
+    'commas inside parentheses do not split an item');
+  assert(groundSkillItems('Event-Driven Architecture', row, fakeCv) === 'Event-Driven Architecture',
+    'hyphenated item is not mistaken for an unknown word');
+  assert(groundSkillItems('Terraform, Genesys', row, fakeCv) === row,
+    'an entirely invented row falls back to the CV');
+
+  // Both directions of the single-character head, which used to bypass the check.
+  const langCv = fakeCv + '**Languages:** Rust, Java, C/C++, C#\n';
+  const langRow = 'Rust, Java, C/C++, C#';
+  assert(groundSkillItems('Rust, R', langRow, langCv) === 'Rust',
+    'invented single-letter item dropped, not waved through on length');
+  assert(groundSkillItems('C, C#', langRow, langCv) === 'C, C#',
+    'a real single-letter language still grounds on its own token');
+  assert(groundSkillItems('Docker, ()', row, fakeCv) === 'Docker',
+    'an item with no head is junk, not a grounded item');
 
   console.log('✓ text-utils self-check passed');
 }
