@@ -184,13 +184,16 @@ is not worth a 7B call per requirement.
 
 - **Label noise is unmeasured**, so the true ceiling is unknown. The cheapest
   fix is a second gold sheet that repeats two offers from the first.
-- **n=10 after exemplars.** A second sheet would roughly double the power and
-  let the winner be confirmed on offers that played no part in selecting it.
+- ~~**n=10 after exemplars.**~~ **RESOLVED** — confirmed on sheet 2, see
+  *Held-out confirmation*.
 - The lexical hybrid (`rrf-cos-bm25`, +0.041, 7/2) is free and consistently
   positive across both sweeps but never significant. It is a reasonable thing
   to combine with the judge — `rrf-cos-judge-bm25` was the top variant under
   the original exemplars — but on this evidence it is not distinguishable from
   `cos+judge-0.10`, which is simpler.
+  **Settled on sheet 2, against it:** `rrf-cos-bm25` −0.045 (3/7),
+  `rrf-cos-judge-bm25` +0.016 (ns), and adding bm25 to the shipped blend
+  (`cos+judge-0.10+bm25`, +0.100) is *below* the blend without it. Dropped.
 
 ## Sweep 3 — tuning the shipped variant
 
@@ -243,13 +246,9 @@ CV for a low-latency C++ role, and cosine ranked it below a Redis migration.
 
 - **Label noise is unmeasured**, so the true ceiling is unknown. Cheapest fix is
   a second sheet that repeats two offers from the first.
-- **A second gold sheet is generated and unlabelled** at
-  `batch/bench/goldset-2.md` — 12 further offers, none overlapping the first.
-  Labelling it would roughly double the power and, more importantly, let
-  `cos+judge-0.10` be confirmed on offers that played no part in choosing it.
-  Everything above selected a winner and validated it only by swapping
-  exemplars, which is a weaker check than fresh offers.
-  Score it with `node batch/goldset.mjs score --sheet batch/bench/goldset-2.md`.
+- ~~**A second gold sheet is generated and unlabelled**~~ — **RESOLVED**, see
+  *Held-out confirmation* below. `batch/bench/goldset-2.md` is labelled (86
+  ticks) and `cos+judge-0.10` is confirmed on it.
 
 ## Sweep 4 — a bigger embedder is worse
 
@@ -322,3 +321,59 @@ No collapse, and both extremes are the right ones. This class of check needs no
 labels and is what a 150-JD run is actually good for — alongside the
 `ats_coverage` / `product_fab` metrics in PHASE3-TAILORING-STRATEGY.md, which
 are also label-free and currently unbuilt.
+
+## Held-out confirmation — sheet 2, 12 fresh offers
+
+`batch/bench/goldset-2.md`, hand-ticked, 86 ticks over 12 offers × 14 atoms, no
+offer overlapping sheet 1. This is the check every result above lacked: the
+winner was chosen on sheet 1 and these offers played no part in choosing it.
+
+```
+node batch/retrieval-bench.mjs run --sheet batch/bench/goldset-2.md \
+  --grades batch/bench/judge-grades-2.json
+```
+
+| variant | pair | Δpair | CI95 | w/l | sig |
+|---|---|---|---|---|---|
+| cos+jdsent+judge | 0.940 | +0.126 | [0.085, 0.172] | 12/0 | YES |
+| **cos+judge-0.10** (shipped) | **0.930** | **+0.115** | **[0.074, 0.159]** | **11/0** | **YES** |
+| cos+judge-0.05 | 0.921 | +0.107 | [0.071, 0.144] | 11/0 | YES |
+| base-cos | 0.815 | — | — | — | — |
+| judge (alone) | 0.801 | −0.014 | [−0.092, 0.065] | 6/6 | no |
+| bm25 | 0.627 | −0.187 | [−0.275, −0.095] | 2/10 | WORSE |
+| random | 0.517 | −0.297 | [−0.436, −0.162] | 2/10 | WORSE |
+
+**The shipped variant holds, and by more than it earned on sheet 1** (+0.115 vs
++0.095 there), 11 offers better and none worse. Every significant variant in the
+run is a judge blend; nothing without the judge clears the CI. The judge *alone*
+is again below plain cosine (0.801 vs 0.815) — same conclusion as sheet 1 from
+independent offers, so "only the blend pays" is now confirmed rather than
+observed once.
+
+Run twice, before and after an edit to the Snipe project atom in `cv.md`:
+identical to three decimals. The bench keeps its own text-keyed embedding cache
+(`batch/bench/embed-cache-snipe-embed.json`) and imports `embed` directly rather
+than going through `loadCvIndex`, so changed atom text is a cache miss and gets
+re-embedded — the result is genuinely insensitive to that atom's wording, not
+cached past the change.
+
+### cos+jdsent+judge scored higher and is NOT shipped
+
+0.940 / +0.126 / 12–0 is nominally the best row in the table. Deliberately not
+taken:
+
+- **Sheet 2 is the confirmation set for `cos+judge-0.10`.** Promoting a
+  different variant off the same sheet converts it from a held-out check into a
+  selection set, and there is no third sheet left to confirm against. That is
+  the whole failure this sheet existed to avoid.
+- **The margin is inside the noise.** +0.011 over the shipped variant, with CIs
+  overlapping over nearly their whole length ([0.085, 0.172] vs
+  [0.074, 0.159]). 36 variants against 12 offers will produce a top row this
+  close by chance.
+- **The added signal does nothing on its own**: `cos+jdsent` is +0.013 (ns) and
+  `jdsent` alone is −0.004. Consistent with sheet 1, where requirement-shaped
+  JD sentences scored 0.757 against Block B's 0.756 — indistinguishable.
+
+To ship it properly: label a third sheet, or pre-register a two-variant
+comparison (`cos+judge-0.10` vs `cos+jdsent+judge`, nothing else in the run) so
+the test is not a 36-way max.
