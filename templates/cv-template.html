@@ -59,7 +59,7 @@
     font-size: 26px;
     font-weight: 700;
     color: var(--ink);
-    letter-spacing: -0.01em;
+    letter-spacing: normal;
     margin-bottom: 8px;
     line-height: 1.1;
   }
@@ -99,7 +99,10 @@
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.09em;
+    /* ponytail: no letter-spacing — Chrome's PDF writer turns tracking into
+       per-glyph TJ offsets and ATS extractors read "W O R K  E X P E R I E N C E".
+       Uppercase + bold + accent + rule already carry the hierarchy. */
+    letter-spacing: normal;
     color: var(--accent);
     border-bottom: 1px solid var(--hairline);
     padding-bottom: 5px;
@@ -208,7 +211,7 @@
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: normal;
     color: var(--accent);
     margin-left: 8px;
   }

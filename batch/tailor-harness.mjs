@@ -14,6 +14,14 @@
  *                   own worked example                             want 0
  *   grounding       mean token overlap of each output bullet with
  *                   the best-matching cv.md bullet for that role   higher
+ *   num_retention   figures in that source bullet that survived
+ *                   into the rewrite (`num_lost` = how many did
+ *                   not)                                           want 1.0
+ *
+ * `metric_fab` and `num_retention` are the two halves of the same question and
+ * neither implies the other: a rewrite that drops every quantified outcome
+ * invents nothing, so it scores a clean 0 fab and reads as healthy. It took a
+ * batch of 12 real CVs at 44 % retention to notice.
  *
  * CLI:
  *   node batch/tailor-harness.mjs sample --n 24        write the fixed sample
@@ -29,7 +37,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
-import { parseCvSections, parseEntries, entryCompany } from './cv-select.mjs';
+import { createHash } from 'crypto';
+import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements } from './cv-select.mjs';
+import { embed, cosine } from './embeddings.mjs';
+import { productFab } from './summary-stage.mjs';
+
+const readSafe = (p) => { try { return p && existsSync(p) ? readFileSync(p, 'utf8') : ''; } catch { return ''; } };
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
@@ -75,8 +88,16 @@ export function eligible(paths = {}) {
  * Stratified by eval score so the sample spans the range Phase 3 actually sees,
  * deterministic (sorted, fixed stride) so re-running `sample` reproduces it.
  */
-function buildSample(n, paths = {}) {
-  const all = eligible(paths).sort((a, b) => a.score - b.score || Number(a.id) - Number(b.id));
+function buildSample(n, paths = {}, minScore = 0) {
+  // The same posting gets re-scanned across runs; two copies of one JD is a
+  // wasted sample slot, not a second data point. Keep the latest scan of each.
+  const seen = new Map();
+  for (const o of eligible(paths)) {
+    if (o.score < minScore) continue;
+    const k = `${o.company} ${o.role}`.toLowerCase();
+    if (!seen.has(k) || Number(o.id) > Number(seen.get(k).id)) seen.set(k, o);
+  }
+  const all = [...seen.values()].sort((a, b) => a.score - b.score || Number(a.id) - Number(b.id));
   if (all.length <= n) return all;
   const step = all.length / n;
   return Array.from({ length: n }, (_, i) => all[Math.floor(i * step)]);
@@ -92,8 +113,13 @@ export function readSample(samplePath = SAMPLE) {
 
 // ── running a variant ─────────────────────────────────────────────────────────
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv' } = {}) {
-  const sample = readSample();
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0 } = {}) {
+  // `limit` takes a PREFIX of the sample, never a random subset: the sample is
+  // sorted by eval score, so the same prefix is the same offers every time and
+  // two limited runs stay paired. A limited run is only comparable to another
+  // run over the same prefix — noted in meta.json so a later reader cannot
+  // mistake it for a full one.
+  const sample = limit ? readSample().slice(0, limit) : readSample();
   const dir = resolve(BENCH, label);
   mkdirSync(dir, { recursive: true });
   const t0 = Date.now();
@@ -115,8 +141,12 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
       process.stderr.write(`  FAILED: ${String(err.stderr || err.message).slice(0, 200)}\n`);
     }
   }
-  const meta = { label, temperature, model, n: sample.length, ok, failed,
-                 minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
+  // Env-gated behaviour is invisible in the output dir, so a run that forgot the
+  // flag is indistinguishable from one that had it. Record which arm this was.
+  const flags = Object.fromEntries(Object.entries(process.env)
+    .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
+  const meta = { label, temperature, model, n: sample.length, limit: limit || null, ok, failed,
+                 flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   return meta;
 }
@@ -172,30 +202,114 @@ export function activePromptPath() {
   return existsSync(local) ? local : resolve(__dirname, 'local-tailor-prompt.md');
 }
 
+/**
+ * Snapshot of the worked-example bullets as they stood when copying was first
+ * measured at 29 %.
+ *
+ * Without this the metric is self-defeating: `example_copy_pct` is defined
+ * against whatever example the prompt currently holds, so *deleting* the example
+ * (which is exactly what G2 does) drops the metric to 0 by construction — the
+ * detector goes blind and the change scores a perfect win it did not earn.
+ * Unioning a fixed snapshot in means the post-G2 number still answers the real
+ * question: does the model still emit that text?
+ */
+function snapshotShingles() {
+  const out = new Set();
+  try {
+    for (const b of JSON.parse(readFileSync(resolve(__dirname, 'bench/example-bullets.json'), 'utf8'))) {
+      for (const sh of shingles(b)) out.add(sh);
+    }
+  } catch { /* no snapshot — fall back to the live prompt alone */ }
+  return out;
+}
+
 function exampleShingles() {
   const p = readFileSync(activePromptPath(), 'utf8');
-  const out = new Set();
+  const out = snapshotShingles();
   for (const m of p.matchAll(/"bullets"\s*:\s*\[([^\]]*)\]/g)) {
     for (const b of m[1].split(/",\s*"/)) for (const sh of shingles(b)) out.add(sh);
   }
   return out;
 }
 
+// ── Named-product fabrication ─────────────────────────────────────────────────
+// The vocabulary and the detector live in summary-stage.mjs, because the
+// pipeline *enforces* the rule at generation time and the bench only measures
+// it. Two copies would drift, and the copy that mattered would be the one the
+// benchmark was not using.
+
+// ── ATS keyword coverage ──────────────────────────────────────────────────────
+
+// Beyond the 3-char floor: words a JD and a CV both contain regardless of
+// subject, which would inflate coverage without measuring anything.
+const ATS_STOP = new Set([
+  'and','the','for','with','you','our','your','are','will','have','has','from',
+  'this','that','they','their','its','not','but','can','all','any','who','how',
+  'work','working','team','teams','role','roles','job','jobs','company','years',
+  'year','experience','experienced','skills','skill','strong','good','great',
+  'ability','able','including','include','includes','across','within','using',
+  'use','used','new','well','also','more','most','other','such','into','while',
+  'about','over','than','then','been','were','was','would','should','could',
+  'must','may','need','needs','required','requirements','requirement','looking',
+  'candidate','candidates','apply','please','join','help','make','build',
+  'building','built','develop','developing','support','ensure','deliver','high',
+  'level','based','part','time','full','world','best','like','want','one','two',
+]);
+
+/**
+ * Of the JD terms `cv.md` can *legitimately* support, the fraction that reach
+ * the tailored output.
+ *
+ * Scoring against the supportable subset rather than the whole JD is the point:
+ * a CV cannot be rewarded for covering a term it has no business claiming, so
+ * the metric cannot be gamed by inventing. It is capped at the CV's honest
+ * ceiling by construction.
+ *
+ * @param {string} jdText
+ * @param {string} cvText
+ * @param {string} outputText
+ */
+export function atsCoverage(jdText, cvText, outputText) {
+  const content = (s) => new Set([...toks(s)].filter(t => !ATS_STOP.has(t) && !/^\d+$/.test(t)));
+  const jd = content(jdText), cv = content(cvText), out = content(outputText);
+  const supportable = [...jd].filter(t => cv.has(t));
+  if (!supportable.length) return { coverage: 0, supportable: 0, covered: 0, missed: [] };
+  const covered = supportable.filter(t => out.has(t));
+  return {
+    coverage: covered.length / supportable.length,
+    supportable: supportable.length,
+    covered: covered.length,
+    missed: supportable.filter(t => !out.has(t)).slice(0, 20),
+  };
+}
+
 /**
  * @param {string} label
- * @param {{benchRoot?: string, cvPath?: string}} [paths] injectable for tests
+ * @param {{benchRoot?: string, cvPath?: string, keep?: Set<string>|null}} [paths]
+ *   injectable for tests; `keep` restricts to a set of run directories so two
+ *   runs of different sizes can be compared over the offers they share.
  */
 function metricsFor(label, paths = {}) {
-  const { benchRoot = BENCH, cvPath = resolve(PROJECT, 'cv.md') } = paths;
+  const { benchRoot = BENCH, cvPath = resolve(PROJECT, 'cv.md'), keep = null } = paths;
   const dir = resolve(benchRoot, label);
   if (!existsSync(dir)) throw new Error(`no run at ${dir}`);
   const cvExp = cvExperience(cvPath);
   const expectedRoles = cvExp.length;
-  const cvNums = numsOf(readFileSync(cvPath, 'utf8'));
+  const cvText = readFileSync(cvPath, 'utf8');
+  const cvNums = numsOf(cvText);
   const ex = exampleShingles();
+  // Offer id → that offer's Phase 2 report. Keyed on the id rather than the
+  // whole `<id>_<slug>` dir name so a change to the slug rule cannot silently
+  // empty every requirement list and read as selection_regret improving.
+  const reportById = new Map();
+  try {
+    for (const s of readSample()) reportById.set(String(s.id), resolve(PROJECT, s.report));
+  } catch { /* no sample (unit tests use a fixture tree) — reqs stay empty */ }
+  const reportFor = (d) => reportById.get(d.split('_')[0]) || '';
 
   const rows = [];
   for (const d of readdirSync(dir)) {
+    if (keep && !keep.has(d)) continue;
     const f = join(dir, d, 'cv-content.json');
     if (!existsSync(f)) continue;
     /** @type {any} */
@@ -204,7 +318,7 @@ function metricsFor(label, paths = {}) {
     const exp = Array.isArray(c.experience) ? c.experience : [];
 
     const fabNums = [];
-    let groundSum = 0, groundN = 0, copied = 0, unmatched = 0;
+    let groundSum = 0, groundN = 0, copied = 0, unmatched = 0, numKept = 0, numLost = 0;
     const matchedRoles = new Set();
     for (const e of exp) {
       // A schema floor can be satisfied by padding, so an entry only counts as a
@@ -222,14 +336,57 @@ function metricsFor(label, paths = {}) {
         for (const n of numsOf(b)) if (!cvNums.has(n)) fabNums.push(n);
         for (const sh of shingles(b)) if (ex.has(sh)) { copied++; break; }
         if (match) {
-          groundSum += Math.max(0, ...match.bullets.map(cb => overlap(b, cb)));
+          // Which cv.md bullet was this rewritten from — argmax of the same
+          // overlap `grounding` already trusts. `overlap` is asymmetric
+          // (|b ∩ cb| / |b|), so a truncated bullet still scores near 1 against
+          // its own source, which is exactly the case being measured.
+          let src = '', bestOv = 0;
+          for (const cb of match.bullets) {
+            const o = overlap(b, cb);
+            if (o > bestOv) { bestOv = o; src = cb; }
+          }
+          groundSum += bestOv;
           groundN++;
+          // metric_fab counts numbers the model invented. Nothing counted the
+          // ones it deleted, and truncating to the first clause drops the
+          // quantified outcome — "cutting configuration time from 2+ hours to
+          // 30 minutes" becomes "authored documentation" and every guard passes.
+          const has = numsOf(b);
+          for (const num of numsOf(src)) (has.has(num) ? numKept++ : numLost++);
         }
       }
     }
+    // Everything the model actually wrote, as one blob. Competencies, modules
+    // and skills are code-derived (Tier 3), but they ship on the PDF, so a
+    // fabricated product there counts exactly as much as one in a bullet.
+    const outputText = [
+      c.summary || '',
+      (c.competencies || []).join(' '),
+      (c.projects || []).map(p => `${p.name || ''} ${p.description || ''}`).join(' '),
+      (c.education_modules || []).join(' '),
+      (c.skills || []).map(s => `${s.category || ''} ${s.items || ''}`).join(' '),
+      exp.map(e => (e.bullets || []).join(' ')).join(' '),
+    ].join('\n');
+    const jdText = readSafe(join(dir, d, 'job-description.txt'));
+    const fabProducts = productFab(outputText, cvText);
+    const ats = atsCoverage(jdText, cvText, outputText);
+    // Block B is what cv-select ranked against, so selection_regret has to be
+    // scored against the same requirements the selector actually saw. The bench
+    // dir is named `<id>_<slug>`, which is enough to find the offer's report.
+    const reqs = extractBlockBRequirements(readSafe(reportFor(d)));
+
     rows.push({
       dir: d,
       roles: exp.length,
+      products: fabProducts,
+      product_fab: fabProducts.length,
+      ats_coverage: ats.coverage,
+      ats_supportable: ats.supportable,
+      summary: c.summary || '',
+      reqs,
+      outBullets: exp.flatMap(e => e.bullets || []),
+      jdText,
+      outputText,
       // Retention counts roles traceable to cv.md, not array length — otherwise
       // a padded or invented entry reads as a fix.
       retention: expectedRoles ? matchedRoles.size / expectedRoles : 1,
@@ -240,6 +397,10 @@ function metricsFor(label, paths = {}) {
       copied,
       grounding: groundN ? groundSum / groundN : 0,
       bullets: groundN,
+      // ponytail: a CV whose source bullets carry no figures scores 1 — nothing
+      // to lose. num_lost is the absolute counterpart, immune to that.
+      num_retention: numKept + numLost ? numKept / (numKept + numLost) : 1,
+      num_lost: numLost,
     });
   }
 
@@ -256,9 +417,152 @@ function metricsFor(label, paths = {}) {
     fab_offers_pct: +(rows.filter(r => r.fab > 0).length / n).toFixed(3),
     example_copy_pct: +(rows.filter(r => r.copied > 0).length / n).toFixed(3),
     grounding: +mean('grounding').toFixed(3),
+    num_retention: +mean('num_retention').toFixed(3),
+    num_lost: +mean('num_lost').toFixed(2),
+    product_fab: +mean('product_fab').toFixed(3),
+    product_fab_pct: +(rows.filter(r => r.product_fab > 0).length / n).toFixed(3),
+    ats_coverage: +mean('ats_coverage').toFixed(3),
     mean_bullets: +mean('bullets').toFixed(2),
     rows,
   };
+}
+
+// ── Embedding-backed metrics ──────────────────────────────────────────────────
+// These three need vectors, so unlike the text metrics they cannot run offline.
+// They stay deterministic (greedy embedder, cached by content hash), and the
+// cache means re-scoring a run costs nothing after the first pass.
+
+const EMBED_CACHE = resolve(BENCH, 'metric-embeds.json');
+
+/** Content-hashed embedding cache. Keyed by text alone — the embedder is pinned. */
+async function embedCached(texts, ollamaUrl) {
+  let cache = {};
+  try { cache = JSON.parse(readFileSync(EMBED_CACHE, 'utf8')); } catch {}
+  const key = t => createHash('sha1').update(t).digest('hex').slice(0, 16);
+  const missing = [...new Set(texts.filter(t => t && !cache[key(t)]))];
+  if (missing.length) {
+    // Batched, but in chunks — one 200-item embed request is a context risk on
+    // a 0.6B model and a single failure loses the whole batch.
+    for (let i = 0; i < missing.length; i += 32) {
+      const chunk = missing.slice(i, i + 32);
+      const vecs = await embed(chunk, { ollamaUrl });
+      chunk.forEach((t, j) => { cache[key(t)] = vecs[j]; });
+    }
+    mkdirSync(dirname(EMBED_CACHE), { recursive: true });
+    writeFileSync(EMBED_CACHE, JSON.stringify(cache), 'utf8');
+  }
+  return texts.map(t => (t ? cache[key(t)] : null));
+}
+
+/**
+ * The `cv.md` atoms Phase 3 selects *from* — experience bullets and project
+ * entries. Deliberately the same corpus the gold set labels, so selection_regret
+ * and the gold-set pair accuracy are talking about the same 14 things.
+ * @param {string} cvText
+ */
+export function selectableAtoms(cvText) {
+  const out = [];
+  for (const sec of parseCvSections(cvText)) {
+    if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
+    for (const e of parseEntries(sec.lines).entries) {
+      const name = e.head[0].replace(/^###\s+/, '').trim();
+      for (const b of e.bullets) out.push({ text: b, section: sec.name, entity: name });
+    }
+  }
+  return out;
+}
+
+/**
+ * How much worse the shipped selection is than the best possible pick of the
+ * same size, against this offer's Block B requirements. 0 = optimal.
+ *
+ * Normalised by the oracle's total so offers with weak requirement overlap do
+ * not dominate the mean — the question is "did it pick well *here*", not "is
+ * this a good offer".
+ *
+ * @param {{text:string}[]} atoms         every selectable cv.md atom
+ * @param {number[][]} atomVecs
+ * @param {number[][]} reqVecs            Block B requirement vectors
+ * @param {Set<number>} shippedIdx        indices of the atoms that reached the CV
+ */
+export function selectionRegret(atoms, atomVecs, reqVecs, shippedIdx) {
+  if (!reqVecs.length || !shippedIdx.size) return null;
+  // An atom's worth is its best match against any single requirement — a bullet
+  // that nails one requirement earns its slot even if it is irrelevant to the rest.
+  const score = atomVecs.map(v => (v ? Math.max(...reqVecs.map(r => cosine(v, r))) : 0));
+  const k = shippedIdx.size;
+  const oracle = [...score].sort((a, b) => b - a).slice(0, k).reduce((a, b) => a + b, 0);
+  const got = [...shippedIdx].reduce((a, i) => a + score[i], 0);
+  if (oracle <= 0) return null;
+  return Math.max(0, (oracle - got) / oracle);
+}
+
+/**
+ * Which `cv.md` atoms a set of output bullets came from, by token overlap.
+ * Phase 3 rewrites wording, so the mapping is fuzzy by nature; a floor keeps a
+ * fully-invented bullet from being credited to whichever atom it least resembles.
+ */
+export function shippedAtomIndices(outputBullets, atoms, floor = 0.25) {
+  const idx = new Set();
+  for (const b of outputBullets) {
+    let best = -1, bestScore = floor;
+    atoms.forEach((a, i) => {
+      const s = overlap(b, a.text);
+      if (s > bestScore) { bestScore = s; best = i; }
+    });
+    if (best >= 0) idx.add(best);
+  }
+  return idx;
+}
+
+/**
+ * Attach selection_regret and the two summary alignments to a metrics object.
+ * Split from metricsFor so the text-only metrics stay runnable with no Ollama.
+ */
+async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPath = resolve(PROJECT, 'cv.md'), reportsFor = null } = {}) {
+  const cvText = readFileSync(cvPath, 'utf8');
+  const atoms = selectableAtoms(cvText);
+  // cv_fit is measured against the CV's *evidence*, not the whole file — the
+  // contact header and education boilerplate would drag every offer's cosine
+  // toward the same constant and flatten the metric.
+  const cvBody = atoms.map(a => a.text).join('\n');
+
+  const texts = [cvBody, ...atoms.map(a => a.text)];
+  for (const r of m.rows) { texts.push(r.summary, r.jdText); for (const q of (r.reqs || [])) texts.push(q); }
+  const vecs = await embedCached(texts.filter(Boolean), ollamaUrl);
+  const byText = new Map();
+  texts.filter(Boolean).forEach((t, i) => byText.set(t, vecs[i]));
+  const V = t => (t ? byText.get(t) : null);
+
+  const atomVecs = atoms.map(a => V(a.text));
+  const cvVec = V(cvBody);
+
+  for (const r of m.rows) {
+    const sv = V(r.summary), jv = V(r.jdText);
+    r.summary_jd_fit = sv && jv ? cosine(sv, jv) : 0;
+    r.summary_cv_fit = sv && cvVec ? cosine(sv, cvVec) : 0;
+    const reqVecs = (r.reqs || []).map(q => V(q)).filter(Boolean);
+    r.selection_regret = selectionRegret(atoms, atomVecs, reqVecs, shippedAtomIndices(r.outBullets || [], atoms));
+  }
+
+  const n = m.rows.length || 1;
+  const mean = k => m.rows.reduce((a, r) => a + (r[k] || 0), 0) / n;
+  const scored = m.rows.filter(r => r.selection_regret !== null && r.selection_regret !== undefined);
+  return {
+    ...m,
+    summary_jd_fit: +mean('summary_jd_fit').toFixed(3),
+    summary_cv_fit: +mean('summary_cv_fit').toFixed(3),
+    selection_regret: scored.length
+      ? +(scored.reduce((a, r) => a + r.selection_regret, 0) / scored.length).toFixed(3)
+      : null,
+    selection_regret_n: scored.length,
+  };
+}
+
+/** All eight metrics. `--no-embed` keeps the four text-only ones runnable with Ollama down. */
+async function allMetrics(label, noEmbed = false, keep = null) {
+  const m = metricsFor(label, keep ? { keep } : {});
+  return noEmbed ? m : withEmbedMetrics(m);
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -278,7 +582,9 @@ if (!isMain) {
   // imported: expose the helpers, run nothing
 } else if (cmd === 'sample') {
   const n = parseInt(String(flag('n', '24')), 10);
-  const s = buildSample(n);
+  // Tailoring only ever runs above the Phase 3 threshold, so a sample spanning
+  // 1.0–5.0 spent most of its budget on offers that would never be applied to.
+  const s = buildSample(n, {}, parseFloat(String(flag('min-score', '3.5'))));
   mkdirSync(BENCH, { recursive: true });
   writeFileSync(SAMPLE,
     'id\treport_num\treport\tjd\tcompany\trole\tscore\n' +
@@ -294,25 +600,41 @@ if (!isMain) {
     temperature: parseFloat(String(flag('temperature', '0'))),
     ollamaUrl: String(flag('ollama-url', 'http://localhost:11434')),
     model: String(flag('model', 'snipe-cv')),
+    limit: parseInt(String(flag('limit', '0')), 10),
   }), null, 2));
 } else if (cmd === 'metrics') {
-  const m = metricsFor(positional[0]);
+  const m = await allMetrics(positional[0], rest.includes('--no-embed'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)}  ${r.companies}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'compare') {
   const [a, b] = positional;
-  const A = metricsFor(a), B = metricsFor(b);
-  const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct', 'example_copy_pct', 'grounding', 'mean_bullets'];
+  const noEmbed = rest.includes('--no-embed');
+  let A = await allMetrics(a, noEmbed), B = await allMetrics(b, noEmbed);
+  // Compare only the offers BOTH runs produced. A --limit run holds a prefix of
+  // the sample, so without this the means are taken over different offer sets
+  // and the "delta" is mostly the difference between those sets, not the change.
+  const common = new Set(A.rows.map(r => r.dir).filter(d => B.rows.some(r => r.dir === d)));
+  if (common.size !== A.rows.length || common.size !== B.rows.length) {
+    console.log(`paired on ${common.size} offers common to both runs `
+      + `(${a}: ${A.rows.length}, ${b}: ${B.rows.length})\n`);
+    A = await allMetrics(a, noEmbed, common);
+    B = await allMetrics(b, noEmbed, common);
+  }
+  const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
+                'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
+                'product_fab', 'product_fab_pct', 'ats_coverage',
+                'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets'];
   const pad = (s, w) => String(s).padEnd(w);
-  console.log(`${pad('metric', 18)}${pad(a, 14)}${pad(b, 14)}delta`);
-  console.log('-'.repeat(56));
+  const w = Math.max(14, a.length + 2, b.length + 2);
+  console.log(`${pad('metric', 18)}${pad(a, w)}${pad(b, w)}delta`);
+  console.log('-'.repeat(18 + 2 * w + 7));
   for (const k of keys) {
     const d = typeof A[k] === 'number' && typeof B[k] === 'number' ? (B[k] - A[k]).toFixed(3) : '';
-    console.log(`${pad(k, 18)}${pad(A[k], 14)}${pad(B[k], 14)}${d}`);
+    console.log(`${pad(k, 18)}${pad(A[k], w)}${pad(B[k], w)}${d}`);
   }
 } else {
-  console.log('usage: sample --n 24 | run <label> [--temperature 0] | metrics <label> [--rows] | compare <a> <b>');
+  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] | metrics <label> [--rows] [--no-embed] | compare <a> <b> [--no-embed]');
 }
 
-export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles };
+export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles, withEmbedMetrics, allMetrics };

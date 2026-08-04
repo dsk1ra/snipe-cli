@@ -31,9 +31,28 @@ REPORTS_DIR="$PROJECT_DIR/reports"
 APPLICATIONS_FILE="$PROJECT_DIR/data/applications.md"
 LOCK_FILE="$BATCH_DIR/local-runner.pid"
 STATE_LOCK_DIR="$BATCH_DIR/.local-state.lock"
+# Every Ollama call appends its own durations here (batch/timing.mjs). Kept on by
+# default: the 5-minute-per-JD budget is only enforceable if it is measured, and
+# an append per model call costs nothing. Override to redirect, set empty to mute.
+export SNIPE_TIMING="${SNIPE_TIMING-$BATCH_DIR/timings.tsv}"
 STATE_LOCK_PID_FILE="$STATE_LOCK_DIR/pid"
 STATE_LOCK_TIMEOUT_SECONDS=30
 MAIN_PID="${BASHPID:-$$}"
+
+# Wall clock for a whole phase — Ollama's durations miss JD fetching, chromium
+# and the shell, and the budget is measured on the wall, not on the GPU. The
+# `|| rc=$?` matters: under `set -e` a bare failing call aborts before the row is
+# written, which loses the timing for exactly the runs worth investigating.
+time_phase() {
+  local name="$1"; shift
+  local t0=$SECONDS rc=0
+  "$@" || rc=$?
+  local dt=$((SECONDS - t0))
+  [[ -n "$SNIPE_TIMING" ]] && printf '%s\t-\t%s\twall\t%s\t0\t0\t0\t0\t0\twall\t-\n' \
+    "$(date -Is)" "$name" "$dt" >> "$SNIPE_TIMING"
+  echo "  ⏱  $name: ${dt}s"
+  return $rc
+}
 
 # Defaults
 PARALLEL_SCORE=1
@@ -482,7 +501,7 @@ score_offer() {
   if jq -e '.status == "unavailable"' "$score_file" >/dev/null 2>&1; then
     local err; err=$(jq -r '.error' "$score_file")
     update_state "$id" "$url" "unavailable" "-" "-" "-" "-" "-" "$err" "0"
-    echo "    ⊘ Unavailable: $err"
+    echo "    - Unavailable: $err"
     return 0
   fi
 
@@ -901,7 +920,7 @@ main() {
         if [[ "$p1_status" == "score_failed" && "$RETRY_FAILED" != "true" ]]; then
           local retries; retries=$(get_field "$id" "retries"); retries=${retries:-0}
           if (( retries >= MAX_RETRIES )); then
-            echo "  ⊘  #$id skipped (score_failed, $retries/$MAX_RETRIES retries exhausted)"
+            echo "  -  #$id skipped (score_failed, $retries/$MAX_RETRIES retries exhausted)"
             continue
           fi
         fi
@@ -923,7 +942,7 @@ main() {
   # ── Phase 1 ──────────────────────────────────────────────────────────────────
 
   if [[ "$SKIP_PHASE1" == "false" && ${#phase1_offers[@]} -gt 0 ]]; then
-    run_phase1 "${phase1_offers[@]}"
+    time_phase phase1-wall run_phase1 "${phase1_offers[@]}"
   elif [[ "$SKIP_PHASE1" == "true" ]]; then
     echo ""; echo "=== Phase 1 skipped (--skip-phase1) ==="
   else
@@ -998,7 +1017,7 @@ main() {
     done < "$INPUT_FILE"
 
     if [[ ${#phase2_entries[@]} -gt 0 ]]; then
-      run_phase2 "${phase2_entries[@]}"
+      time_phase phase2-wall run_phase2 "${phase2_entries[@]}"
     else
       echo ""; echo "=== Phase 2: no offers to evaluate ==="
     fi
@@ -1050,7 +1069,7 @@ main() {
     done < "$INPUT_FILE"
 
     if [[ ${#phase3_entries[@]} -gt 0 ]]; then
-      run_phase3 "${phase3_entries[@]}"
+      time_phase phase3-wall run_phase3 "${phase3_entries[@]}"
     else
       echo ""; echo "=== Phase 3: no offers above threshold $THRESHOLD ==="
     fi

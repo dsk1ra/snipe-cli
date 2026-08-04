@@ -187,8 +187,8 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 | **Tab / Shift-Tab** | Cycle input ↔ ▶ ↔ list |
 | **Enter** | Advance the JD → URL → Add form (enqueues); on a focused row action, fire it |
 | **o** | Open the result folder / report |
-| **a** | Mark the selected row **applied ✉** |
-| **x** | Mark the selected row **skip ⊘** (mutually exclusive with applied) |
+| **a** | Mark the selected row **applied `>`** |
+| **x** | Mark the selected row **skip `-`** (mutually exclusive with applied) |
 | **/** | Start a slash command |
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |
