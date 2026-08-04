@@ -280,7 +280,7 @@ async function drive(...keys) {
       pass('"a" marks the evaluated row applied and writes batch/applied.tsv');
     } else fail('"a" did not write an applied sidecar for the evaluated row');
 
-    // 'x' is mutually exclusive with applied — marking skip clears the ✉.
+    // 'x' is mutually exclusive with applied — marking skip clears the > mark.
     await drive(...TO_DONE, 'x');
     const skipped = join(HOME, 'batch/skipped.tsv');
     if (existsSync(skipped) && readFileSync(skipped, 'utf8').includes(IDS.done)) {
