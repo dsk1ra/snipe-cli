@@ -2,6 +2,7 @@
 // scripts themselves. Everything here runs in-process with no model, browser or
 // network, so these are the assertions that pin exact numbers; the end-to-end
 // suites only check that the wiring holds.
+import { readFileSync } from 'fs';
 import { pass, fail, ROOT, join, pathToFileURL } from './harness.mjs';
 
 const eq = (actual, expected, label) =>
@@ -216,6 +217,9 @@ try {
 // here invalidates every comparison rather than failing loudly.
 try {
   const h = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+  // The product vocabulary lives with the pipeline guard that enforces it,
+  // not with the bench that only measures it.
+  const g = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
 
   // numsOf: what counts as a "number the CV must contain"
   deepEq([...h.numsOf('grew from 80 at launch to 170')], ['80', '170'],
@@ -243,6 +247,71 @@ try {
   eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
   eq([...ex].some(s => s.includes('membership platform')), true,
     'exampleShingles covers the worked-example experience bullets');
+  // The detector must not be definable purely by the live prompt: deleting the
+  // worked example would then zero example_copy_pct by construction and score a
+  // win the model never earned. The snapshot is what keeps the question honest.
+  const snapOnly = h.exampleShingles.length === 0 && (() => {
+    const fixture = JSON.parse(readFileSync(join(ROOT, 'batch/bench/example-bullets.json'), 'utf8'));
+    return fixture.length > 0 && fixture.every(b => typeof b === 'string');
+  })();
+  eq(snapOnly, true,
+    'a committed snapshot of the worked example exists, so the copy detector survives its deletion');
+
+  // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
+  const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
+  deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),
+    ['gcp', 'kotlin', 'terraform'],
+    'productFab reports every named product the CV never mentions');
+  deepEq(g.productFab('Built Rust services on AWS backed by PostgreSQL', cvMd), [],
+    'productFab stays silent when every product is in the CV');
+  deepEq(g.productFab('Owned distributed low-latency event-driven architecture', cvMd), [],
+    'productFab ignores capability phrases — those are the tier that stays free');
+  deepEq(g.productFab('Shipped AZURE and Angular work', cvMd), ['azure', 'angular'],
+    'productFab is case-insensitive, so shouting a fabrication does not hide it');
+  // Substring safety: "ray" must not fire inside "array", "sap" inside "sapling".
+  deepEq(g.productFab('Optimised an array of sapling growth models', cvMd), [],
+    'productFab matches whole phrases, not substrings of unrelated words');
+  // Multi-word products have to survive the normaliser that strips punctuation.
+  deepEq(g.productFab('Ran pipelines on Google Cloud and Power BI', cvMd),
+    ['google cloud', 'power bi'],
+    'productFab catches multi-word product names');
+
+  // ── ats_coverage: scored against the supportable subset, so it cannot be gamed ──
+  const jd = 'We need Kubernetes and PostgreSQL and GraphQL and Elixir experience';
+  const cvAts = 'Ran Kubernetes clusters against PostgreSQL with a GraphQL gateway';
+  const full = h.atsCoverage(jd, cvAts, 'Kubernetes PostgreSQL GraphQL delivery');
+  eq(full.supportable, 3, 'only the three terms the CV supports are scorable — Elixir is not');
+  eq(full.coverage, 1, 'covering every supportable term scores 1.0');
+  const half = h.atsCoverage(jd, cvAts, 'Kubernetes only');
+  eq(+half.coverage.toFixed(3), 0.333, 'coverage is the fraction of supportable terms reached');
+  eq(h.atsCoverage(jd, cvAts, 'Kubernetes PostgreSQL GraphQL Elixir Elixir').coverage, 1,
+    'stuffing an unsupportable term cannot push coverage above the CV\'s honest ceiling');
+
+  // ── selection_regret: 0 when the shipped picks are the best available ──
+  const atoms = [{ text: 'a' }, { text: 'b' }, { text: 'c' }];
+  const V = { a: [1, 0], b: [0.6, 0.8], c: [0, 1] };
+  const av = [V.a, V.b, V.c];
+  const reqs = [[1, 0]];  // requirement points straight at atom "a"
+  eq(h.selectionRegret(atoms, av, reqs, new Set([0])), 0,
+    'picking the single best-matching atom is zero regret');
+  eq(h.selectionRegret(atoms, av, reqs, new Set([2])) > 0.9, true,
+    'picking the worst atom over the best is near-total regret');
+  eq(h.selectionRegret(atoms, av, reqs, new Set([0, 1])), 0,
+    'regret is against the best pick OF THE SAME SIZE, not against the single best');
+  eq(h.selectionRegret(atoms, av, [], new Set([0])), null,
+    'no requirements means no opinion, not a perfect score');
+  eq(h.selectionRegret(atoms, av, reqs, new Set()), null,
+    'shipping nothing is unscoreable rather than optimal');
+
+  // shippedAtomIndices: maps rewritten output back to the atom it came from
+  const srcAtoms = [
+    { text: 'Migrated payment handling to Stripe removing card data from databases' },
+    { text: 'Taught programming to 800 undergraduate students across two languages' },
+  ];
+  deepEq([...h.shippedAtomIndices(['Moved payment handling onto Stripe, removing card data'], srcAtoms)], [0],
+    'a reworded bullet is credited to the atom it derives from');
+  deepEq([...h.shippedAtomIndices(['Invented an unrelated quantum blockchain claim'], srcAtoms)], [],
+    'a bullet resembling no atom is credited to none, rather than to the least-bad match');
 } catch (e) {
   fail(`tailor-harness metric unit tests crashed: ${e.message}`);
 }
@@ -288,6 +357,19 @@ try {
     'backfilled bullets are the real CV text, not invented');
   deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
 
+  // Regression (report 146): the model named the right employer but pasted the
+  // OTHER role's bullets under it. A name hit scored 1+overlap, which cleared
+  // the 0.35 floor on the name alone, so the mislabel was rubber-stamped and
+  // the real bullets were lost. Content decides provenance now.
+  const mislabelled = { company: 'Northgate College',
+    bullets: ['Led a two-developer team building a subscription platform, MVP in 4 weeks'] };
+  const fixed = reconcileExperience([mislabelled, acme], cv);
+  eq(fixed[0].bullets[0].includes('800+ undergraduates'), true,
+    'a bullet belonging to another role is rejected despite the right company name');
+  eq(fixed.some(e => e.bullets.some(b => /subscription platform/.test(b) && e.company === 'Northgate College')), false,
+    "the other role's bullet never appears under the wrong employer");
+  deepEq(fixed[1].bullets, acme.bullets, 'the correctly-labelled role still keeps its rewrite');
+
   // Degenerate inputs must not throw or silently empty the section.
   deepEq(reconcileExperience([], cv).map(e => e.company),
     ['Northgate College', 'Acme SaaS'],
@@ -296,6 +378,26 @@ try {
     'a non-array is returned untouched for the caller to reject');
   deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
     'a CV with no Experience section leaves the model output alone');
+
+  // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"
+  // also occurs as "2+ hours" in an unrelated bullet, so the token is allowed —
+  // the claim is what is invented, not the digit.
+  const { stripUnsupportedTenure } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const tenureCv = cv + '\n- Cut configuration time from 2+ hours to 30 minutes';
+  eq(stripUnsupportedTenure('Engineer with 2+ years of hands-on experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'an unsupported tenure claim is stripped without mangling the sentence');
+  eq(stripUnsupportedTenure('Engineer with 5 years in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'the bare "with N years" form is stripped too');
+  eq(stripUnsupportedTenure('ML-DSA adds ~200 TB over 5 years for a log pipeline.', tenureCv),
+    'ML-DSA adds ~200 TB over 5 years for a log pipeline.',
+    'a duration in a projection is not a tenure claim and survives');
+  eq(stripUnsupportedTenure('Engineer with 6 years of experience.', 'Engineer with 6 years of experience shipping things.'),
+    'Engineer with 6 years of experience.',
+    'a tenure the CV does state is left alone');
+  eq(stripUnsupportedTenure(/** @type {any} */ (null), tenureCv), null,
+    'a non-string summary is returned untouched');
 } catch (e) {
   fail(`experience reconciliation unit tests crashed: ${e.message}`);
 }
@@ -336,6 +438,67 @@ try {
     ['Invented 999+ things.'],
     'an employer absent from the CV has no source to revert to and is left alone');
   eq(Array.isArray(verifyBulletNumbers(/** @type {any} */ (null), cv)), false,
+    'a non-array is returned untouched');
+
+  // The mirror guard: figures the rewrite DELETED. Shares the same revert, so
+  // it inherits the source-matching and the collision handling above.
+  const { verifyBulletFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const figs = bs => verifyBulletFigures([{ company: 'Acme SaaS', bullets: bs }], cv)[0].bullets;
+
+  eq(figs(['Automated billing with Stripe.'])[0].includes('80%'), true,
+    'a rewrite truncated past its figure reverts to the CV line that stated it');
+  deepEq(figs(['Cut onboarding by over 80% with Stripe subscriptions.']),
+    ['Cut onboarding by over 80% with Stripe subscriptions.'],
+    'a rewrite keeping every source figure keeps its tailoring');
+  eq(figs(['Led a team, MVP in 4 weeks.'])[0].includes('80 at launch to 170'), true,
+    'keeping one figure but dropping the rest still reverts');
+  deepEq(verifyBulletFigures([{ company: 'Nowhere Ltd', bullets: ['Anything at all.'] }], cv)[0].bullets,
+    ['Anything at all.'],
+    'no CV source means nothing to compare against, so the bullet is left alone');
+
+  // Cross-entry theft: a figure that is real, but belongs to a different entry.
+  // The allow-set is the employer's own entry, not the whole document.
+  const twoJobs = [
+    '## Experience', '',
+    '### Teaching Assistant', '**Northgate College** — Edinburgh | Sep 2025 – Present', '',
+    '- Cut configuration time to 30 minutes per student', '',
+    '### PM / Software Engineer', '**Acme SaaS** — Edinburgh | Oct 2024 – Sep 2025', '',
+    '- Grew paying subscribers from 80 at launch to 170',
+  ].join('\n');
+  const stolen = verifyBulletNumbers(
+    [{ company: 'Acme SaaS', bullets: ['Cut configuration time to 30 minutes for 170 members.'] }], twoJobs);
+  eq(stolen[0].bullets[0].includes('80 at launch'), true,
+    'a figure belonging to another employer is unsupported here and reverts');
+
+  // ── project figures, scoped to the project's own CV entry ──
+  const { verifyProjectFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const projCv = [
+    '## Projects', '',
+    '### Re:Link — Remote Access', '**Personal** | Rust, Flutter | Jan 2025 – Jun 2025', '',
+    '- Designed a blind rendezvous protocol with AES-256-GCM encryption', '',
+    '### Zero Trust Dashboard', '**Academic** | Django | Sep 2024 – Dec 2024', '',
+    '- Built an ingestion pipeline achieving sub-500ms dashboard load times',
+  ].join('\n');
+  const descOf = (name, description) =>
+    verifyProjectFigures([{ name, description }], projCv)[0].description;
+
+  eq(descOf('Re:Link — Remote Access',
+    'Built a P2P remote access system with AES-256-GCM, serving 970%+ revenue growth for a client.')
+    .includes('970'), false,
+    'a figure absent from the whole CV is stripped from a project blurb');
+  eq(descOf('Re:Link — Remote Access',
+    'Built a P2P remote access system with AES-256-GCM, achieving sub-500ms load times.')
+    .includes('500'), false,
+    "another project's real figure is stripped — the number is real, the owner is not");
+  eq(descOf('Zero Trust Dashboard', 'Built an ingestion pipeline achieving sub-500ms load times.'),
+    'Built an ingestion pipeline achieving sub-500ms load times.',
+    'the project that actually owns the figure keeps it');
+  eq(descOf('Re:Link — Remote Access', 'Built a P2P remote access system with AES-256-GCM.')
+    .includes('256'), true,
+    'a figure stated in the project\'s own entry survives');
+  eq(descOf('Nothing On The CV', 'Claims 999% of everything.').includes('999'), true,
+    'a project that resolves to no CV entry is left alone rather than gutted');
+  deepEq(verifyProjectFigures(/** @type {any} */ (null), projCv), null,
     'a non-array is returned untouched');
 } catch (e) {
   fail(`bullet-number verification unit tests crashed: ${e.message}`);
@@ -380,6 +543,20 @@ try {
     eq(good.all_roles_pct, 1, 'an offer keeping every role counts toward all_roles_pct');
     eq(good.invented_roles, 0, 'no entry is unmatched when both name real employers');
     eq(good.metric_fab, 0, 'figures present in the CV are not counted as fabricated');
+    eq(good.num_retention, 1, 'a rewrite carrying every source figure retains them all');
+    eq(good.num_lost, 0, 'nothing is reported lost when nothing was dropped');
+
+    // Truncation: each bullet keeps its first clause and drops the outcome. Every
+    // other metric reads clean, which is exactly why this one had to exist.
+    write('truncated', 'a', [
+      { company: 'Northgate College', bullets: ['Wrote setup guides'] },
+      { company: 'Acme SaaS', bullets: ['Automated billing'] },
+    ]);
+    const trunc = h.metricsFor('truncated', { benchRoot, cvPath });
+    eq(trunc.role_retention, 1, 'truncation keeps both roles, so role_retention misses it');
+    eq(trunc.metric_fab, 0, 'truncation invents no figures, so metric_fab misses it too');
+    eq(trunc.num_retention, 0, 'dropping 30 minutes and 80% scores zero retention');
+    eq(trunc.num_lost, 2, 'both deleted figures are counted');
 
     // Degenerate run: one role dropped, one employer duplicated, invented figure.
     write('bad', 'a', [

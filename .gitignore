@@ -48,7 +48,12 @@ portals.yml
 batch/*.local.md
 
 # Benchmark runs + labels (personal CV/JD evaluation data — the harness ships, the runs don't)
-batch/bench/
+# Bench scratch is ignored, with one exception: example_copy_pct (tailor-harness.mjs)
+# and test/units.test.mjs both read example-bullets.json, and the metric reads 0 by
+# construction without it — the worked example it snapshots is gone from the prompt.
+# A directory exclusion cannot be negated per-file, hence the glob.
+batch/bench/*
+!batch/bench/example-bullets.json
 batch/labels.tsv
 batch/labels/
 batch/labels.xlsx
@@ -78,3 +83,9 @@ reports/*-RESERVED.md
 
 # Planning (local scratchpad)
 plan/
+
+# Generated CV artefacts and the PII-bearing gold-set fixtures — local only.
+# Regenerate: goldset.mjs sheet / export-shots (see batch/bench/README.md)
+cv.pdf
+batch/judge-shots.json
+batch/timings.tsv

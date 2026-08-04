@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
+import { groundSkillItems } from './text-utils.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -409,7 +410,7 @@ function buildCertsHtml(certs) {
 // items so a category name alone still renders correctly. Anything the LLM picks
 // is matched back to a real CV category (so the canonical name is used and
 // invented categories are dropped).
-function resolveSkills(allRows, content, maxCount) {
+function resolveSkills(allRows, content, maxCount, cvText = '') {
   const skillsField = Array.isArray(content?.skills) ? content.skills : null;
   const legacyNames = Array.isArray(content?.selected_skills) ? content.selected_skills : null;
 
@@ -421,7 +422,9 @@ function resolveSkills(allRows, content, maxCount) {
       if (!name) continue;
       const cvRow = allRows.find(r => r.category.toLowerCase().includes(name.toLowerCase().split(' ')[0]));
       if (!cvRow) continue; // drop categories not in the CV
-      const curated = (typeof s === 'object' && s?.items && s.items.trim()) ? s.items.trim() : cvRow.items;
+      const curated = (typeof s === 'object' && s?.items && s.items.trim())
+        ? groundSkillItems(s.items.trim(), cvRow.items, cvText)
+        : cvRow.items;
       if (!resolved.some(r => r.category === cvRow.category)) {
         resolved.push({ category: cvRow.category, items: curated });
       }
@@ -430,6 +433,14 @@ function resolveSkills(allRows, content, maxCount) {
     resolved = legacyNames
       .map(name => allRows.find(r => r.category.toLowerCase().includes(name.toLowerCase().split(' ')[0])))
       .filter(Boolean);
+  }
+
+  // Languages is not the model's to drop. It omitted it from the Neo4j CV whose
+  // first requirement was "strong TypeScript / JavaScript" — leaving the shipped
+  // skills block with no language row at all, the one row every ATS scans.
+  const langRow = allRows.find(r => /^languages/i.test(r.category));
+  if (langRow && !resolved.some(r => r.category === langRow.category)) {
+    resolved.unshift(langRow);
   }
 
   // Keep the model's curation as priority. When it under-delivers, PAD with the
@@ -498,7 +509,7 @@ const replacements = {
   '{{SECTION_CERTIFICATIONS}}':'Certifications',
   '{{CERTIFICATIONS}}':        buildCertsHtml(cvCerts),
   '{{SECTION_SKILLS}}':        'Skills',
-  '{{SKILLS}}':                buildSkillsHtml(resolveSkills(cvSkills, content, maxSkills)),
+  '{{SKILLS}}':                buildSkillsHtml(resolveSkills(cvSkills, content, maxSkills, cvText)),
 };
 
 let html = template;

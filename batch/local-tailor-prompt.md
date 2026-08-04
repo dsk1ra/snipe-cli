@@ -78,27 +78,13 @@ The CV below is already pre-filtered for this JD — experience and projects are
 
 {{JD_FULL}}
 
-## Example of a GOOD response (shape + length to imitate — do NOT copy its content; use the actual CV/JD above)
+## Shape
 
-{
-  "summary": "Backend engineer who builds secure, high-performance distributed systems in Go, Java, and TypeScript. Shipped a live subscription platform serving thousands of users as technical lead, designed an event-driven microservices system with the saga pattern, and benchmarked cryptographic signatures across tens of thousands of runs. Strong in API design, observability, and zero-trust security; targeting backend engineering roles.",
-  "competencies": ["Microservices", "Event-Driven Architecture", "Saga Pattern", "REST APIs", "PostgreSQL", "Distributed Tracing", "Go"],
-  "projects": [
-    { "name": "Order Service", "description": "Built an event-driven microservices system spanning 5+ domain services (inventory, orders, fulfilment, finance) with the saga pattern over a message broker. Added a resilience layer with circuit breakers (3-retry, 30s timeout) and distributed tracing for end-to-end request monitoring." },
-    { "name": "Secure Sync", "description": "Engineered a privacy-preserving P2P remote-access system with full client-side AES-256-GCM end-to-end encryption and three-key HMAC-SHA256 derivation. The blind rendezvous server stores only ephemeral encrypted state, enforcing a nothing-stored model over WebRTC with STUN/TURN traversal." }
-  ],
-  "education_modules": ["Software Architecture", "Concurrent and Parallel Systems", "Advanced Database Systems"],
-  "skills": [
-    { "category": "Backend & Distributed Systems", "items": "Microservices, Event-Driven Architecture, Saga Pattern, RabbitMQ, gRPC, REST APIs" },
-    { "category": "Databases & Caching", "items": "PostgreSQL, Redis, MongoDB" }
-  ],
-  "experience": [
-    { "company": "Acme SaaS", "bullets": ["Led full-stack delivery of a membership platform serving thousands of subscribers, shipping the MVP in 4 weeks.", "Built the Node.js and PostgreSQL backend with OAuth 2.0 and webhook billing, cutting signup time by 60%.", "Built the admin console with drag-and-drop newsletter builder, audience segmentation, and RBAC, backed by Redis and 90%+ test coverage."] },
-    { "company": "Northgate College", "bullets": ["Taught programming to 600+ undergraduates across two languages, adapting to mixed technical backgrounds.", "Wrote the environment setup guides that cut configuration time from 2 hours to 30 minutes per student."] }
-  ]
-}
-
-(The example summary lands in the 50–70 range — yours must too. The example shows 2 projects/skills for brevity; produce 3–4 projects and 5–6 skill categories. The example shows 2 companies because that CV had 2 — you must output every company listed under `### experience` above, no more and no fewer. The names above are placeholders — use the actual CV/JD content, not these.)
+The JSON schema below is enforced by constrained decoding — the shape is
+guaranteed, so it does not need demonstrating. Fill every field from the CV
+and JD above. The summary must land in 50-70 words; produce 3-4 projects and
+5-6 skill categories; output every company listed under `### experience`, no
+more and no fewer, using their real names from the CV.
 
 ## Output (ONLY this JSON, nothing else)
 
