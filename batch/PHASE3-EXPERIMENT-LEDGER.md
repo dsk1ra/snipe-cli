@@ -299,3 +299,76 @@ re-checked against it.
   generated under an older `cv.md`. Constant across V0–V5 so every delta holds,
   but the absolute `grounding`/`metric_fab` figures are measured against slightly
   aged tailoring briefs.
+
+## V7 — content floors (bullets, projects, description length)
+
+Every content guard in Phase 3 was a ceiling: the schema capped counts,
+`clampContent` sliced, the density ladder trimmed. Nothing had a floor, so the
+model's under-delivery went straight to the page. Twelve consecutive production
+CVs shipped 2–6 experience bullets against the CV's 9, 3 projects on every single
+run, and project descriptions with a median of 17 words against a prompt asking
+for 35–55 — **0 of 36 in band**. Page 2 of the rendered PDF ran 5–15 lines of ~50.
+
+Four floors, all derived from the CV handed to the model rather than hardcoded
+(demanding 3 bullets from a 1-bullet role is an instruction to invent):
+
+| change | where |
+|---|---|
+| `minItems` on `experience[].bullets` and `projects` | `contentFloors()`, `local-pdf-offer.mjs` |
+| top a part-filled role back up from its CV bullets | `topUpBullets()`, `cv-select.mjs` |
+| pad a short description from that project's CV clauses | `padProjectDescriptions()`, `cv-select.mjs` |
+| honours classification no longer split off the degree | `buildEducationHtml()`, `fill-cv-template.mjs` |
+
+12 offers, temperature 0, paired against a run of `HEAD` made the same day.
+
+| metric | baseline | V7 | delta | floor | verdict |
+|---|---|---|---|---|---|
+| `ats_coverage` | 0.507 | 0.652 | **+0.145** | ±0.002 | real, 70× |
+| `mean_bullets` | 4.92 | 8.00 | **+3.08** | ±0.120 | real |
+| `selection_regret` | 0.071 | 0.095 | +0.024 | ±0.001 | real, accepted (below) |
+| `grounding` | 0.960 | 0.981 | +0.021 | ±0.020 | **not claimable** |
+| `metric_fab`, `product_fab`, `invented_roles`, `num_lost` | 0 | 0 | 0 | 0 | held |
+| `role_retention`, `num_retention`, `all_roles_pct` | 1.000 | 1.000 | 0 | 0 | held |
+
+Structurally: bullets `2,2,4,4,5,6,6,6,6,6,6,6` → `8×12`; projects `3×12` →
+`4×12`; description median 16 → 48 words with 0 under the floor. Rendered page 2
+went 15 → 36–44 lines, still inside the 2-page cap.
+
+**`selection_regret` +0.024 is real and accepted, not a defect.** It is identical
+(0.095, 0.094, 0.095) across every treatment run despite the padding and project
+fixes, which is provable rather than argued: regret scores only
+`exp.flatMap(e => e.bullets)`. A per-role floor is deliberately not a
+globally-optimal pick — it spends slots guaranteeing every employer has substance,
+the same trade already made for whole roles by pinning `role_retention` at 1.
+
+### What the metrics could not see
+
+Four defects were caught only by reading output (rule 7), and no metric here moves
+on any of them:
+
+- a clause splitter breaking on a `;` **inside** a parenthetical, shipping
+  `"…(API gateway, hashing, and manifest-signing services."` — unbalanced bracket,
+  truncated mid-aside;
+- the length floor applied *before* `stripFabricatedProducts`, whose clause surgery
+  then cut descriptions back under it — the cause of every short description in
+  V7's first two runs. The floor is now asserted **last**, which is safe because
+  padded text is verbatim `cv.md` and passes both guards by construction;
+- `r.bullets.slice(0,2).join(' ')` in `remapProjectNames`' backfill welding two
+  sentences with no separator (`"…zero cloud LLM calls Cut fabricated job
+  requirements ~9x…"`). Pre-existing; raising `minProjects` to 4 made it frequent;
+- the model emitting a fragment (`"Built a high-performance."`) that padding then
+  cemented at the head of otherwise clean prose. A description whose opening clause
+  is under 6 words is now discarded and rebuilt from the CV.
+
+### Not fixed: the figure-conflation class
+
+`"serving 4 GitHub Actions CI pipelines"` — a real CV figure hung on a noun it does
+not measure. `verifyProjectFigures` cannot catch it: the figure *is* in the
+project's own entry, so it is a wrong verb, not a wrong number.
+
+Relaxing the prompt's `Each description MUST include at least one concrete metric`
+mandate — the thing that pressures the model to weld a figure into any sentence —
+**did not work**: 2/36 (5.6%) baseline → 3/48 (6.3%) after. Consistent with V4's
+finding that the prompt-side fix for a number problem measures zero effect. The
+relaxed wording was kept because it is more accurate guidance and costs nothing,
+but it is not a fix. A real one is deterministic or nothing.

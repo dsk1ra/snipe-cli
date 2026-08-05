@@ -360,7 +360,9 @@ function buildProjectsHtml(cvProjects, projectsField) {
   return chosen.map(({ cv, description }) => {
     const desc = description && description.trim()
       ? description.trim()
-      : cv.bullets.slice(0, 2).join(' ');
+      // Same weld as remapProjectNames' backfill had: joining two bullets with a
+      // bare space runs two sentences together with no separator.
+      : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. ');
     const techLine = [cv.tech, cv.period].filter(Boolean).join(' | ');
     return `
     <div class="project">
@@ -379,7 +381,12 @@ function buildProjectsHtml(cvProjects, projectsField) {
 function buildEducationHtml(eduEntries, selectedModules) {
   const sel = Array.isArray(selectedModules) && selectedModules.length > 0 ? selectedModules : null;
   return eduEntries.map(e => {
-    const degreeMain = e.degree.split('—')[0].trim();
+    // The degree line is "<Degree> — <Classification>"; splitting on the dash and
+    // keeping [0] threw the classification away, so "First Class Honours (80+
+    // average)" — the strongest single credential a recent graduate has — never
+    // reached the PDF. The header is a flex row that wraps, so keeping the whole
+    // line costs nothing but the width it needs.
+    const degreeMain = e.degree.replace(/\s*—\s*/g, ' — ').trim();
     const extra = sel
       ? e.extra.map(line => (/^key modules\s*:/i.test(line) ? `Key Modules: ${sel.join(', ')}` : line))
       : e.extra;
