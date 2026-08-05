@@ -451,6 +451,56 @@ try {
   deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
     'a CV with no Experience section leaves the model output alone');
 
+  // ── Summary fabrication guards ────────────────────────────────────────────
+  // One shipped summary carried three false claims at once and every metric read
+  // 0, because metric_fab only inspects experience bullets. The summary was the
+  // one surface with no figure, tenure-range or credential guard at all.
+  {
+    const { verifySummaryFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+    const { stripFabricatedCredentials, credentialFab } =
+      await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const scv = ['# Me', '', '## Experience', '', '### Dev', '**Acme** | 2024', '',
+      '- Grew paying subscribers from 80 at launch to 170 across 4 locations',
+      '- Tested at 3M+ simulated events', '',
+      '## Education', '', '**Northgate College**',
+      '**BEng (Hons) Software Engineering — First Class Honours** | 2022 – 2026'].join('\n');
+
+    // A figure the CV does not state — 170 members reported as "150+ users".
+    const figs = verifySummaryFigures(
+      'Engineer building secure systems. Delivered a platform serving 150+ users daily.', scv);
+    eq(/150\+/.test(figs), false, 'a summary figure the CV never states is stripped');
+    eq(/secure systems/.test(figs), true, 'and the clause that was fine survives');
+    eq(verifySummaryFigures('Tested at 3M+ simulated events.', scv).includes('3M+'), true,
+      'a figure the CV does state is kept');
+    // The real 170 with a "+" appended overstates it — the pattern the bullet
+    // guard already documents as a measured fabrication.
+    // The "+" is the lie, not the claim — deflate to the CV's figure and keep the
+    // sentence rather than deleting real evidence to remove one character.
+    eq(verifySummaryFigures('Grew a GDPR-compliant platform to 170+ paying users.', scv),
+      'Grew a GDPR-compliant platform to 170 paying users.',
+      'an inflating "+" is corrected to the CV figure, keeping the clause');
+    eq(/150\+/.test(verifySummaryFigures('Delivered a platform serving 150+ users.', scv)), false,
+      'a figure with no CV basis at all is still stripped, not deflated');
+    // A digit inside an identifier is a name, not a claim.
+    eq(verifySummaryFigures('Targeting L40 Engineer roles at scale.', scv),
+      'Targeting L40 Engineer roles at scale.',
+      'a job level like L40 is not mistaken for an invented figure');
+
+    // A credential the CV never claims. Napier is post-1992; the model inferred
+    // "Russell Group" from the city in the school's name.
+    deepEq(credentialFab('Russell Group graduate with First Class Honours.', scv), ['russell group'],
+      'an ungrounded credential is detected and a grounded one is not');
+    eq(credentialFab('First Class Honours graduate.', scv).length, 0,
+      'a credential the CV does state is never flagged');
+    eq(/Russell Group/i.test(stripFabricatedCredentials('Built systems. Russell Group graduate, strong fundamentals.', scv)),
+      false, 'the ungrounded credential clause is dropped');
+
+    // Clause surgery must not leave a sentence starting lowercase.
+    const rebuilt = stripFabricatedCredentials('Russell Group graduate, strong fundamentals.', scv);
+    eq(rebuilt === '' || /^[A-Z]/.test(rebuilt), true,
+      'a rebuilt sentence is re-capitalised after its first clause is dropped');
+  }
+
   // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"
   // also occurs as "2+ hours" in an unrelated bullet, so the token is allowed —
   // the claim is what is invented, not the digit.
@@ -459,6 +509,14 @@ try {
   eq(stripUnsupportedTenure('Engineer with 2+ years of hands-on experience in Rust.', tenureCv),
     'Engineer with experience in Rust.',
     'an unsupported tenure claim is stripped without mangling the sentence');
+  // A *range* — the shape the original pattern missed entirely, which is how
+  // "1-3 years of real production experience" (lifted from the posting) shipped.
+  eq(stripUnsupportedTenure('Engineer with 1-3 years of real production experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'a tenure range is stripped, not just a single value');
+  eq(stripUnsupportedTenure('Engineer with 2 to 4 years of experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'a written "N to M years" range is stripped too');
   eq(stripUnsupportedTenure('Engineer with 5 years in Rust.', tenureCv),
     'Engineer with experience in Rust.',
     'the bare "with N years" form is stripped too');

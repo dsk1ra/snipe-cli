@@ -372,3 +372,65 @@ mandate — the thing that pressures the model to weld a figure into any sentenc
 finding that the prompt-side fix for a number problem measures zero effect. The
 relaxed wording was kept because it is more accurate guidance and costs nothing,
 but it is not a fix. A real one is deterministic or nothing.
+
+## V8 — the summary had no fabrication guards at all
+
+Experience bullets have `verifyBulletNumbers` / `verifyBulletFigures` /
+`verifyBulletProducts`. Project blurbs have `verifyProjectFigures` and
+`stripFabricatedProducts`. The summary — the first block anyone reads — had a
+tenure strip that missed ranges, and nothing else. One shipped summary carried
+three false claims at once:
+
+> Full-Stack Engineer with **1-3 years of real production experience** … a live
+> subscription platform serving **150+ users** … **Russell Group graduate** with
+> First Class Honours
+
+`cv.md` states no tenure, says **170** paying members, and the university is
+post-1992 — the model inferred "Russell Group" from the city in its name. Every
+harness metric read 0 throughout, because `metric_fab` only inspects experience
+bullets. Measured across the corpus: **3 of 12 summaries carried a fabrication**,
+stable across four independent runs.
+
+| guard | catches |
+|---|---|
+| `verifySummaryFigures` (`cv-select.mjs`) | a figure `cv.md` does not state |
+| `TENURE` extended to ranges + multi-word qualifiers | `1-3 years`, `2 to 4 years` |
+| `stripFabricatedCredentials` (`summary-stage.mjs`) | an institution, degree or certification the CV never claims |
+| `stripFabricatedProducts` wired at the T2 site | the fallback path — T2's comment claimed the summary was product-guarded, but that only happened inside `generateSummary`, which is in a try/catch |
+
+**Result: 3/12 → 0/12**, verified on a fresh run. Nothing else moved:
+`grounding` 0.981 unchanged, `mean_bullets` 8.00, `selection_regret` 0.095,
+`ats_coverage` −0.003 (floor ±0.002).
+
+### Deflate before cutting
+
+The first version deleted any clause holding an unsupported figure, which cost
+real evidence: `"a GDPR-compliant membership platform with 170+ paying users"`
+is a true, CV-specific claim where only the `+` is false — the exact pattern
+`verifyBulletNumbers` measured on 3 of 24 offers. Correcting the figure in place
+instead recovered every lost word on 2 of the 3 repaired summaries (65w→65w,
+55w→55w) and, as a side effect, removed the one grammar artifact clause surgery
+had produced: the orphaned `"building secure,"` only existed because the clause
+was being deleted. Mean summary length ends at 59.6w against 60.9w before, and
+**0 of 12 fall under the 50-word floor**, so the boilerplate closer does not fire
+any more often than it already did.
+
+### `summary_cv_fit` moved against a correct change
+
+−0.023 before the deflate, −0.010 after, against a ±0.004 floor. It penalised
+removing `"…platform with 170+ paying users"` because that phrasing is *close to
+the CV* — a metric scoring CV-similarity necessarily prefers a near-miss
+falsehood to its absence. This is rule 7 from CLAUDE.md reproducing exactly:
+the summary metrics can be satisfied by output that is wrong. Recorded, not
+chased. The correct instrument is a summary-level fabrication count, which does
+not exist yet — `metric_fab` still reads only experience bullets, and reported a
+clean 0 through every run where a CV claimed Russell Group membership.
+
+### Two shared-code fixes this surfaced
+
+- `NUMERIC` now ignores digits preceded by a letter. `40` was being extracted
+  from **"L40 Engineer"** — Monzo's internal job level — and read as an invented
+  figure. The same false positive was live in the bullet and project guards.
+- `stripUnsupportedClauses` re-capitalises a rebuilt sentence; dropping a leading
+  clause had been shipping `"…across Python, React, and Next.js. strong
+  fundamentals,…"`. Affected the product guard equally.
