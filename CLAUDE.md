@@ -207,10 +207,32 @@ reload gets counted rather than guessed.
    historical archive whose calibration corpus grew underneath it (21→37→64→65
    offers over Jul 18–21), so it scores ~0.5 higher than the same code does today
    and silently invalidates any comparison against it.
-2. **Run at temperature 0.** Greedy decoding is byte-identical on this stack —
-   verified across 4 offers × 2 runs, evals *and* report prose. That makes the
-   noise floor 0 and a single run a valid A/B. At temp 0.1 the floor was 0.091 and
-   individual offers swung up to 2.1 points between identical runs.
+2. **Run at temperature 0** — but the noise floor is 0 only where it was measured.
+   Greedy decoding is byte-identical for **Phase 2**: verified across 4 offers × 2
+   runs, evals *and* report prose. At temp 0.1 that floor was 0.091 and individual
+   offers swung up to 2.1 points between identical runs.
+   **Phase 3's 7B tailor call is not byte-identical at temp 0** and never was in
+   that check — GPU batch/split variation flips a token regardless of temperature.
+   `PHASE3-EXPERIMENT-LEDGER.md` measured this directly (24-offer A/A: 12.5% of
+   offers vary; `grounding` ±0.020, `example_copy_pct` ±0.042, `mean_bullets`
+   ±0.120) and **is the authority** — this rule used to contradict it. A later
+   12-offer A/A adds floors for the metrics the ledger never floored:
+
+   | metric | floor | from |
+   |---|---|---|
+   | `ats_coverage` | ±0.002 | 12-offer A/A |
+   | `selection_regret` | ±0.001 | 12-offer A/A |
+   | `summary_cv_fit` | ±0.004 | 12-offer A/A |
+   | `summary_jd_fit` | ±0.016 | 12-offer A/A |
+   | `grounding` | **±0.020** | 24-offer ledger — use this, not the 12-offer 0.009 |
+   | `mean_bullets` | **±0.120** | 24-offer ledger |
+
+   Take the wider floor when two measurements disagree. This is not academic: the
+   content-floor change scored `grounding +0.021`, which reads as a win against the
+   12-offer floor and is **inside** the 24-offer one, so it is not claimable —
+   while `ats_coverage +0.145` clears its floor by 70×. Run the A/A whenever a
+   Phase 3 result rests on a small delta; two runs of the *same* label cost what
+   one A/B costs and are the only thing that says which deltas exist.
 3. **Know the resolution limit before believing a delta.** With 18 labels spanning
    3 distinct values, one label being off by ±1 moves Spearman rho by ~0.30. Any
    improvement smaller than that is indistinguishable from label noise, no matter

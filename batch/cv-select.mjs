@@ -327,9 +327,125 @@ export function remapProjectNames(projects, cvText, minProjects = 3) {
     if (out.length >= minProjects) break;
     if (used.has(r.name)) continue;
     used.add(r.name);
-    out.push({ name: r.name, description: r.bullets.slice(0, 2).join(' ') });
+    // One bullet, not two space-joined: `.join(' ')` welded two sentences into
+    // "…with zero cloud LLM calls Cut fabricated job requirements ~9x…", a
+    // run-on with no separator. padProjectDescriptions extends this to the
+    // length floor afterwards, with real punctuation between clauses.
+    out.push({ name: r.name, description: r.bullets[0] || '' });
   }
   return out;
+}
+
+/**
+ * Split a CV bullet at sentence/clause boundaries, ignoring the ones inside
+ * brackets. A plain `/(?<=[.;])\s+/` split shipped
+ * "Built a Rust microservice testbed (API gateway, hashing, and manifest-signing
+ * services." — the semicolon it broke on was inside the parenthetical, so the
+ * clause ended mid-aside with the bracket never closed. No harness metric parses
+ * sentences, so this was only ever going to be caught by reading the output.
+ * @param {string} s
+ * @returns {string[]}
+ */
+function splitClauses(s) {
+  const out = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    // Whitespace must follow, so "0.4 ms" and "e.g." are not boundaries.
+    else if ((ch === '.' || ch === ';') && depth === 0 && /\s/.test(s[i + 1] ?? ' ')) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
+}
+
+/**
+ * Pad a short project description from that project's own CV bullets.
+ *
+ * The prompt asks for two sentences and 35-55 words. Measured over twelve
+ * consecutive runs it got a median of 17 and **0 of 36 descriptions inside the
+ * band** — so this is not a wording problem, it is the missing floor again:
+ * nothing downstream ever checked, so nothing ever changed. Spending the repair
+ * retry on an instruction the model has ignored 36 times out of 36 buys a second
+ * 7B call and probably the same answer; the CV text is already here, already
+ * true, and free.
+ *
+ * Padding is clause-by-clause and stops the moment the floor is met, so a
+ * description lands near the bottom of the band instead of inheriting a whole
+ * 50-word bullet. A clause the description already covers is skipped — the model
+ * usually rewrites the leading bullet, and repeating it reads worse than being
+ * short.
+ *
+ * @param {any[]} projects `{name, description}`, names already remapped to the CV's
+ * @param {string} cvText the CV handed to the model (bullets relevance-ordered)
+ * @param {number} minWords
+ */
+export function padProjectDescriptions(projects, cvText, minWords = 35, maxWords = 55) {
+  const sec = parseCvSections(cvText).find(s => s.name === 'Projects');
+  if (!sec || !Array.isArray(projects)) return projects;
+  const real = parseEntries(sec.lines).entries.map(e => ({
+    name: e.head[0].replace(/^###\s+/, '').trim(),
+    bullets: e.bullets,
+  }));
+  const words = s => String(s || '').trim().split(/\s+/).filter(Boolean).length;
+
+  return projects.map(p => {
+    let desc = String(p.description || '').trim();
+    // "Built a high-performance." — the model sometimes stops mid-clause. Padding
+    // such a description only welds good CV prose onto a broken opening, which
+    // reads worse than not tailoring at all, so discard it and build from the CV.
+    if (words(splitClauses(desc)[0] || '') < 6) desc = '';
+    if (desc && words(desc) >= minWords) return p;
+    const pn = String(p.name || '').toLowerCase();
+    const src = real.find(r => r.name.toLowerCase() === pn)
+             || real.find(r => pn && (r.name.toLowerCase().includes(pn) || pn.includes(r.name.toLowerCase())));
+    if (!src) return p;
+    // A CV bullet is often one long semicolon-joined sentence; splitting on
+    // clause boundaries is what keeps the pad from overshooting the band.
+    const dt = toks(desc);
+    const covered = c => {
+      const ct = toks(c);
+      if (!ct.size) return 1;
+      let shared = 0;
+      for (const t of ct) if (dt.has(t)) shared++;
+      return shared / ct.size;
+    };
+    // Least-covered first, so the clause the model already rewrote is the last
+    // one reached and usually never is. A stable sort leaves the untouched
+    // clauses — nearly all of them, scoring 0 — in cv-select's relevance order,
+    // so this costs nothing but the redundancy it removes. Ranking beats a
+    // skip-threshold here: there is no ratio that separates "already said" from
+    // "shares two tokens with what was said".
+    const chunks = src.bullets
+      .flatMap(splitClauses)
+      .map(s => s.replace(/^[;\s]+|[.;\s]+$/g, '').trim())
+      .filter(Boolean)
+      .map((c, i) => ({ c, i, cov: covered(c) }))
+      .sort((a, b) => a.cov - b.cov || a.i - b.i);
+    const add = c => {
+      const s = `${c.charAt(0).toUpperCase()}${c.slice(1)}`.replace(/[.\s]+$/, '');
+      desc = desc ? `${desc.replace(/[.\s]+$/, '')}. ${s}.` : `${s}.`;
+    };
+    const spare = [];
+    for (const { c, cov } of chunks) {
+      if (words(desc) >= minWords) break;
+      if (cov > 0.6) continue; // a near-verbatim repeat is worse than being short
+      // Respect the ceiling while there is any other clause to try. Overshooting
+      // is not free: a 75-word blurb costs four lines, and the page-fit ladder
+      // pays for it by dropping a whole project — which is exactly the floor this
+      // was added to defend.
+      if (words(desc) + words(c) > maxWords) { spare.push(c); continue; }
+      add(c);
+    }
+    // Nothing short enough was left. A project below the floor reads as an
+    // afterthought, so the floor outranks the ceiling on the last clause.
+    if (words(desc) < minWords && spare.length) add(spare[0]);
+    return { ...p, description: desc };
+  });
 }
 
 /**
@@ -344,13 +460,55 @@ export function remapProjectNames(projects, cvText, minProjects = 3) {
  * company names it, otherwise one whose bullets overlap its CV bullets. An
  * employer that claims nothing is backfilled from the CV itself — those bullets
  * are already relevance-ranked and trimmed by selectCvForJd, so a backfilled
- * role is untailored but true, which beats absent. Unclaimed model entries are
- * dropped: they are the duplicates and the projects.
+ * role is untailored but true, which beats absent. An employer that claims an
+ * entry with fewer bullets than the CV gave it is topped back up the same way
+ * (`topUpBullets`). Unclaimed model entries are dropped: they are the duplicates
+ * and the projects.
  *
  * @param {any[]} items model experience entries
  * @param {string} selectedCv the CV text handed to the model
  * @returns {any[]} one entry per real employer, in CV order
  */
+/**
+ * Top a role's bullets back up to the count `selectCvForJd` handed the model.
+ *
+ * Every content guard in Phase 3 is a ceiling — the schema caps counts,
+ * `clampContent` slices, the density ladder trims — so a model that returned one
+ * bullet for a four-bullet role shipped a one-line job and nothing objected
+ * (observed across twelve consecutive CVs, several with 1 bullet per employer).
+ * The whole-entry backfill below already makes this trade for a role the model
+ * dropped entirely; a role it half-dropped deserves the same. These bullets are
+ * relevance-ranked and already trimmed, so an appended one is untailored but
+ * true.
+ *
+ * A rewrite is traced to its source by the same token-overlap argmax the number
+ * guard uses; the sources nothing was rewritten from are what gets appended, in
+ * CV (relevance) order. A rewrite that merged two CV bullets only claims one of
+ * them, so its sibling can reappear — a near-duplicate is a cheaper failure than
+ * a missing bullet, and the alternative is an embedding call per role.
+ *
+ * @param {string[]} modelBullets
+ * @param {string[]} cvBullets the role's bullets from the CV the model was given
+ * @returns {string[]}
+ */
+function topUpBullets(modelBullets, cvBullets) {
+  const kept = (modelBullets || []).filter(b => String(b || '').trim());
+  if (!kept.length || !cvBullets?.length || kept.length >= cvBullets.length) return kept;
+  const used = new Set();
+  for (const b of kept) {
+    const bt = toks(b);
+    let best = -1, bestN = -1;
+    for (let i = 0; i < cvBullets.length; i++) {
+      let n = 0;
+      for (const t of toks(cvBullets[i])) if (bt.has(t)) n++;
+      if (n > bestN) { bestN = n; best = i; }
+    }
+    if (best >= 0) used.add(best);
+  }
+  const spare = cvBullets.filter((_, i) => !used.has(i));
+  return [...new Set([...kept, ...spare.slice(0, cvBullets.length - kept.length)])];
+}
+
 export function reconcileExperience(items, selectedCv) {
   const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
   if (!sec || !Array.isArray(items)) return items;
@@ -399,7 +557,8 @@ export function reconcileExperience(items, selectedCv) {
     // it would relabel one role's bullets with another's name.
     if (best >= 0 && bestScore >= 0.35) {
       claimed.add(best);
-      out.push({ ...items[best], company: r.company });
+      out.push({ ...items[best], company: r.company,
+                 bullets: topUpBullets(items[best]?.bullets, r.bullets) });
     } else {
       out.push({ company: r.company, bullets: r.bullets });
     }

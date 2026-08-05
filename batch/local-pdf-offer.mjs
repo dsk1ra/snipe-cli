@@ -20,8 +20,8 @@ import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
          reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
-         verifyProjectFigures, cvCompanies,
-         stripUnsupportedTenure } from './cv-select.mjs';
+         verifyProjectFigures, cvCompanies, parseCvSections, parseEntries,
+         padProjectDescriptions, stripUnsupportedTenure } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
@@ -219,14 +219,55 @@ function experienceCompanies(selectedCv) {
   try { return cvCompanies(selectedCv); } catch { return []; }
 }
 
+/**
+ * Bullet- and project-count floors, read off the CV the model was handed.
+ *
+ * `minItems` on the entry count stopped the model dropping a whole employer, but
+ * nothing stopped it dropping four fifths of one: the bullets array had no floor
+ * at all and `projects` floored at the schema's hardcoded 3, which the model
+ * then took as the answer on every run. Both must come from the selected CV, not
+ * a constant — demanding 3 bullets from a role that only has 1 is an instruction
+ * to invent, which is the one failure this pipeline spends everything to avoid.
+ *
+ * @param {string} selectedCv
+ * @returns {{bullets: number, projects: number}}
+ */
+function contentFloors(selectedCv) {
+  const floors = { bullets: 1, projects: 3 };
+  try {
+    const named = n => parseCvSections(selectedCv).find(s => s.name === n);
+    const exp = named('Experience');
+    if (exp) {
+      const counts = parseEntries(exp.lines).entries.map(e => e.bullets.length).filter(n => n > 0);
+      if (counts.length) floors.bullets = Math.min(3, ...counts);
+    }
+    const proj = named('Projects');
+    const n = proj ? parseEntries(proj.lines).entries.length : 0;
+    if (n) floors.projects = Math.min(4, n);
+  } catch { /* keep the conservative defaults */ }
+  return floors;
+}
+
 function schemaWithExperienceFloor(selectedCv) {
   const roles = experienceCompanies(selectedCv).length;
-  if (roles < 2) return TAILOR_SCHEMA;
+  const floors = contentFloors(selectedCv);
+  const exp = TAILOR_SCHEMA.properties.experience;
   return {
     ...TAILOR_SCHEMA,
     properties: {
       ...TAILOR_SCHEMA.properties,
-      experience: { ...TAILOR_SCHEMA.properties.experience, minItems: roles },
+      projects: { ...TAILOR_SCHEMA.properties.projects, minItems: floors.projects },
+      experience: {
+        ...exp,
+        ...(roles >= 2 ? { minItems: roles } : {}),
+        items: {
+          ...exp.items,
+          properties: {
+            ...exp.items.properties,
+            bullets: { ...exp.items.properties.bullets, minItems: floors.bullets },
+          },
+        },
+      },
     },
   };
 }
@@ -566,7 +607,9 @@ if (!cvContent.projects && Array.isArray(cvContent.selected_projects)) {
 // the template's name match can't silently drop a project slot (observed:
 // "Distributed Odds Feed Orchestrator" invented for a betting-infra JD).
 if (Array.isArray(cvContent.projects)) {
-  cvContent.projects = remapProjectNames(cvContent.projects, cvText);
+  // The backfill floor has to match the schema floor, or the two disagree and the
+  // model's 4th project is dropped here and never replaced (4 of 12 offers).
+  cvContent.projects = remapProjectNames(cvContent.projects, cvText, contentFloors(cvForPrompt).projects);
 }
 
 // Tier 3 — the model doesn't reliably keep UK reverse-chronological order;
@@ -675,6 +718,15 @@ if (Array.isArray(cvContent.projects)) {
   // number guard at all, so both a wholly invented "970%+ revenue growth" and a
   // real-but-borrowed "sub-500ms load times" shipped on the same CV.
   cvContent.projects = verifyProjectFigures(cvContent.projects, cvText);
+  // Tier 3 — the length floor is asserted LAST, after the two guards above.
+  // Padding before them was the obvious placement and the wrong one:
+  // stripFabricatedProducts does clause surgery, so a description that met the
+  // floor could lose a clause and ship under it (every short description in the
+  // floors2/floors3 A/B — 27 words against a floor of 35). Nothing re-checked.
+  // Safe to run last because padded text is verbatim cv.md: it names no product
+  // the CV lacks and quotes no figure the project's own entry lacks, so it
+  // passes both guards by construction rather than by inspection.
+  cvContent.projects = padProjectDescriptions(cvContent.projects, cvText);
 }
 
 // Build output folder

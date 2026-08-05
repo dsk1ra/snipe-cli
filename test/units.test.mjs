@@ -355,7 +355,79 @@ try {
   eq(out[0].bullets.length, 2, 'a backfilled role carries the CV bullets');
   eq(out[0].bullets[0].includes('800+ undergraduates'), true,
     'backfilled bullets are the real CV text, not invented');
-  deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
+  eq(out[1].bullets[0], acme.bullets[0], 'a claimed role keeps the model rewrite first');
+
+  // A claimed role the model half-filled is topped back up: the schema had no
+  // floor on bullets at all, so one bullet under a four-bullet role shipped as a
+  // one-line job. The rewrite leads; the CV bullets it did NOT come from follow.
+  eq(out[1].bullets.length, 2, 'a claimed role is topped up to the CV bullet count');
+  eq(out[1].bullets[1].includes('Automated billing'), true,
+    'the topped-up bullet is the CV source the rewrite did not claim');
+  eq(out[1].bullets.some(b => /two-developer team/.test(b) && /MVP in 4 weeks/.test(b)
+                              && b !== acme.bullets[0]), false,
+    'the CV bullet the rewrite came from is not re-appended alongside it');
+
+  // A role the model filled completely is left exactly as it rewrote it.
+  const full = reconcileExperience([{ company: 'Acme SaaS', bullets: [
+    'Led a two-dev team, subscription platform MVP in 4 weeks',
+    'Automated billing and onboarding with Stripe and OAuth 2.0',
+  ] }], cv);
+  eq(full[1].bullets.length, 2, 'a fully-filled role gains nothing from the top-up');
+
+  // Project descriptions: the prompt asks for 35-55 words and got a median of 17
+  // across twelve runs, 0 of 36 in band. Padding comes from the project's own CV
+  // bullets, stops at the floor, and never repeats what the model already said.
+  const { padProjectDescriptions } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const pcv = [
+    '## Projects', '',
+    '### Re:Link — Remote Access',
+    '**Honours** | Rust | 2025', '',
+    '- Designed a blind rendezvous protocol with client-side AES-256-GCM encryption; the server holds only ephemeral state',
+    '- Eliminated an 8 MB-per-frame copy with a lock-free pre-allocated frame ring using atomic CAS slot ownership',
+    '- Shipped cross-platform builds with 4 GitHub Actions CI pipelines and dual-stack IPv4/IPv6 ICE handling',
+  ].join('\n');
+  const wc = s => s.trim().split(/\s+/).length;
+
+  const padded = padProjectDescriptions(
+    [{ name: 'Re:Link — Remote Access', description: 'Built a peer-to-peer remote access system with AES-256-GCM encryption.' }],
+    pcv);
+  eq(wc(padded[0].description) >= 35, true, 'a short description is padded to the floor');
+  eq(wc(padded[0].description) <= 55, true, 'and stops at the ceiling rather than overshooting');
+  eq(/frame ring|CI pipelines/.test(padded[0].description), true,
+    'the padding is real CV text from that project');
+  eq((padded[0].description.match(/AES-256-GCM/g) || []).length, 1,
+    'the clause the model already rewrote is not repeated');
+
+  // A semicolon inside a parenthetical is not a clause boundary — splitting there
+  // shipped a description ending mid-aside with the bracket never closed.
+  const bracketCv = [
+    '## Projects', '', '### Testbed', '**Personal** | Rust | 2025', '',
+    '- Built a Rust microservice testbed (API gateway, hashing; manifest-signing services) comparing NIST post-quantum signatures against classical baselines',
+    '- Executed 63,000+ benchmark runs across 7 signature schemes and 5 payload sizes with bootstrap confidence intervals',
+    '- Hardened the pipeline against STRIDE-class threats with keyed token-bucket rate limiting and structured audit logging',
+  ].join('\n');
+  const bd = padProjectDescriptions([{ name: 'Testbed', description: 'Benchmarked signatures for cloud migration.' }], bracketCv)[0].description;
+  const opens = (bd.match(/\(/g) || []).length, closes = (bd.match(/\)/g) || []).length;
+  eq(opens, closes, 'padding never leaves an unbalanced bracket');
+
+  // A fragment for an opening sentence is discarded, not padded around.
+  const frag = padProjectDescriptions([{ name: 'Testbed', description: 'Built a high-performance.' }], bracketCv)[0].description;
+  eq(/^Built a high-performance\./.test(frag), false, 'a fragment opening is dropped, not kept at the head');
+  eq(wc(frag) >= 35, true, 'and the description is rebuilt from the CV to the floor');
+  eq(/^[A-Z]/.test(frag) && !frag.startsWith('.'), true, 'a rebuilt description does not start with a stray period');
+
+  const long = 'x '.repeat(40).trim();
+  deepEq(padProjectDescriptions([{ name: 'Re:Link — Remote Access', description: long }], pcv),
+    [{ name: 'Re:Link — Remote Access', description: long }],
+    'a description already over the floor is untouched');
+  deepEq(padProjectDescriptions([{ name: 'Nothing On The CV', description: 'short' }], pcv),
+    [{ name: 'Nothing On The CV', description: 'short' }],
+    'a project with no CV entry is left alone rather than padded from another');
+  eq(Array.isArray(padProjectDescriptions(/** @type {any} */ (null), pcv)), false,
+    'a non-array is returned untouched');
+  deepEq(padProjectDescriptions([{ name: 'Re:Link', description: 'short' }], 'no projects section'),
+    [{ name: 'Re:Link', description: 'short' }],
+    'a CV with no Projects section pads nothing');
 
   // Regression (report 146): the model named the right employer but pasted the
   // OTHER role's bullets under it. A name hit scored 1+overlap, which cleared
@@ -368,7 +440,7 @@ try {
     'a bullet belonging to another role is rejected despite the right company name');
   eq(fixed.some(e => e.bullets.some(b => /subscription platform/.test(b) && e.company === 'Northgate College')), false,
     "the other role's bullet never appears under the wrong employer");
-  deepEq(fixed[1].bullets, acme.bullets, 'the correctly-labelled role still keeps its rewrite');
+  eq(fixed[1].bullets[0], acme.bullets[0], 'the correctly-labelled role still keeps its rewrite');
 
   // Degenerate inputs must not throw or silently empty the section.
   deepEq(reconcileExperience([], cv).map(e => e.company),
