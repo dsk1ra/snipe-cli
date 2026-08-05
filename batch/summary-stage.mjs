@@ -82,6 +82,66 @@ function phraseSpace(s) {
 const hasPhrase = (haystack, phrase) => haystack.includes(` ${phrase} `);
 
 /**
+ * Credentials, institutions and affiliations that have to be grounded in `cv.md`.
+ *
+ * Same contract as NAMED_PRODUCTS: a *detector*, not a generator — a missing
+ * entry understates the count, it never invents one. Seeded from a real
+ * violation, where a summary called the candidate a "Russell Group graduate"
+ * because the university has "Edinburgh" in its name; it is a post-1992
+ * institution and the claim is simply false. A fabricated credential is worse
+ * than a fabricated technology — it is checkable by anyone reading the CV, and
+ * being caught inventing one ends the application.
+ *
+ * Entries a *truthful* CV states (this one does say "First Class Honours") are
+ * listed too: the phrase is only flagged when `cv.md` lacks it, so listing it
+ * costs nothing here and protects a CV that cannot claim it.
+ */
+export const NAMED_CREDENTIALS = [
+  // institution tiers and affiliations
+  'russell group', 'ivy league', 'oxbridge', 'red brick',
+  // degree classes and honours
+  'first class honours', 'upper second class', 'lower second class',
+  'summa cum laude', 'magna cum laude', 'cum laude', 'valedictorian',
+  'dean s list', 'with distinction',
+  // degrees
+  'phd', 'doctorate', 'mba', 'msc', 'meng', 'mphil', 'postgraduate',
+  // professional certifications
+  'cissp', 'cism', 'cisa', 'oscp', 'ceh', 'comptia', 'security+',
+  'ccna', 'ccnp', 'rhce', 'pmp', 'prince2', 'itil', 'togaf',
+  'aws certified', 'azure certified', 'google cloud certified',
+  'certified kubernetes administrator', 'cka', 'ckad',
+  'chartered engineer', 'chartered',
+];
+
+/**
+ * Credentials the text claims that `cv.md` never mentions.
+ * @param {string} text
+ * @param {string} cvText
+ * @returns {string[]}
+ */
+export function credentialFab(text, cvText) {
+  const out = phraseSpace(text);
+  const cv = phraseSpace(cvText);
+  return NAMED_CREDENTIALS.filter(p => hasPhrase(out, p) && !hasPhrase(cv, p));
+}
+
+/**
+ * Drop the clauses claiming a credential `cv.md` never mentions.
+ *
+ * Costs real content when a false credential shares a clause with a true one —
+ * "Russell Group graduate with First Class Honours" loses the honours along with
+ * the lie. That is the documented trade for products and it holds harder here:
+ * shipping a shorter true summary beats shipping a longer false one.
+ *
+ * @param {string} text
+ * @param {string} cvText
+ * @returns {string}
+ */
+export function stripFabricatedCredentials(text, cvText) {
+  return stripUnsupportedClauses(text, t => credentialFab(t, cvText).length > 0);
+}
+
+/**
  * Named products the text claims that `cv.md` never mentions.
  * @param {string} text
  * @param {string} cvText

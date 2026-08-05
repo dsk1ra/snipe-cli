@@ -21,9 +21,11 @@ import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
          reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
          verifyProjectFigures, cvCompanies, parseCvSections, parseEntries,
-         padProjectDescriptions, stripUnsupportedTenure } from './cv-select.mjs';
+         padProjectDescriptions, stripUnsupportedTenure,
+         verifySummaryFigures } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
+         stripFabricatedCredentials,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
@@ -669,6 +671,22 @@ if (typeof cvContent.summary === 'string') {
   // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the
   // token is allowed; it is the tenure that is invented.
   cvContent.summary = stripUnsupportedTenure(cvContent.summary, cvText);
+
+  // The summary's siblings to verifyBulletFigures / verifyProjectFigures /
+  // verifyBulletProducts. It had none of them: one shipped summary claimed a
+  // platform "serving 150+ users" (the CV says 170) and called the candidate a
+  // "Russell Group graduate" (the university is post-1992), while metric_fab
+  // reported 0 because it only reads experience bullets.
+  //
+  // The product strip runs here as well as inside generateSummary, because the
+  // stage is in a try/catch: when it fails, the JSON summary ships, and that path
+  // was never product-guarded despite T2's comment claiming the summary was.
+  //
+  // Order matters — all three can shorten the summary, and the 50-word floor pad
+  // below has to see the shortened text so it can top it back up.
+  cvContent.summary = verifySummaryFigures(cvContent.summary, cvText);
+  cvContent.summary = stripFabricatedCredentials(cvContent.summary, cvText);
+  cvContent.summary = stripFabricatedProducts(cvContent.summary, cvText);
 
   // Deterministic fabrication strip — if the target company name survived the
   // retries, drop the sentence claiming it (runs before the length-floor pad).

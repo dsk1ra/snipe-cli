@@ -593,7 +593,11 @@ export function cvCompanies(cvText) {
 }
 
 /** Numbers worth attributing to the CV. Single digits are too noisy to track. */
-const NUMERIC = /\d[\d,.]*\+?%?/g;
+// Not preceded by a letter: "L40 Engineer" (Monzo's internal job level) and
+// "v4"/"H100"-style identifiers are names, not claims, and flagging the 40 in
+// one made a job title read as an invented figure. Separators still count, so
+// "AES-256" and "sub-500ms" are unaffected.
+const NUMERIC = /(?<![A-Za-z])\d[\d,.]*\+?%?/g;
 const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
   .map(x => x.replace(/[.,]$/, '')).filter(x => x.length > 1));
 
@@ -624,7 +628,18 @@ const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
 // The word forms matter as much as the digits. A tailored summary produced
 // "over a decade of experience" against a CV claiming no duration at all — no
 // digit anywhere, so the numeric branches could not see it.
-const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\bwith\s+\d[\d.,]*\+?\s*years?\b|\b(?:over|nearly|almost|more\s+than)?\s*(?:a|one|two|three|several|many)?\s*decades?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\b(?:over|more\s+than)\s+(?:a|one)\s+decade\b/gi;
+// A tenure span ("3+", "1-3", "2 to 4") and up to three qualifier words before
+// "experience". The original pattern allowed a single value and a single
+// qualifier, so "1-3 years of real production experience" — a range lifted from
+// the posting, which cv.md states nowhere — matched nothing and shipped.
+const TEN_N = String.raw`\d[\d.,]*\+?(?:\s*(?:[-–—]|to)\s*\d[\d.,]*\+?)?`;
+const TEN_Q = String.raw`(?:\s+[a-z-]+){0,3}`;
+const TENURE = new RegExp([
+  String.raw`\b(?:with\s+)?${TEN_N}\s*years?(?:\s+of)?${TEN_Q}\s+experience\b`,
+  String.raw`\bwith\s+${TEN_N}\s*years?\b`,
+  String.raw`\b(?:over|nearly|almost|more\s+than)?\s*(?:a|one|two|three|several|many)?\s*decades?(?:\s+of)?${TEN_Q}\s+experience\b`,
+  String.raw`\b(?:over|more\s+than)\s+(?:a|one)\s+decade\b`,
+].join('|'), 'gi');
 
 /**
  * Strip a years-of-experience claim the CV does not make.
@@ -641,6 +656,38 @@ const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+e
  * @param {string} cvText the full CV — a tenure it does state is left alone
  * @returns {string}
  */
+/**
+ * Strip a summary clause asserting a figure `cv.md` does not state.
+ *
+ * The experience bullets have `verifyBulletFigures` and the project blurbs have
+ * `verifyProjectFigures`. The summary — the first block anyone reads — had
+ * neither, and shipped "a live subscription platform serving 150+ users" against
+ * a CV that says 170 paying members. `verifyBulletNumbers`' own docstring already
+ * lists `150+` among the invented figures measured across 24 offers, so this was
+ * a known fabrication pattern reaching the one surface nothing guarded.
+ *
+ * Clause surgery rather than reversion, for the reason products get it: a summary
+ * has no single source line to revert to, and a shorter true summary beats a
+ * longer false one.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {string}
+ */
+export function verifySummaryFigures(summary, cvText) {
+  if (typeof summary !== 'string' || !summary) return summary;
+  const cvNums = numbersIn(cvText);
+  // Deflate before cutting. "170+" is the CV's own 170 with an inflating "+"
+  // appended — the exact pattern verifyBulletNumbers measured on 3 of 24 offers.
+  // The claim around it is true and CV-specific ("a GDPR-compliant membership
+  // platform with 170+ paying users"), so deleting the clause threw away real
+  // evidence to remove one character. Correct the figure; only genuinely
+  // unsupported ones then reach the clause surgery.
+  const deflated = summary.replace(/(?<![A-Za-z])(\d[\d,.]*)\+/g,
+    (m, base) => (!cvNums.has(m) && cvNums.has(base) ? base : m));
+  return stripUnsupportedClauses(deflated, t => [...numbersIn(t)].some(n => !cvNums.has(n)));
+}
+
 export function stripUnsupportedTenure(summary, cvText) {
   if (typeof summary !== 'string' || !summary) return summary;
   const stated = new Set((String(cvText).match(TENURE) || []).map(m => m.toLowerCase().trim()));
@@ -721,7 +768,17 @@ export function stripUnsupportedClauses(text, isBad) {
     const clauses = sentence.split(/,\s*/);
     const clean = clauses.filter(c => !isBad(c));
     if (clean.length && clean.length < clauses.length) {
-      const rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
+      // ponytail: comma-splitting treats a comma-separated adjective list as two
+      // clauses, so dropping one can orphan the other ("building secure," when
+      // the clause carrying the noun goes). Deflating an inflated figure instead
+      // of cutting its clause removed every observed instance — 1 summary in 12
+      // now reaches this path at all, and none of the current corpus orphans.
+      // Upgrade path if that changes: drop the whole sentence when the survivor
+      // ends on a bare adjective, rather than splitting smarter.
+      let rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
+      // Dropping the leading clause promotes a mid-sentence one to sentence start,
+      // which shipped "…across Python, React, and Next.js. strong fundamentals,…".
+      if (rebuilt) rebuilt = rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1);
       if (rebuilt && !isBad(rebuilt)) kept.push(/[.!?]$/.test(rebuilt) ? rebuilt : `${rebuilt}.`);
     }
   }
