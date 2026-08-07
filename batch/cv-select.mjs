@@ -329,7 +329,20 @@ export async function spikeBackground(bullets, opts = {}) {
  */
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
-    maxProjects = 4, maxBulletsPerProject = 5, maxBulletsPerRole = 4,
+    maxProjects = 4, maxBulletsPerProject = 4, maxBulletsPerRole = 4,
+    // Project bullets are drawn from one shared budget rather than a flat cap
+    // per project: a posting that is mostly about what one project did should
+    // spend more of the page on that project. The budget is exactly what 4
+    // projects x 2 bullets already rendered, so this redistributes the page
+    // rather than buying more of it, and `maxBulletsPerProject` bounds how
+    // lopsided it can get (4/2/1/1 at worst; 6 was worth a further +0.006 and
+    // renders three projects as a bare title). Every kept project keeps one slot.
+    //
+    // Attributed as the only cause a ranker cannot touch — 21% of missed
+    // differentiators were a third flagged bullet inside a two-bullet project.
+    // Held out over 66 offers on top of the shipped ranker: differentiator
+    // coverage +0.077 CI95 [0.040, 0.115], 27-7, p=0.0008; grade_yield +0.031.
+    projectBulletBudget = maxProjects * 2,
     // Weight on corpus-relative specificity. 6 is the measured optimum and the
     // curve is broad (4 -> +0.075, 6 -> +0.084, 8 -> +0.079), so it is a plateau,
     // not a knife edge. 0 disables it and restores plain cosine ranking.
@@ -414,6 +427,29 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     entry.score = ranked[0]?.score ?? 0;
   }
 
+  /**
+   * How many bullets each kept project gets out of `budget`: one apiece, then
+   * the rest to the highest-scoring bullets anywhere, capped per project.
+   *
+   * Greedy over the pooled bullets rather than a proportional split of the
+   * scores, because the scores are cosines in a narrow band — a proportional
+   * rule off 0.58 vs 0.55 is noise, while "whose next bullet is best" is the
+   * question the page is actually asking.
+   */
+  function allocate(entries, budget, cap) {
+    const n = new Map(entries.map(e => [e, 1]));
+    let spent = entries.length;
+    const rest = entries.flatMap(e =>
+      [...e.scored].sort((a, b) => b.score - a.score).slice(1).map(b => ({ e, score: b.score })));
+    for (const b of rest.sort((x, y) => y.score - x.score)) {
+      if (spent >= budget) break;
+      if ((n.get(b.e) ?? 0) >= cap) continue;
+      n.set(b.e, (n.get(b.e) ?? 0) + 1);
+      spent++;
+    }
+    return n;
+  }
+
   if (expParsed) {
     // UK CV convention: reverse-chronological, never reordered by relevance.
     for (const e of expParsed.entries) trim(e, maxBulletsPerRole);
@@ -425,6 +461,9 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     for (const e of projParsed.entries) trim(e, maxBulletsPerProject);
     projParsed.entries.sort((a, b) => b.score - a.score);
     projParsed.entries.length = Math.min(projParsed.entries.length, maxProjects);
+    // Only now, over the projects that survived, is the bullet budget worth
+    // splitting — spending it on a project that gets dropped wastes it.
+    for (const [e, k] of allocate(projParsed.entries, projectBulletBudget, maxBulletsPerProject)) trim(e, k);
     projParsed.entries.sort((a, b) => entryEndDate(b) - entryEndDate(a));
     proj.lines = renderEntries(projParsed);
   }
@@ -1161,6 +1200,27 @@ Text.
     maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: tightStub,
     _fetch: async () => { throw new Error('must not be called'); } });
   assert(!noShots.includes('Mentored two juniors'), 'no exemplars means no judge call at all');
+
+  // Allocation: the budget is spent where the posting points, not spread flat.
+  // Crypto Tool is the only project this stub scores, so it must take the spare
+  // bullet — and the total must not grow, which is the whole claim.
+  const projBullets = (cv) => {
+    const sec = parseCvSections(cv).find(s => s.name === 'Projects');
+    return parseEntries(sec.lines).entries.map(e => e.bullets.length);
+  };
+  const alloc = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 3,
+    projectBulletBudget: 3, _embed: stub });
+  const shape = projBullets(alloc);
+  assert(shape.reduce((a, b) => a + b, 0) === 3, `budget spent exactly: got ${shape.join('/')}`);
+  assert(shape.every(n => n >= 1), `no project left a bare title: ${shape.join('/')}`);
+  assert(/Added CLI with 3 subcommands/.test(alloc), 'the spare bullet went to the matching project');
+  // A budget of exactly one-per-project must reproduce the old flat allocation,
+  // or the generalisation moved the baseline it generalises.
+  const flat = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 3,
+    projectBulletBudget: 2, _embed: stub });
+  assert(projBullets(flat).every(n => n === 1), 'a budget of one each allocates one each');
 
   // The distinctiveness variant must ask for the field and keep it — a schema
   // the model answers but the parser drops would benchmark as a null result.
