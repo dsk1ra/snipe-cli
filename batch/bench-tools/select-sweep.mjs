@@ -48,6 +48,22 @@ function offersFor(labels, split) {
     .sort((a, b) => Number(a.offer.id) - Number(b.offer.id));
 }
 
+/**
+ * Offers to score, and whether the judge term can be used on them.
+ *
+ * An ungraded offer silently ranks as grade-0 everywhere, which is a different
+ * ranker rather than a missing term — so it is dropped, not zeroed. Turning the
+ * judge off for the whole split instead (the first version of this) meant one
+ * report with no parseable Block B quietly demoted every run to cosine-only.
+ */
+function scorable(cache, labels, split) {
+  const all = offersFor(labels, split).filter(l => cache.offers[String(l.offer.id)]);
+  const graded = all.filter(l => cache.grades[String(l.offer.id)]);
+  return graded.length >= all.length / 2
+    ? { offers: graded, gradeW: 0.10, dropped: all.length - graded.length }
+    : { offers: all, gradeW: 0, dropped: 0 };
+}
+
 // ── prep: every cosine the sweep needs, computed once ────────────────────────
 
 async function prep() {
@@ -269,13 +285,11 @@ function validate() {
 function sweep(split = 'train') {
   const labels = loadLabels();
   const cache = addSpike(load());
-  const offers = offersFor(labels, split).filter(l => cache.offers[String(l.offer.id)]);
-  // A half-graded cache is worse than none: the ungraded offers silently score
-  // as grade 0 across the board, which is a different ranker, not a missing term.
-  const allGraded = offers.every(l => cache.grades[String(l.offer.id)]);
-  const gradeW = allGraded ? 0.10 : 0;
+  const { offers, gradeW, dropped } = scorable(cache, labels, split);
+  const allGraded = gradeW > 0;
   const base = evalCfg(cache, labels, offers, { gradeW });
-  console.log(`split=${split} n=${base.n} offers · judge term ${allGraded ? 'ON (0.10)' : 'OFF — cache incomplete, cosine-only'}`);
+  console.log(`split=${split} n=${base.n} offers · judge term ${allGraded ? 'ON (0.10)' : 'OFF — cosine-only'}` +
+    `${dropped ? ` · ${dropped} ungraded offer(s) dropped` : ''}`);
   console.log(`baseline: cov=${base.cov.toFixed(3)} yield=${base.yld.toFixed(3)}\n`);
 
   const results = [];
@@ -314,16 +328,19 @@ function sweep(split = 'train') {
 function check(split, cfg) {
   const labels = loadLabels();
   const cache = addSpike(load());
-  const offers = offersFor(labels, split).filter(l => cache.offers[String(l.offer.id)]);
-  const allGraded = offers.every(l => cache.grades[String(l.offer.id)]);
-  const gradeW = allGraded ? 0.10 : 0;
-  const base = evalCfg(cache, labels, offers, { gradeW });
-  const got = evalCfg(cache, labels, offers, { gradeW, ...cfg });
+  const { offers, gradeW: defaultGradeW, dropped } = scorable(cache, labels, split);
+  // The baseline is always the shipped ranker; only the variant may move gradeW,
+  // so "delete the judge" is measured against what production actually does.
+  const gradeW = cfg.gradeW ?? defaultGradeW;
+  const base = evalCfg(cache, labels, offers, { gradeW: defaultGradeW });
+  const got = evalCfg(cache, labels, offers, { ...cfg, gradeW });
   const byId = new Map(base.rows.map(r => [r.id, r]));
   const dCov = got.rows.map(r => r.cov - byId.get(r.id).cov);
   const dYld = got.rows.map(r => r.yld - byId.get(r.id).yld);
-  console.log(`split=${split} n=${got.n} · judge term ${allGraded ? 'ON' : 'OFF (cosine-only)'} · ` +
-    `spikeW=${cfg.spikeW ?? 0} lambda=${cfg.lambda ?? 0} reserve=${cfg.reserve ?? 0}\n`);
+  console.log(`split=${split} n=${got.n} · judge term ${gradeW ? 'ON (0.10)' : 'OFF (cosine-only)'}` +
+    `${dropped ? ` · ${dropped} ungraded offer(s) dropped` : ''}\n` +
+    `variant: gradeW=${gradeW} spikeW=${cfg.spikeW ?? 0} lambda=${cfg.lambda ?? 0} ` +
+    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0}\n`);
   for (const [name, before, after, d] of [
     ['differentiator_coverage', base.cov, got.cov, dCov],
     ['grade_yield', base.yld, got.yld, dYld]]) {
@@ -338,10 +355,10 @@ function check(split, cfg) {
 function ablate(split = 'train') {
   const labels = loadLabels();
   const cache = addSpike(load());
-  const offers = offersFor(labels, split).filter(l => cache.offers[String(l.offer.id)]);
-  const gradeW = offers.every(l => cache.grades[String(l.offer.id)]) ? 0.10 : 0;
+  const { offers, gradeW, dropped } = scorable(cache, labels, split);
   const base = evalCfg(cache, labels, offers, { gradeW });
-  console.log(`split=${split} n=${base.n}  baseline cov=${base.cov.toFixed(3)}\n`);
+  console.log(`split=${split} n=${base.n}  judge ${gradeW ? 'ON' : 'OFF'}` +
+    `${dropped ? ` (${dropped} ungraded dropped)` : ''}  baseline cov=${base.cov.toFixed(3)}\n`);
   console.log('config                        cov     delta   yield');
   const show = (name, cfg) => {
     const r = evalCfg(cache, labels, offers, { gradeW, ...cfg });
@@ -369,5 +386,7 @@ else if (cmd === 'ablate') ablate(arg('--split', 'train'));
 else if (cmd === 'check') check(arg('--split', 'test'), {
   spikeW: parseFloat(arg('--spike', '0')),
   lambda: parseFloat(arg('--lambda', '0')),
-  reserve: parseInt(arg('--reserve', '0'), 10) });
+  reserve: parseInt(arg('--reserve', '0'), 10),
+  distinctW: parseFloat(arg('--distinct', '0')),
+  ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) });
 else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|check [--split train|test|all]');

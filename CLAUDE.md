@@ -109,8 +109,9 @@ Ranking is `cos − α·corpus_mean + 0.10 × judge_grade`, `α = w/(1+w)` at
 `spikeWeight = 6`. That middle term — **corpus-relative specificity** — is what
 makes the ranker prefer *distinctive* evidence over merely relevant evidence:
 a bullet scoring 0.6 against every past posting is filler, one scoring 0.6 here
-and 0.31 elsewhere is a differentiator. Worth **+0.072 differentiator coverage
-held out** (n=67, CI [0.032, 0.112], 26-8, p=0.003) with `grade_yield` flat.
+and 0.31 elsewhere is a differentiator. Worth **+0.060 differentiator coverage
+held out** against the full production ranker (n=66, CI [0.017, 0.103], 25-9,
+p=0.009) with `grade_yield` flat. (+0.072 judge-off — quote the 0.060.)
 The corpus mean is built from past reports' Block B requirement sets and cached
 in `batch/cv-spike.json`; under 20 usable reports it returns null and ranking
 falls back to plain cosine. **The background cannot come from `jd-index.json`** —
@@ -139,7 +140,16 @@ against the human gold set, holds under a disjoint exemplar pair — see
 `docs/PHASE3-RETRIEVAL-LEDGER.md`). It is few-shot from two hand-labelled
 offers in `batch/judge-shots.json`; **0-shot it is worse than no rerank at
 all**, so a missing or unmatched exemplar file disables it rather than
-degrading it, as does any model failure. Costs one 30B call, **measured 66 s**
+degrading it, as does any model failure. Still worth its 42 s: deleting it costs
+−0.021 differentiator coverage held out even with spike on.
+
+**Known defect — the judge grades binary.** Its exemplars are built as
+`want.has(text) ? 3 : 0` from binary human ticks, so every demonstration is a 0
+or a 3, and demonstrations beat the system prompt's "use the full range": **30 of
+4191 gradings across 128 offers use the middle of the scale.** The retrieval
+ledger already priced binarisation at 0.03 pair accuracy, so the judge has been
+paying that all along. The fix is graded exemplars, not a prompt edit — see
+`docs/PHASE3-RETENTION-LEDGER.md` §4.10. Not attempted yet. Costs one 30B call, **measured 66 s**
 — 80% of Phase 3's wall clock, and validated held-out on `goldset-2.md` at
 **+0.115 pair accuracy, 11 wins 0 losses, CI [0.074, 0.159]**. Alone it is worth
 nothing (0.801 vs cosine's 0.815); only the blend pays. Do not binarise the
