@@ -51,10 +51,38 @@ const JUDGE_SCHEMA = {
   required: ['grades'],
 };
 
-const judgeUser = (reqs, jd, list) =>
+// The distinctiveness variant asks a second, deliberately different question in
+// the same call. `grade` and cosine both measure relevance to the posting, which
+// is why blending them bought only +0.10 pair accuracy — the corpus-mean term
+// (see spikeBackground) beat both by asking about distinctiveness instead. This
+// tests whether the 30B can answer that question directly and better. One call,
+// so it costs nothing extra; benchmarked separately because adding a field can
+// move `grade` itself, which would invalidate the shipped +0.10 calibration.
+const JUDGE_DISTINCT_EXTRA = `
+
+Also rate EVERY item 0-3 on how much it SETS THIS CANDIDATE APART from a typical
+applicant who would be shortlisted for this posting:
+  3 - few other applicants for this role could claim it
+  2 - uncommon, would be noticed
+  1 - most shortlisted applicants could claim something similar
+  0 - every applicant has this
+
+Distinctiveness is NOT relevance. A required, expected skill is highly relevant
+and scores 0 here. A rare, hard-won piece of engineering that only glances at the
+posting is barely relevant and can still score 3.`;
+
+const distinctItem = {
+  type: 'object',
+  properties: { id: { type: 'integer' }, grade: { type: 'integer' }, distinct: { type: 'integer' } },
+  required: ['id', 'grade', 'distinct'],
+};
+
+const judgeUser = (reqs, jd, list, distinct = false) =>
   `## Requirements\n\n${reqs.map(r => `- ${r}`).join('\n')}`
   + (jd ? `\n\n## Posting (excerpt)\n\n${String(jd).slice(0, 2500)}` : '')
-  + `\n\n## Candidate CV items\n\n${list}\n\nGrade every item 0-3 for this posting.`;
+  + `\n\n## Candidate CV items\n\n${list}\n\n`
+  + (distinct ? 'Grade every item 0-3 for relevance and 0-3 for distinctiveness.'
+              : 'Grade every item 0-3 for this posting.');
 
 /**
  * Grade each bullet 0-3 with snipe-eval, few-shot from the gold set.
@@ -67,28 +95,52 @@ const judgeUser = (reqs, jd, list) =>
  * @returns {Promise<Map<string, number>|null>} bullet text -> grade, or null
  */
 export async function judgeGrades(items, reqs, jdText, opts = {}) {
+  const full = await judgeGradesFull(items, reqs, jdText, opts);
+  return full && new Map([...full].map(([t, v]) => [t, v.grade]));
+}
+
+/**
+ * The same call, keeping every field the judge returned.
+ *
+ * `withDistinct` adds a second 0-3 rating per item in the *same* call, asking
+ * how far the item sets the candidate apart rather than how relevant it is.
+ * Off by default: the shipped +0.10 blend was calibrated against the one-field
+ * schema, and adding a field can move `grade` itself.
+ *
+ * @returns {Promise<Map<string, {grade: number, distinct: number}>|null>}
+ */
+export async function judgeGradesFull(items, reqs, jdText, opts = {}) {
   const { ollamaUrl = 'http://localhost:11434', judgeModel = 'snipe-eval',
-          judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch } = opts;
+          judgeTimeoutMs = 180_000, judgeShots = [], withDistinct = false, _fetch = fetch } = opts;
   // No exemplars means 0-shot, and 0-shot the judge scores 0.670 against plain
   // cosine's 0.756 — actively worse. Refuse rather than degrade.
   if (!judgeShots.length) return null;
   const shots = judgeShots;
 
+  const schema = withDistinct
+    ? { type: 'object', properties: { grades: { type: 'array', items: distinctItem } }, required: ['grades'] }
+    : JUDGE_SCHEMA;
   const list = items.map((it, i) => `${i + 1}. ${it.text}`).join('\n');
-  const messages = [{ role: 'system', content: JUDGE_SYSTEM }];
+  const messages = [{ role: 'system', content: JUDGE_SYSTEM + (withDistinct ? JUDGE_DISTINCT_EXTRA : '') }];
   for (const s of shots) {
-    messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list) });
+    messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list, withDistinct) });
+    // The exemplar only knows which items the human kept, so under the distinct
+    // schema it teaches `grade` and mirrors it into `distinct` — the field is
+    // demonstrated as present and in range, not as a second labelled opinion.
     messages.push({ role: 'assistant', content: JSON.stringify({
-      grades: items.map((it, i) => ({ id: i + 1, grade: s.want.has(it.text) ? 3 : 0 })) }) });
+      grades: items.map((it, i) => {
+        const g = s.want.has(it.text) ? 3 : 0;
+        return withDistinct ? { id: i + 1, grade: g, distinct: g } : { id: i + 1, grade: g };
+      }) }) });
   }
-  messages.push({ role: 'user', content: judgeUser(reqs, jdText, list) });
+  messages.push({ role: 'user', content: judgeUser(reqs, jdText, list, withDistinct) });
 
   try {
     const res = await _fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: JUDGE_SCHEMA,
-                             options: { temperature: 0, num_ctx: 12288, num_predict: 1536 } }),
+      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: schema,
+                             options: { temperature: 0, num_ctx: 12288, num_predict: withDistinct ? 2048 : 1536 } }),
       signal: AbortSignal.timeout(judgeTimeoutMs),
     });
     if (!res.ok) return null;
@@ -96,6 +148,7 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     logCall('p3-judge', judgeModel, judged, { extra: `items=${items.length}` });
     const parsed = JSON.parse(judged?.message?.content || '{}');
     const out = new Map();
+    const clamp = v => Math.max(0, Math.min(3, Number(v) || 0));
     // The per-item `id` looks redundant — the order is fixed by the prompt — and
     // dropping it for a bare positional array would save ~660 output tokens, some
     // 35 s of this call. Measured on goldset-2 it costs 0.052 pair accuracy
@@ -103,7 +156,7 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     // redundant to the model; it is what keeps it aligned and deliberate per item.
     for (const e of parsed.grades || []) {
       const it = items[Number(e.id) - 1];
-      if (it) out.set(it.text, Math.max(0, Math.min(3, Number(e.grade) || 0)));
+      if (it) out.set(it.text, { grade: clamp(e.grade), distinct: clamp(e.distinct) });
     }
     return out.size ? out : null;
   } catch {
@@ -1108,6 +1161,33 @@ Text.
     maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: tightStub,
     _fetch: async () => { throw new Error('must not be called'); } });
   assert(!noShots.includes('Mentored two juniors'), 'no exemplars means no judge call at all');
+
+  // The distinctiveness variant must ask for the field and keep it — a schema
+  // the model answers but the parser drops would benchmark as a null result.
+  const sent = { schema: /** @type {any} */ (null), prompt: '' };
+  // Answers exactly what the schema asked for, so the "field absent" case is
+  // real rather than assumed.
+  const distinctFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    sent.schema = body.format;
+    sent.prompt = body.messages.map(m => m.content).join('\n');
+    const wants = body.format.properties.grades.items.required.includes('distinct');
+    return { ok: true, json: async () => ({ message: { content: JSON.stringify({
+      grades: [wants ? { id: 1, grade: 1, distinct: 3 } : { id: 1, grade: 1 }] }) } }) };
+  };
+  const full = await judgeGradesFull([{ text: 'a bullet' }], ['req'], '', {
+    judgeShots: shots, withDistinct: true, _fetch: distinctFetch });
+  assert(full.get('a bullet').distinct === 3, 'distinct field survives parsing');
+  assert(full.get('a bullet').grade === 1, 'grade is still read alongside it');
+  assert(sent.schema.properties.grades.items.required.includes('distinct'),
+    'schema demands the distinct field');
+  assert(/SETS THIS CANDIDATE APART/.test(sent.prompt), 'distinct prompt is actually sent');
+  const plain = await judgeGradesFull([{ text: 'a bullet' }], ['req'], '', {
+    judgeShots: shots, _fetch: distinctFetch });
+  assert(!sent.schema.properties.grades.items.required.includes('distinct'),
+    'default schema is unchanged, so the shipped calibration still applies');
+  assert(!/SETS THIS CANDIDATE APART/.test(sent.prompt), 'and the default prompt is unchanged too');
+  assert(plain.get('a bullet').distinct === 0, 'absent distinct reads as 0, not NaN');
 
   // Metric guarantee: force a no-digit top-2 by querying something both metric
   // bullets miss.

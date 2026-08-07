@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { embed, cosine } from '../embeddings.mjs';
-import { extractBlockBRequirements, judgeGrades } from '../cv-select.mjs';
+import { extractBlockBRequirements, judgeGradesFull } from '../cv-select.mjs';
 import { loadExemplars } from '../goldset.mjs';
 import { loadLabels } from '../opus-metrics.mjs';
 import { bootstrapCI, signTest } from '../stats.mjs';
@@ -87,9 +87,15 @@ async function prep() {
 
 // ── grades: the 30B judge, cached so the sweep costs nothing ─────────────────
 
-async function grades() {
+async function grades({ withDistinct = false } = {}) {
   const labels = loadLabels();
   const cache = load();
+  // Two separate caches on purpose. The one-field schema is what production
+  // runs, so it is the only fair input to "is the judge still worth 110 s";
+  // the two-field schema can move `grade` itself, so mixing them would compare
+  // a ranker against a differently-graded version of itself.
+  const key = withDistinct ? 'grades2' : 'grades';
+  cache[key] = cache[key] || {};
   const all = offersFor(labels, 'all');
   // 0-shot the judge is worse than no judge, so it refuses without exemplars —
   // which silently cached nothing on the first attempt.
@@ -98,20 +104,28 @@ async function grades() {
   let n = 0;
   for (const l of all) {
     const id = String(l.offer.id);
-    if (cache.grades[id]) continue;
+    if (cache[key][id]) continue;
     const reportPath = resolve(PROJECT, l.offer.report || '');
     const jdPath = resolve(PROJECT, 'batch/jds', `${id}.txt`);
     if (!existsSync(reportPath) || !existsSync(jdPath)) continue;
     const reqs = extractBlockBRequirements(readFileSync(reportPath, 'utf8'));
     if (!reqs.length) continue;
     const items = l.atoms.map(a => ({ text: a.text }));
-    const g = await judgeGrades(items, reqs, readFileSync(jdPath, 'utf8'), { judgeShots });
+    const g = await judgeGradesFull(items, reqs, readFileSync(jdPath, 'utf8'), { judgeShots, withDistinct });
     if (!g) continue;             // no exemplars or model failure: leave uncached
-    cache.grades[id] = Object.fromEntries(l.atoms.map(a => [a.id, g.get(a.text) ?? 0]));
-    save(cache);
+    // Re-read: a concurrent pass writes the same file, and an in-memory copy
+    // taken minutes ago would silently drop everything it wrote since.
+    const fresh = load();
+    fresh[key] = fresh[key] || {};
+    fresh[key][id] = Object.fromEntries(l.atoms.map(a => {
+      const v = g.get(a.text);
+      return [a.id, withDistinct ? { g: v?.grade ?? 0, d: v?.distinct ?? 0 } : (v?.grade ?? 0)];
+    }));
+    fresh.atomSim = fresh.atomSim || cache.atomSim;
+    save(fresh);
     process.stderr.write(`  graded ${id} (${++n})\n`);
   }
-  console.log(`grades cached for ${Object.keys(cache.grades).length} offers`);
+  console.log(`${key} cached for ${Object.keys(load()[key] || {}).length} offers`);
 }
 
 // ── the simulated funnel ─────────────────────────────────────────────────────
@@ -122,15 +136,20 @@ async function grades() {
  * specificity term are the two things being tested.
  * @returns {number[]} shipped atom ids
  */
-export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0 } = {}) {
+export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0 } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
+  const g2 = cache.grades2?.[id] || {};
   const A = cache.atoms;
 
   const score = A.map((a, i) =>
     off.maxcos[i]
-    + gradeW * (g[a.id] ?? 0)
+    // Under the two-field schema `grade` lives in .g; the one-field cache is a
+    // bare number. distinctW>0 means the caller wants the two-field pass, so its
+    // relevance grade must come from there too or the two terms disagree.
+    + gradeW * (distinctW ? (g2[a.id]?.g ?? 0) : (g[a.id] ?? 0))
+    + distinctW * (g2[a.id]?.d ?? 0)
     + spikeW * (cache.spike?.[id]?.[i] ?? 0));
 
   // Which project entries are eligible at all: the funnel keeps the top
@@ -332,12 +351,18 @@ function ablate(split = 'train') {
   for (const l of [0.1, 0.2, 0.3, 0.5, 0.8]) show(`mmr ${l} only`, { lambda: l });
   for (const r of [2, 4, 6]) show(`reserve ${r} only`, { reserve: r });
   show('spike 4 + mmr 0.3', { spikeW: 4, lambda: 0.3 });
+  // The judge's own answer to the question spike answers arithmetically.
+  if (Object.keys(cache.grades2 || {}).length) {
+    for (const d of [0.05, 0.10, 0.20, 0.40]) show(`distinct ${d} only`, { distinctW: d });
+    for (const d of [0.10, 0.20, 0.40]) show(`spike 6 + distinct ${d}`, { spikeW: 6, distinctW: d });
+    show('distinct 0.20, no cosine judge', { gradeW: 0, distinctW: 0.20 });
+  }
 }
 
 const cmd = process.argv[2];
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i > 0 ? process.argv[i + 1] : d; };
 if (cmd === 'prep') await prep();
-else if (cmd === 'grades') await grades();
+else if (cmd === 'grades') await grades({ withDistinct: process.argv.includes('--distinct') });
 else if (cmd === 'validate') validate();
 else if (cmd === 'sweep') sweep(arg('--split', 'train'));
 else if (cmd === 'ablate') ablate(arg('--split', 'train'));
