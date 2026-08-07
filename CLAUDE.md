@@ -111,7 +111,9 @@ makes the ranker prefer *distinctive* evidence over merely relevant evidence:
 a bullet scoring 0.6 against every past posting is filler, one scoring 0.6 here
 and 0.31 elsewhere is a differentiator. Worth **+0.060 differentiator coverage
 held out** against the full production ranker (n=66, CI [0.017, 0.103], 25-9,
-p=0.009) with `grade_yield` flat. (+0.072 judge-off — quote the 0.060.)
+p=0.009) with `grade_yield` flat, and **+0.080 in a full Phase 3 run** (n=32,
+11-2, p=0.022) with ATS coverage and every falsity metric unmoved.
+All three Phase 3 changes together: **0.311 → 0.548 (+0.237, 24-2, p<0.001)**.
 The corpus mean is built from past reports' Block B requirement sets and cached
 in `batch/cv-spike.json`; under 20 usable reports it returns null and ranking
 falls back to plain cosine. **The background cannot come from `jd-index.json`** —
