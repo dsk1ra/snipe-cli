@@ -630,9 +630,10 @@ if (args.writer === 'verbatim') {
   //
   // Project bullets are a separate axis, flagged separately for the same reason:
   // bundling the rendering change into the writer change would make a win
-  // unattributable to either. 2 is the default because 3 overflows the 2-page cap.
+  // unattributable to either. 4 is a per-project ceiling rather than a count —
+  // cv-select allocates the total budget, so this only has to not clip it.
   cvContent = verbatimContent(cvForPrompt, cvText, jdText,
-    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '2', 10) });
+    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '4', 10) });
 
   // Both are overwritten unconditionally by the Tier-3 blocks further down;
   // an empty array here just keeps the shape valid until they are.
@@ -838,7 +839,7 @@ if (Array.isArray(cvContent.projects)) {
   // Verbatim from the selected CV, which cv-select already ranked against this
   // posting. The writer's prose stays as the description; these are the evidence
   // under it.
-  const wantProjBullets = parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '2', 10);
+  const wantProjBullets = parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '4', 10);
   if (wantProjBullets) {
     const sel = parseCvSections(cvForPrompt).find(s => s.name === 'Projects');
     const byName = new Map((sel ? parseEntries(sel.lines).entries : [])
@@ -931,8 +932,12 @@ const jdTokens = new Set(tokenize(jdText));
 // by two lines lost an entire project's worth of evidence. Project bullets carry
 // most of this CV's differentiators, so they are trimmed one at a time and only
 // after the cheaper cuts, and dropping a project stays the last resort it was.
+// Step 0's `projBullets` is 4 rather than 2 because cv-select already spent a
+// fixed total budget across the kept projects — the page still carries eight
+// project bullets, just not two apiece, and a cap of 2 here would flatten the
+// allocation back out at render time. Every tighter step is unchanged.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4, projBullets: 2 }, // full
+  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // full
   { skills: 6, bullets: 4, projects: 4, projBullets: 1 },
   { skills: 6, bullets: 3, projects: 4, projBullets: 1 },
   { skills: 5, bullets: 3, projects: 4, projBullets: 1 },
