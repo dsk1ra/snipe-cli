@@ -294,6 +294,13 @@ node batch/bench-tools/select-sweep.mjs ablate --split train
 node batch/bench-tools/select-sweep.mjs check  --split test --spike 6
 ```
 
+`attribute` says *why* the remaining differentiators are lost — beaten by their
+own project siblings, project never made the cut, or more than `PROJ_BULLETS`
+differentiators inside one project, which no ranker or rewrite can recover.
+The fix differs per bucket, so read it before proposing one.
+**`docs/PHASE3-NEXT.md` holds the current attribution, the two candidate
+experiments, and the ideas already closed** — read it before re-opening any of them.
+
 `validate` is the load-bearing command: the simulator reproduces the funnel over
 cached cosines, and its deltas mean nothing until it reproduces the number a real
 run measured (it lands within 0.039). Offers split train/test by id parity —
