@@ -209,6 +209,10 @@ export function scoreRun(runDir, labels) {
 
 if (process.argv[1] && process.argv[1].endsWith('opus-metrics.mjs')) {
   const assert = (await import('assert')).default;
+  // A local truthiness helper rather than assert.ok: TS2775 requires an explicit
+  // type annotation on any imported assertion function, and cv-select.mjs and
+  // goldset.mjs already hand-roll theirs for the same reason.
+  const ok = (/** @type {any} */ c, /** @type {string} */ m) => { if (!c) throw new Error(m); };
 
   const label = {
     offer: { id: '1', company: 'Acme' },
@@ -235,7 +239,7 @@ if (process.argv[1] && process.argv[1].endsWith('opus-metrics.mjs')) {
   assert.equal(bad.differentiator_coverage, 0, 'both differentiators lost');
   assert.deepEqual(bad.lost_ids, [1, 4]);
   assert.equal(bad.noise_rate, 0.5, 'one of two shipped atoms was called padding');
-  assert.ok(Math.abs(bad.grade_yield - 2 / 6) < 1e-9, 'got 2 of a possible 6');
+  ok(Math.abs(bad.grade_yield - 2 / 6) < 1e-9, 'got 2 of a possible 6');
 
   // Retention must survive a rewrite that shortens the bullet, since that is what
   // Phase 3 does to every line — atom → output, not output → atom.

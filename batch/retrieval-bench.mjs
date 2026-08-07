@@ -153,50 +153,13 @@ export function ndcg(ranked, want) {
 
 // ── statistics ────────────────────────────────────────────────────────────────
 
-/** Deterministic PRNG so a reported CI is reproducible. */
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/**
- * Bootstrap CI of the mean of `xs`, resampling with replacement.
- * `xs` are per-offer paired deltas, so the resampling unit is the offer.
- * @param {number[]} xs
- */
-export function bootstrapCI(xs, draws = 5000, seed = 42, alpha = 0.05) {
-  if (!xs.length) return { lo: 0, hi: 0, mean: 0 };
-  const rnd = mulberry32(seed);
-  const means = [];
-  for (let d = 0; d < draws; d++) {
-    let s = 0;
-    for (let i = 0; i < xs.length; i++) s += xs[Math.floor(rnd() * xs.length)];
-    means.push(s / xs.length);
-  }
-  means.sort((a, b) => a - b);
-  return {
-    mean: xs.reduce((a, b) => a + b, 0) / xs.length,
-    lo: means[Math.floor(draws * alpha / 2)],
-    hi: means[Math.floor(draws * (1 - alpha / 2))],
-  };
-}
-
-/** Two-sided exact sign test on paired deltas; ties dropped, as is conventional. */
-export function signTest(xs, eps = 1e-9) {
-  const pos = xs.filter(x => x > eps).length;
-  const neg = xs.filter(x => x < -eps).length;
-  const n = pos + neg;
-  if (!n) return { pos, neg, p: 1 };
-  const C = (n, k) => { let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; };
-  let tail = 0;
-  const k = Math.min(pos, neg);
-  for (let i = 0; i <= k; i++) tail += C(n, i);
-  return { pos, neg, p: Math.min(1, 2 * tail / 2 ** n) };
-}
+// bootstrapCI and signTest moved to stats.mjs: tailor-harness grew a paired
+// comparison and importing them from here closed a cycle. Re-exported so every
+// existing caller and test keeps working.
+// Imported *and* re-exported: `export ... from` creates no local binding, and
+// evaluate() calls bootstrapCI directly further down.
+import { bootstrapCI, signTest } from './stats.mjs';
+export { bootstrapCI, signTest };
 
 // ── query-side rewrites ───────────────────────────────────────────────────────
 

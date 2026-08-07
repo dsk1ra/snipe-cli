@@ -464,6 +464,7 @@ try {
       '- Tested at 3M+ simulated events', '',
       '## Education', '', '**Northgate College**',
       '**BEng (Hons) Software Engineering — First Class Honours** | 2022 – 2026'].join('\n');
+    const scvPlus = scv + '\n- Taught 800+ undergraduate students across two languages';
 
     // A figure the CV does not state — 170 members reported as "150+ users".
     const figs = verifySummaryFigures(
@@ -481,6 +482,11 @@ try {
       'an inflating "+" is corrected to the CV figure, keeping the clause');
     eq(/150\+/.test(verifySummaryFigures('Delivered a platform serving 150+ users.', scv)), false,
       'a figure with no CV basis at all is still stripped, not deflated');
+    // Understating a "N+" figure is not a fabrication — "over 800 students" is
+    // exactly what "800+" means, and deleting that sentence cost a true claim.
+    eq(verifySummaryFigures('Taught over 800 students across two languages.', scvPlus),
+      'Taught over 800 students across two languages.',
+      'dropping the "+" from a CV figure understates it and is left alone');
     // A digit inside an identifier is a name, not a claim.
     eq(verifySummaryFigures('Targeting L40 Engineer roles at scale.', scv),
       'Targeting L40 Engineer roles at scale.',
@@ -499,6 +505,25 @@ try {
     const rebuilt = stripFabricatedCredentials('Russell Group graduate, strong fundamentals.', scv);
     eq(rebuilt === '' || /^[A-Z]/.test(rebuilt), true,
       'a rebuilt sentence is re-capitalised after its first clause is dropped');
+
+    // A name lifted from the posting. productFab is an allowlist of technologies,
+    // so a company or brand can never be on it: a JD.com posting shipped a summary
+    // claiming the platform was built "for Joybuy Systems" — JD.com's own brand —
+    // and every truth guard passed it.
+    const { stripJdProperNouns } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const jd = 'We are Joybuy Systems, part of JD.com. You will build Kubernetes tooling.';
+    eq(/Joybuy/.test(stripJdProperNouns(
+      'Led a team building a membership platform for Joybuy Systems. Grew subscribers from 80 to 170.', scv, jd)),
+      false, 'a company name the posting supplies and the CV lacks is dropped');
+    // ...but a name the CV does state is the candidate's, however often the
+    // posting also mentions it.
+    eq(stripJdProperNouns('Studied at Northgate College and shipped systems.', scv, 'Northgate College alumni welcome.'),
+      'Studied at Northgate College and shipped systems.',
+      'a name grounded in the CV survives even when the posting names it too');
+    // Stripping to nothing is a worse failure than the leak; the caller pads a
+    // short summary, so an empty one would be padded into shapelessness.
+    eq(stripJdProperNouns('Built tooling for Joybuy Systems.', scv, jd),
+      'Built tooling for Joybuy Systems.', 'the guard never empties the summary');
   }
 
   // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"
