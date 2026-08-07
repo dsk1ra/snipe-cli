@@ -247,6 +247,18 @@ simulates the funnel over cached cosines so a weight sweep costs no model calls:
 | CI95 / sign test | [0.053, 0.126] · 25-3 · p<0.001 | [0.032, 0.112] · 26-8 · p=0.003 |
 | `grade_yield` | +0.008 | +0.010 (ns) |
 
+Those were measured **judge-off**, because the grade cache was still filling.
+Re-run against the full production ranker (judge on at 0.10, one offer dropped
+for having no parseable Block B) the held-out gain is smaller and still holds:
+
+| held out, n=66, judge ON | before | after | delta | w-l | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.506 | 0.566 | **+0.060** | 25-9 | 0.009 * |
+| `grade_yield` | 0.544 | 0.553 | +0.009 | 29-22 | 0.40 |
+
+**+0.060 is the number to quote.** The judge was already capturing a little of
+what spike captures, so the judge-off figure overstates it by ~0.012.
+
 Yield is flat, so the coverage is not bought by shipping less relevant work.
 The shipped implementation then reproduced it end-to-end — real `selectCvForJd`,
 judge off, 30 offers: **0.429 → 0.520, +0.091, CI [0.022, 0.163], 11-3**.
@@ -282,7 +294,76 @@ mean has already discounted it. Neither shipped. `spike 4 + mmr 0.3` scores
 exactly `spike 6` alone — the tell that the second term is substituting, not
 adding.
 
-### 4.9 What was deliberately not done
+### 4.9 Asking the 30B for distinctiveness directly — negative
+
+Spike beat the judge at the job the judge existed for, so the obvious next move
+was to ask the judge the other question: a second 0-3 rating per item, in the
+*same* call, on how far the item sets the candidate apart from a typical
+shortlisted applicant, with the prompt stating outright that this is not
+relevance. 128 offers graded under the two-field schema, cached separately from
+the production one-field schema because adding a field can move `grade` itself.
+
+Held out, `spike 6 + distinct 0.2` looked like the best config anywhere:
+**0.506 → 0.589, +0.083, 30-8, p=0.0005**. It does not survive its controls.
+
+`distinct` is 86.5% identical to `grade` and takes only the values 0 and 3, so
+adding it is largely *extra relevance weight in disguise*. Two controls, both
+paired per offer on the held-out split:
+
+| comparison | delta | CI95 | w-l | p |
+|---|---|---|---|---|
+| distinct 0.2 vs same grade source, distinct off | +0.018 | [0.005, 0.034] | 6-0 | 0.031 * |
+| distinct 0.2 vs **best pure-relevance** (grade 0.3) | +0.010 | [-0.010, 0.030] | 9-4 | **0.27** |
+
+Against the best configuration reachable *without* the new field, the
+distinctiveness rating adds nothing significant — and only 9 of 66 offers move
+at all. Simply weighting the existing grade more heavily gets +0.073 held out
+and saturates there. Not shipped.
+
+**Why it failed is a design fault, not a verdict on the idea.** The exemplars in
+`batch/judge-shots.json` record only which items a human *kept*, so under the
+two-field schema they demonstrate `grade` and mirror it into `distinct`. The
+model was shown the answer being copied, and copied it. Testing this properly
+needs exemplars where a human rated distinctiveness separately — which does not
+exist yet.
+
+### 4.10 The shipped judge is already a binary classifier, by accident
+
+Falling out of the above, and more important than it:
+
+```
+one-field grade histogram (128 offers x 33 atoms):  0: 3026   2: 30   3: 1135
+two-field grade histogram:                          0: 2587           3: 1637
+```
+
+`JUDGE_SYSTEM` says *"Use the full range — a grading where most items are 2 or 3
+is not a grading."* The judge obeys the opposite: **30 of 4191 gradings use the
+middle of the scale.** The cause is the exemplars, which are built as
+`s.want.has(text) ? 3 : 0` from binary human kept/not-kept ticks — so every
+demonstration the model sees is a 0 or a 3, and demonstrations beat instructions.
+
+This matters because the retrieval ledger already measured the cost: *"Do not
+binarise the grades to shrink the output — that costs 0.03."* The shipped judge
+is paying that 0.03 by construction and has been all along. Fixing it means
+graded exemplars, not a prompt change. Untouched here — it is a finding, and the
+fix is a separate piece of work with its own benchmark.
+
+### 4.11 Is the 30B judge still worth its 42 s?
+
+Asked because deleting a model call has now won twice. Held out, spike on:
+
+| ranker | coverage | delta vs shipped | p |
+|---|---|---|---|
+| shipped (`spike 6`, `grade 0.10`) | 0.566 | — | — |
+| judge deleted (`grade 0`) | 0.545 | **−0.021** | 0.081 |
+
+The judge survives: removing it gives back a third of spike's gain and the
+result stops being significant. It stays. Raising its weight to 0.3 measured
++0.013 (3-0, p=0.25, CI lower bound 0.000) — not claimable, and its 0.10 was
+calibrated on pair accuracy in the retrieval ledger, a different metric, so it
+is left alone.
+
+### 4.12 What was deliberately not done
 
 `cv.md` was backed up (`cv.md.backup-20260807`) but **not rewritten**. Dead
 weight is real — several atoms never get selected by any of the 128 offers — but
