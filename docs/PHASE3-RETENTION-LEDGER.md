@@ -206,7 +206,83 @@ The 7B generation call is off the shipping path; `--writer model` remains as the
 benchmark control. Phase 3 loses its 7B call entirely — the summary stage
 (`batch/summary-stage.mjs`) is now the only generation in the phase.
 
-### 4.7 What was deliberately not done
+### 4.7 Selection: corpus-relative specificity ("spike")
+
+§4.6 left the whole remaining gap in *selection*. The oracle bound says so
+directly — with the same page budget the pipeline already uses:
+
+```
+n=30 offers · 16.4 atoms shipped per CV · 5.9 differentiators per offer
+
+metric                    shipped   Opus ceiling   headroom
+differentiator_coverage    0.468       1.000        0.532
+grade_yield                0.689       0.770        0.081
+
+offers missing >=1 differentiator:                30/30
+offers where the page budget made it impossible:   0/30
+```
+
+Bulk relevance is at 89% of ceiling; differentiators at 47%; and space is
+**never** the reason. The mechanism is in `cv-select.mjs`: the score was
+`cos + 0.10 x judge_grade`, and *both* terms measure relevance to the posting.
+Nothing measured distinctiveness, and top-k had no diversity term — so four ways
+of saying "CI/CD" outrank the lock-free frame ring that makes the candidate
+unusual. On offer #105 the four lost atoms were graded 3 ("deep performant Rust,
+exactly the stack") and sat at 0.14 overlap with anything on the page.
+
+The fix is one term:
+
+```
+score = cos - alpha x mean_over_past_postings(cos)      alpha = w/(1+w), w = 6
+```
+
+An atom that scores 0.6 against *every* posting is filler however high that is;
+one that scores 0.6 here and 0.31 elsewhere is what differentiates. Swept
+offline over the label corpus (`batch/bench-tools/select-sweep.mjs`), which
+simulates the funnel over cached cosines so a weight sweep costs no model calls:
+
+| | train (n=61) | held out (n=67) |
+|---|---|---|
+| `differentiator_coverage` | 0.497 → 0.581 (**+0.084**) | 0.473 → 0.544 (**+0.072**) |
+| CI95 / sign test | [0.053, 0.126] · 25-3 · p<0.001 | [0.032, 0.112] · 26-8 · p=0.003 |
+| `grade_yield` | +0.008 | +0.010 (ns) |
+
+Yield is flat, so the coverage is not bought by shipping less relevant work.
+The shipped implementation then reproduced it end-to-end — real `selectCvForJd`,
+judge off, 30 offers: **0.429 → 0.520, +0.091, CI [0.022, 0.163], 11-3**.
+
+The weight curve peaks in the interior (4 → +0.075, 6 → +0.084, 8 → +0.079,
+12 → +0.073), so 6 is a plateau rather than a knife edge.
+
+**The background must come from requirement sets.** Using the full-JD vectors in
+`jd-index.json` — which would have needed no new cache and no new invalidation
+rule — measured **−0.025**, because mean cosine against whole JDs is a different
+scale from max cosine against requirements and subtracting it distorts rather
+than normalises. The cheap version was tested precisely because it was cheap,
+and it lost.
+
+**Parameterisation matters here.** The sweep scored `cos + w*(cos - mean)`.
+Shipping that raw would inflate the cosine part sevenfold at w=6 and silently
+delete the judge rerank, whose +0.10/grade was benchmarked against *unscaled*
+cosine. Dividing by (1+w) is a positive scale factor — rank-identical, so the
+measurement still applies — and keeps the judge on its calibrated scale.
+
+### 4.8 Two ideas that did not survive the same test
+
+Swept in the same grid, on the same offers:
+
+| variant | best delta on train | verdict |
+|---|---|---|
+| MMR redundancy penalty (λ 0.1–0.8) | +0.039 alone, **+0.002 on top of spike** | subsumed |
+| Reserved differentiator slots (2/4/6) | +0.005, then negative at 6 | dead |
+
+Redundancy is a real effect but spike already captures it: a bullet that
+duplicates another is by construction one the corpus also likes, so the corpus
+mean has already discounted it. Neither shipped. `spike 4 + mmr 0.3` scores
+exactly `spike 6` alone — the tell that the second term is substituting, not
+adding.
+
+### 4.9 What was deliberately not done
 
 `cv.md` was backed up (`cv.md.backup-20260807`) but **not rewritten**. Dead
 weight is real — several atoms never get selected by any of the 128 offers — but

@@ -105,6 +105,19 @@ Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both ph
 `cv-select.mjs` ranks CV bullets against Block B requirements via embeddings
 first. PDF is hard-capped at 2 pages.
 
+Ranking is `cos − α·corpus_mean + 0.10 × judge_grade`, `α = w/(1+w)` at
+`spikeWeight = 6`. That middle term — **corpus-relative specificity** — is what
+makes the ranker prefer *distinctive* evidence over merely relevant evidence:
+a bullet scoring 0.6 against every past posting is filler, one scoring 0.6 here
+and 0.31 elsewhere is a differentiator. Worth **+0.072 differentiator coverage
+held out** (n=67, CI [0.032, 0.112], 26-8, p=0.003) with `grade_yield` flat.
+The corpus mean is built from past reports' Block B requirement sets and cached
+in `batch/cv-spike.json`; under 20 usable reports it returns null and ranking
+falls back to plain cosine. **The background cannot come from `jd-index.json`** —
+whole-JD cosine is a different scale from max-cosine-against-requirements, and
+measured −0.025. Only the real embedder may write the cache (`caching =
+_embed === embed`), or a test stub would poison production ranking.
+
 **There is no bullet-generation call.** `--writer verbatim` is the default: the
 selected bullets render as `cv.md` already words them, and projects render 2
 bullets each rather than a prose paragraph. Deleting the 7B rewrite and adding
@@ -254,7 +267,29 @@ opposite direction from `shippedAtomIndices` — an atom split across two bullet
 still counts. Relabelling is `batch/bench-tools/opus-label.mjs`; the labels are
 positional against `cv.md`, so **editing `cv.md` invalidates all 128**.
 `SNIPE_SELECT_CACHE` freezes selection across arms, so a generation A/B costs no
-66 s judge call and every arm ranks identically.
+66 s judge call and every arm ranks identically — which also means **a selection
+change must not reuse an existing select cache**, since the key is over the CV
+and requirements, not the ranker.
+
+Selection changes get swept offline instead, because testing one end-to-end costs
+a judge call per offer:
+
+```bash
+node batch/bench-tools/select-sweep.mjs prep      # cosines, local and free
+node batch/bench-tools/select-sweep.mjs grades    # 30B grades, ~110 s/offer, cached
+node batch/bench-tools/select-sweep.mjs validate  # does the sim match the real run?
+node batch/bench-tools/select-sweep.mjs ablate --split train
+node batch/bench-tools/select-sweep.mjs check  --split test --spike 6
+```
+
+`validate` is the load-bearing command: the simulator reproduces the funnel over
+cached cosines, and its deltas mean nothing until it reproduces the number a real
+run measured (it lands within 0.039). Offers split train/test by id parity —
+`sweep`/`ablate` tune on train, `check` scores one config on held-out and is
+never used to choose one. A half-populated grade cache silently ranks the
+ungraded offers as all-zero, which is a different ranker rather than a missing
+term, so the tools drop the judge term entirely unless every offer in the split
+has grades.
 
 ### Benchmark rules (learned the hard way)
 
