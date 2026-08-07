@@ -227,7 +227,70 @@ Each proposed rewrite is testable for **$0**: embed the new text, recompute
 corpus means, re-simulate over the 128 offers, keep only what measurably helps.
 Do that rather than shipping them on judgement.
 
-## Open defect — the judge grades binary
+## Open defect — the exemplars pin every project bullet to 0
+
+Found 2026-08-07 while building graded exemplars, and larger than the
+binarisation it was found under.
+
+Exemplars carry `wantText`, the atoms a human ticked, and `judgeGradesFull`
+demonstrates them as `want.has(text) ? 3 : 0` over its item list. Those items
+are per bullet. A ticked *project* enters `wantText` as its `cvAtoms` text,
+which is the project **title** — `cvAtoms` makes a project one atom (14 atoms)
+while `cv-select` and the label corpus are per bullet (33). No item
+`cv-select` grades is ever a title, so:
+
+```
+shipped exemplar   demonstrated histogram   non-zero project bullets
+offer 5            28/0/0/5                 0/24
+offer 50           30/0/0/3                 0/24
+```
+
+Both demonstrations teach the judge that all 24 project bullets are 0, whatever
+the human ticked. Projects hold 24 of 33 atoms and most differentiators, and
+demonstrations beat the system prompt. `loadExemplars`' guard misses it because
+it validates `want` against `cvAtoms` text — the same space that produced the
+titles, not the space the consumer matches in.
+
+### Attempt 1 — graded exemplars from the Opus corpus. Rejected, −0.148
+
+The retention ledger scoped the fix as needing a human to re-rate 0–3. It does
+not: `batch/bench/opus/labels/` already grades every atom 0–3 on 128 offers, per
+bullet, in exactly `cv-select`'s text space (verified 33 of 33 identical and in
+order). Built as `export-shots --graded`, it fixes both defects at once —
+offers 50 and 103 demonstrate 11/9/8/5 and 6/9/10/8, with 16/24 and 19/24
+project bullets non-zero.
+
+It works as designed and ranks worse. Held out on `goldset-2`, 12 offers:
+
+| variant | binary (shipped) | graded | delta |
+|---|---|---|---|
+| `judge` alone | 0.801 | 0.656 | −0.145 |
+| `cos+judge-0.10` (shipped blend) | 0.781 | 0.633 | **−0.148** |
+
+The judge's output distribution moved exactly as intended — mid-scale usage
+32% → 83% — and accuracy fell anyway. **So the binary output was not itself what
+was costing accuracy.** Three explanations this run cannot separate:
+
+1. **Rubric mismatch**, the main suspect: the demonstrations teach the Opus
+   labeller's 0–3 rubric and the metric scores against the goldset human's
+   keep/drop ticks. Two people, two notions of relevant.
+2. **The metric leans binary by construction.** Pair accuracy over binary gold
+   ticks rewards a judge that separates hard into 0/3; a graded spread is a
+   weaker separator even where it is more truthful. Standing rule 5 — ask what
+   the metric reads if the change lands — and it was asked after the 22 minutes
+   rather than before.
+3. The exemplar pair moved `{5,50}` → `{50,103}`; the binary control on
+   `{50,103}` was the option not taken.
+
+### Attempt 2 — expand a ticked project into its bullets
+
+Keeps the binary taste the gold sheet rewards and fixes only the space bug: a
+ticked project contributes its own bullets to `wantText`, so its bullets
+demonstrate as 3 instead of 0. Imports no second rubric. Requires widening
+`loadExemplars`' guard to the consumer's space (`parts`), or the expanded file
+is dropped as unmatched.
+
+## Superseded — the judge grades binary
 
 Not caused by any of this work; found during it. See ledger §4.10.
 
@@ -256,6 +319,7 @@ is graded exemplars — a human rating a sample 0–3 rather than ticking keep/d
 | spike background from `jd-index.json` | −0.025, wrong scale |
 | project gate scored by top-k mass (`gateK`) | +0.008 held out, 4 of 66 offers, p=0.375 |
 | keeping all 5 projects on the same budget (`projKeep`) | −0.005 coverage, −0.009 yield |
+| graded exemplars from the Opus label corpus | −0.148 pair accuracy held out; see below |
 
 ## Standing rules that cost time to learn
 
