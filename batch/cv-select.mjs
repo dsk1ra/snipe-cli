@@ -129,7 +129,13 @@ export async function judgeGradesFull(items, reqs, jdText, opts = {}) {
     // demonstrated as present and in range, not as a second labelled opinion.
     messages.push({ role: 'assistant', content: JSON.stringify({
       grades: items.map((it, i) => {
-        const g = s.want.has(it.text) ? 3 : 0;
+        // A graded exemplar states all four values per bullet. The binary
+        // fallback cannot: the gold sheet holds keep/drop ticks, and worse, its
+        // project ticks are project *titles* while every item here is a bullet,
+        // so under it all 24 project bullets demonstrate as 0 however the human
+        // ticked them. Demonstrations beat the system prompt, so that is what
+        // the judge learns.
+        const g = s.grades ? (s.grades.get(it.text) ?? 0) : (s.want.has(it.text) ? 3 : 0);
         return withDistinct ? { id: i + 1, grade: g, distinct: g } : { id: i + 1, grade: g };
       }) }) });
   }
@@ -1172,6 +1178,23 @@ Text.
   // Reranker: a stub judge that grades one otherwise-weak bullet 3 must pull it
   // above a bullet cosine ranked higher, and a judge failure must change nothing.
   const shots = [{ reqs: ['r'], jd: 'j', want: new Set(['Built Rust encryption service']) }];
+  // A graded exemplar must reach the demonstration, and a binary one must still
+  // fall back — the project entries in a binary `want` are titles, so nothing
+  // cv-select grades ever matches them and all 24 project bullets demonstrate 0.
+  {
+    const seen = { binary: '', graded: '' };
+    const spy = (k) => async (_u, init) => {
+      seen[k] = JSON.parse(init.body).messages.filter(m => m.role === 'assistant')[0].content;
+      return { ok: true, json: async () => ({ message: { content: '{"grades":[]}' } }) };
+    };
+    const one = [{ text: 'Built Rust encryption service' }, { text: 'Wrote Java billing reports' }];
+    await judgeGradesFull(one, ['r'], '', { judgeShots: shots, _fetch: spy('binary') });
+    assert(/"grade":3/.test(seen.binary) && /"grade":0/.test(seen.binary), 'binary exemplar demonstrates 3 and 0');
+    await judgeGradesFull(one, ['r'], '', { _fetch: spy('graded'), judgeShots: [{
+      ...[...shots][0], grades: new Map([['Built Rust encryption service', 1], ['Wrote Java billing reports', 2]]) }] });
+    assert(/"grade":1/.test(seen.graded) && /"grade":2/.test(seen.graded),
+      `graded exemplar demonstrates the middle of the scale, got ${seen.graded}`);
+  }
   // Near-identical vectors, so cosines land in a narrow band the way real ones
   // do (0.4-0.7). Against the original stub's 1.00-vs-0.07 gap a 0.3 grade
   // boost correctly cannot win, which tests nothing about the blend.
