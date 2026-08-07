@@ -9,9 +9,10 @@
 //       → hops JD → ▶) · → on a selected list row walks its inline actions and
 //       Enter fires the focused one (← walks back, then switches tab): the link
 //       on a normal row, see error / retry / debug on a failed one (which ends
-//       at debug and shows no link) · see error is a file:// hyperlink to
-//       batch/errors/<id>.txt, retry re-runs all three phases, debug opens the
-//       JD that phase read so it can be edited before the retry · Tab/
+//       at debug and shows no link), proceed? on a P1-gated one · see error is a
+//       file:// hyperlink to batch/errors/<id>.txt, retry re-runs all three
+//       phases, debug opens the JD that phase read so it can be edited before
+//       the retry, proceed? re-runs with the P1 gate off · Tab/
 //       Shift-Tab still cycles input ↔ ▶ ↔ list · Enter loops JD → URL → Add
 //       to queue (enqueues) · o open result folder · a mark applied > ·
 //       x mark skip - (mutually exclusive) ·
@@ -348,8 +349,11 @@ function itemInfo(id) {
   }
   if (row && row.p3s === 'completed') return { ...base, kind: 'done', resultDir: resultDirFor(row.rnum) };
   if (row && row.p3s === 'skipped') {
-    const note = row.p2s === 'p1-gated' ? 'P1-gated (no Phase 2)' : 'below threshold';
-    return { ...base, kind: 'done', note };
+    // A P1-gated row is the one finished state with an action left: the gate is a
+    // cost heuristic applied to a 4B pre-screen score, not a verdict, so the row
+    // carries the override rather than making it a command-line re-run.
+    if (row.p2s === 'p1-gated') return { ...base, kind: 'done', note: 'P1-gated', gated: true };
+    return { ...base, kind: 'done', note: 'below threshold' };
   }
   if (S.snap.queueIds.includes(id)) return { ...base, kind: 'waiting' };
   if (S.drainActive || S.snap.runner) {
@@ -433,7 +437,30 @@ function startDrain(bump) {
   bump();
 }
 
-// ── retry / debug a failed row ────────────────────────────────────────────────
+// ── retry / debug a failed row · proceed past the P1 gate ────────────────────
+
+// One detached runner over a single id — the shape retry and "proceed?" share,
+// differing only in flags. Guarded like startDrain: two runners race over
+// local-state.tsv and the report-number allocator.
+function runOnly(id, args, msg, bump) {
+  if (S.drainActive || S.snap.runner) { setMsg('A run is active — try again when it finishes', true); return; }
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  const fd = fs.openSync(path.join(LOGS_DIR, 'snipe-tui-drain.log'), 'a');
+  const child = spawn('bash', [RUNNER, '--only-id', id, ...args],
+    { detached: true, stdio: ['ignore', fd, fd] });
+  fs.closeSync(fd);
+  child.on('exit', code => {
+    S.drainActive = false;
+    setMsg(code === 0 ? `${msg.done} finished` : `${msg.done} exited with code ${code}`, code !== 0);
+    poll();
+    notifyDrainDone([id], code);
+    bump();
+  });
+  child.unref(); // survives TUI quit; state stays on disk
+  S.drainActive = true;
+  setMsg(msg.start);
+  bump();
+}
 
 // What "debug" opens: the input that phase read, so it can be edited in place
 // before the retry reads it back. Phases 1-2 consume the fetched JD, Phase 3 the
@@ -475,25 +502,27 @@ function retryItem(bump) {
   const info = itemInfo(id);
   if (info.kind !== 'failed') { setMsg('Nothing to retry — this item did not fail', true); return; }
   if (!info.retryable) { setMsg('Posting is expired or blocked — retrying cannot recover it', true); return; }
-  // Same guard as startDrain: two runners race over local-state.tsv and the
-  // report-number allocator.
-  if (S.drainActive || S.snap.runner) { setMsg('A run is active — retry when it finishes', true); return; }
-  fs.mkdirSync(LOGS_DIR, { recursive: true });
-  const fd = fs.openSync(path.join(LOGS_DIR, 'snipe-tui-drain.log'), 'a');
-  const child = spawn('bash', [RUNNER, '--only-id', id, '--retry-failed'],
-    { detached: true, stdio: ['ignore', fd, fd] });
-  fs.closeSync(fd);
-  child.on('exit', code => {
-    S.drainActive = false;
-    setMsg(code === 0 ? `Retry of #${id} finished` : `Retry of #${id} exited with code ${code}`, code !== 0);
-    poll();
-    notifyDrainDone([id], code);
-    bump();
-  });
-  child.unref(); // survives TUI quit; state stays on disk
-  S.drainActive = true;
-  setMsg(`Retrying #${id} through all three phases…`);
-  bump();
+  runOnly(id, ['--retry-failed'], {
+    start: `Retrying #${id} through all three phases…`,
+    done: `Retry of #${id}`,
+  }, bump);
+}
+
+// "proceed?" overrules the Phase 1→2 gate for one offer. Nothing is re-scored:
+// local-runner.sh's offer list skips anything already `scored` (:918), so Phase 1
+// is a no-op, the cached score and JD are reused, and the run effectively starts
+// at Phase 2 — which is exactly the "reuse Phase 1's work" path, spelled as one
+// flag instead of a second code path. Phase 3 then follows on its own if the
+// eval clears --threshold. No --retry-failed: the row is `p1-gated`, not failed,
+// so Phase 2's own guard already lets it through.
+function proceedItem(bump) {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  if (!itemInfo(id).gated) { setMsg('Nothing to proceed with — this item was not P1-gated', true); return; }
+  runOnly(id, ['--p1-threshold', '0'], {
+    start: `Evaluating #${id} — P1 gate overridden…`,
+    done: `Proceed on #${id}`,
+  }, bump);
 }
 
 // The row's "see error" already carries a file:// hyperlink for terminals that
@@ -788,6 +817,7 @@ function makeStdinHandler(bump, quit) {
       if (S.rowFocus === 'link') openLink();
       else if (S.rowFocus === 'error') openError();
       else if (S.rowFocus === 'retry') retryItem(bump);
+      else if (S.rowFocus === 'proceed') proceedItem(bump);
       else if (S.rowFocus === 'debug') openDebug();
       else openResult();
     }
@@ -801,7 +831,9 @@ function makeStdinHandler(bump, quit) {
     if (info.kind === 'failed') {
       return ['row', 'error', ...(info.retryable ? ['retry'] : []), 'debug'];
     }
-    return S.snap.urls.get(id) ? ['row', 'link'] : ['row'];
+    // A gated row keeps its link — unlike a failed one, the posting is still
+    // worth reading before deciding to overrule the gate.
+    return [...(info.gated ? ['row', 'proceed'] : ['row']), ...(S.snap.urls.get(id) ? ['link'] : [])];
   };
 
   // False when ← runs off the left edge — the caller falls through to the tab
@@ -1101,6 +1133,11 @@ function QueueRow({ id, selected, width }) {
   if (info.kind === 'waiting') suffix.push(['  waiting', { dimColor: true }]);
   if (info.kind === 'pending') suffix.push(['  pending (press ▶)', { dimColor: true }]);
   if (info.note) suffix.push([`  ${info.note}`, { dimColor: true }]);
+  // Same yellow as retry/debug: an action the row is offering, not a status.
+  if (info.gated) {
+    suffix.push([' | ', { dimColor: true }]);
+    suffix.push(['proceed?', { color: 'yellow', inverse: sel && S.rowFocus === 'proceed' }]);
+  }
   // The error text lives in batch/errors/<id>.txt, reached through "see error" —
   // the row shows the handle, not a 60-char slice of a 200-char message that
   // truncated mid-word and ate the label's width.
