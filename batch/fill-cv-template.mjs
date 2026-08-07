@@ -342,7 +342,9 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
 function buildProjectsHtml(cvProjects, projectsField) {
   const sel = Array.isArray(projectsField)
     ? projectsField
-        .map(p => (typeof p === 'string' ? { name: p, description: '' } : { name: p?.name || '', description: p?.description || '' }))
+        .map(p => (typeof p === 'string'
+          ? { name: p, description: '', bullets: [] }
+          : { name: p?.name || '', description: p?.description || '', bullets: Array.isArray(p?.bullets) ? p.bullets : [] }))
         .filter(p => p.name)
     : [];
 
@@ -357,19 +359,33 @@ function buildProjectsHtml(cvProjects, projectsField) {
     chosen = cvProjects.slice(0, 4).map(cv => ({ cv, description: '' }));
   }
 
-  return chosen.map(({ cv, description }) => {
-    const desc = description && description.trim()
-      ? description.trim()
-      // Same weld as remapProjectNames' backfill had: joining two bullets with a
-      // bare space runs two sentences together with no separator.
-      : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. ');
+  return chosen.map(({ cv, description, bullets }) => {
     const techLine = [cv.tech, cv.period].filter(Boolean).join(' | ');
+    // Bullets when the writer supplies them, one paragraph otherwise.
+    //
+    // The paragraph was the only shape for a long time, and it is where the
+    // candidate's most distinctive evidence was going to die. Projects hold 24 of
+    // this CV's 33 selectable atoms and most of what a reviewer called a
+    // differentiator, and squashing five selected bullets into a 35-55 word blurb
+    // physically cannot carry them: measured against the Opus labels, every
+    // differentiator lost on a sampled offer was a project bullet, and
+    // differentiator_coverage sat at 0.17-0.50 while every falsity metric read
+    // perfect. A list costs vertical space, which is what the density ladder is
+    // for; losing the evidence costs the application.
+    const body = bullets.length
+      ? `<ul class="project-bullets">${bullets.map(b => `<li>${boldMetrics(esc(String(b)))}</li>`).join('')}</ul>`
+      : `<div class="project-desc">${boldMetrics(esc(
+          description && description.trim()
+            ? description.trim()
+            // Same weld as remapProjectNames' backfill had: joining two bullets
+            // with a bare space runs two sentences together with no separator.
+            : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. ')))}</div>`;
     return `
     <div class="project">
       <div>
         <span class="project-title">${esc(cv.name)}</span>${cv.badge ? `\n        <span class="project-badge">${esc(cv.badge)}</span>` : ''}
       </div>
-      <div class="project-desc">${boldMetrics(esc(desc))}</div>
+      ${body}
       ${techLine ? `<div class="project-tech">${esc(techLine)}</div>` : ''}
     </div>`;
   }).join('\n');
