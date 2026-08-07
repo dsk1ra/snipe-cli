@@ -380,7 +380,7 @@ is paying that 0.03 by construction and has been all along. Fixing it means
 graded exemplars, not a prompt change. Untouched here — it is a finding, and the
 fix is a separate piece of work with its own benchmark.
 
-### 4.11 Is the 30B judge still worth its 42 s?
+### 4.11 Is the 30B judge still worth its 66 s?
 
 Asked because deleting a model call has now won twice. Held out, spike on:
 

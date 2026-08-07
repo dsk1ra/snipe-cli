@@ -132,9 +132,29 @@ fabrication lived. Scaling the writer does not fix it: a 9B and the 30B both buy
 `--writer model` survives as the benchmark control only. Full numbers and the
 two production bugs found on the way: `docs/PHASE3-RETENTION-LEDGER.md`.
 
-`SNIPE_PROJECT_BULLETS` sets the per-project bullet count (default 2). 3 renders
-a 3-page PDF, so the density ladder in `local-pdf-offer.mjs` drops it before it
-drops experience bullets.
+Project bullets are **allocated, not capped**. `cv-select.mjs` spends one total
+budget (`maxProjects × 2` = 8, exactly what a flat 2-per-project rendered) across
+the projects that survived the top-4 cut: one bullet each, then the rest to the
+highest-scoring bullets anywhere, ≤ `maxBulletsPerProject` (4) per project. So a
+posting mostly about one project renders 4/2/1/1 and a flat field still renders
+2/2/2/2. Worth **+0.101 differentiator coverage** end to end (n=32, 15-4,
+CI [0.039, 0.161], p=0.019) with `grade_yield` +0.030, `mean_bullets` identically
+8.000, and every falsity metric unmoved — it is redistribution, not expansion.
+Costs `ats_coverage` −0.015 (CI [−0.028, −0.002], 7× its A/A floor, so real).
+Attacks the one loss bucket no ranker or rewrite can reach: a third flagged
+differentiator inside a two-bullet project.
+
+`SNIPE_PROJECT_BULLETS` is now the per-project **ceiling**, not the count
+(default 4) — it only has to avoid clipping the allocation, since cv-select
+already spent the budget. The same is true of the density ladder's step 0 in
+`local-pdf-offer.mjs`; every tighter step still drops project bullets before
+experience bullets. All 32 bench offers render at 2 pages on step 0.
+
+**`trim()`'s metric-bullet guarantee overrides the ranker at keep=1**, which the
+allocation now reaches: all 57 single-slot project bullets across the 32 offers
+carry a digit against a 72% base rate, and the swap fires on 42% of them. It cost
+one differentiator in 32 offers, so it is not eating the gain — but it is the
+first suspect for that ATS dip.
 
 That ranking is then reranked by `snipe-eval`, which grades each bullet 0–3 for
 the posting and is blended in at `cos + 0.10 × grade` (+0.10 pair accuracy
@@ -142,8 +162,11 @@ against the human gold set, holds under a disjoint exemplar pair — see
 `docs/PHASE3-RETRIEVAL-LEDGER.md`). It is few-shot from two hand-labelled
 offers in `batch/judge-shots.json`; **0-shot it is worse than no rerank at
 all**, so a missing or unmatched exemplar file disables it rather than
-degrading it, as does any model failure. Still worth its 42 s: deleting it costs
-−0.021 differentiator coverage held out even with spike on.
+degrading it, as does any model failure. Still worth its 66 s: deleting it costs
+−0.021 differentiator coverage held out even with spike on. (42 s was the plan's
+estimate and is not a measurement — it survived in two places until a wall-clock
+check on a fresh select cache put a verbatim-writer offer at 67 s end to end,
+which is the judge plus the summary stage and little else.)
 
 **Known defect — the judge grades binary.** Its exemplars are built as
 `want.has(text) ? 3 : 0` from binary human ticks, so every demonstration is a 0
