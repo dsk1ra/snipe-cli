@@ -21,6 +21,12 @@ on, paired per offer:
 The oracle ceiling at the current page budget is **1.000**, so **0.452 of
 headroom remains**. That is the target.
 
+**Superseded by Experiment A** (below): coverage is now 0.649 and 0.351 of
+headroom remains. The attribution below was re-run under the new allocation —
+314 missed differentiators became 278, the "beaten by its own project siblings"
+bucket 153 → 125. The shares barely moved, so the reading still stands; the
+counts do not.
+
 ## Why the remaining 0.452 is lost
 
 Reproduce with `node batch/bench-tools/select-sweep.mjs attribute` — do not
@@ -42,7 +48,63 @@ only two bullets fit. No ranker and no rewrite can recover them — the budget i
 allocated as a flat `PROJ_BULLETS` per project regardless of how well any one
 project matches.
 
-## Experiment A — adaptive per-project bullet allocation (do this first)
+## Experiment A — DONE, shipped. +0.101 differentiator coverage
+
+Ran 2026-08-07. The hypothesis held: the page budget was right and its
+distribution was not.
+
+`cv-select.mjs` now spends one total project-bullet budget (8 — `maxProjects × 2`,
+exactly what the flat rule rendered) across the projects that survived the top-4
+cut: one bullet apiece, then the remainder to the highest-scoring bullets
+anywhere, capped at 4 per project. Greedy over pooled bullets rather than a
+proportional split of the scores, because the scores are cosines in a narrow band
+— a proportional rule off 0.58 vs 0.55 is noise, while "whose next bullet is
+best" is the question the page is actually asking.
+
+End to end, 32 offers, judge on, fresh select cache, paired (`spike32` → `alloc32`):
+
+| metric | before | after | delta | w-l | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.548 | **0.649** | +0.101 CI [0.039, 0.161] | 15-4 | 0.019 |
+| `grade_yield` | 0.710 | 0.741 | +0.030 CI [0.012, 0.049] | 20-10 | 0.099 |
+| `mean_grade` | 1.666 | 1.705 | +0.039 | 20-10 | 0.099 |
+| `ats_coverage` | 0.696 | 0.681 | **−0.015** CI [−0.028, −0.002] | 7-17 | 0.064 |
+| `mean_bullets` | 8.000 | 8.000 | — | — | — |
+| `grounding` / `metric_fab` / `product_fab` / `num_lost` | — | — | unmoved | — | — |
+
+`mean_bullets` identical to three decimals is the load-bearing row: this is
+redistribution, not a bigger page. Realised shapes are 4/2/1/1 (4 offers),
+4/1/1/2 (5), 3/3/1/1 (2) and eleven others; 2/2/2/2 no longer appears at all.
+
+**The simulator predicted +0.096 and the real run measured +0.101** — the closest
+sim-to-real agreement yet, and the reason it was worth generalising `simulate()`
+first. `projCap 2` reproduces the old flat allocation at exactly +0.000, so the
+generalisation is null-safe rather than a new ranker wearing a flag.
+
+Held out over 66 offers before the end-to-end run: +0.077 CI [0.040, 0.115],
+27-7, p=0.0008 — against a *spike-6* baseline. `check`'s baseline was spike-0,
+which double-counted spike's own gain and read as +0.132; it now takes
+`--base-spike`. Cap 6 was worth a further +0.006 and renders three projects as a
+bare title, so cap 4 ships.
+
+Page cap holds: all 32 offers render at 2 pages on ladder step 0, no descent.
+
+### Two things this turned up
+
+1. **`trim()`'s metric-bullet guarantee overrides the ranker at keep=1**, which
+   nothing reached before allocation existed. All 57 single-slot project bullets
+   carry a digit against a 72% base rate (p ≈ 1e-8); the swap fires on 42% of
+   1-slot projects. It displaced a flagged differentiator exactly once in 32
+   offers, so it is not eating the gain — but 22 bullets chosen for having a
+   number rather than for matching the posting is the first suspect for the
+   `ats_coverage` −0.015. Cheap to test offline before spending another 37 min.
+2. **The 42 s judge figure was never a measurement.** It was the plan's estimate,
+   superseded by `p3-judge 66 s/call` in the generation ledger and left standing
+   in this ledger's §4.11 heading and `CLAUDE.md`. Both corrected. Current wall
+   clock is 67 s/offer median (n=32 spike32, n=32 alloc32 — the allocation adds
+   no model call and measured +0.4 s, noise).
+
+## Experiment A — the original plan, for the record
 
 **Hypothesis.** The page budget is right; its *distribution* is not. A posting
 that is 80% about the thing one project did should spend more of its project
@@ -72,9 +134,12 @@ redistribution, not expansion. The density ladder in `local-pdf-offer.mjs:934`
 drops `projBullets` before experience bullets, so a per-project scheme has to
 survive being ladder-trimmed.
 
-## Experiment B — targeted `cv.md` rephrasing (second)
+## Experiment B — targeted `cv.md` rephrasing (now first)
 
-Attacks the 49% bucket. Lower value than A and more fragile, so do it after.
+Attacks the largest remaining bucket (45% after A, 125 of 278 misses). More
+fragile than A was, and the `attribute` table it selects candidates from must be
+re-read under the new allocation before any rewrite is chosen — the numbers
+quoted below predate it.
 
 **Mechanism.** A bullet that reads moderately relevant to *every* posting is
 discounted by spike, correctly. Cutting connective tissue lowers a bullet's
