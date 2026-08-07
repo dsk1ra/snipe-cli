@@ -352,6 +352,79 @@ function check(split, cfg) {
 }
 
 /** Each term alone, so a plateau cannot hide which one is doing the work. */
+/**
+ * Why the remaining differentiators are lost, and which CV atoms lose them.
+ *
+ * The headline gap is a single number and a single number cannot be acted on.
+ * This splits every miss into the four things that can cause one, because the
+ * fix is different for each: a bullet beaten by its own siblings is a wording
+ * or ranking problem, a third differentiator inside a two-bullet project is a
+ * *budget allocation* problem that no wording can touch.
+ */
+function attribute(split = 'all') {
+  const labels = loadLabels();
+  const cache = addSpike(load());
+  const { offers, gradeW } = scorable(cache, labels, split);
+  const cfg = { gradeW, spikeW: 6 };
+  const byId = new Map(cache.atoms.map(a => [a.id, a]));
+  const n = cache.atoms.length;
+  const atomText = [...labels.values()][0].atoms;
+
+  const cause = { ranker: 0, projectDropped: 0, capped: 0, experience: 0 };
+  const per = Array.from({ length: n }, () => ({ diff: 0, miss: 0, shipped: 0, seen: 0 }));
+
+  for (const l of offers) {
+    const id = String(l.offer.id);
+    const ship = new Set(simulate(cache, id, cfg));
+    const shippedEntities = new Set([...ship].map(a => byId.get(a).entity));
+    const diffsByEntity = {};
+    for (let i = 0; i < n; i++) {
+      per[i].seen++;
+      if (ship.has(cache.atoms[i].id)) per[i].shipped++;
+    }
+    for (const d of l.differentiators || []) {
+      const idx = cache.atoms.findIndex(a => a.id === d);
+      if (idx >= 0) { per[idx].diff++; if (!ship.has(d)) per[idx].miss++; }
+      const a = byId.get(d);
+      if (!a) continue;
+      if (a.section === 'Projects') (diffsByEntity[a.entity] = diffsByEntity[a.entity] || []).push(d);
+      else if (!ship.has(d)) cause.experience++;
+    }
+    for (const [entity, ds] of Object.entries(diffsByEntity)) {
+      const missed = ds.filter(d => !ship.has(d)).length;
+      if (!shippedEntities.has(entity)) { cause.projectDropped += missed; continue; }
+      // Only PROJ_BULLETS of a project can ever ship, so anything beyond that
+      // many differentiators in one project is lost by arithmetic, not ranking.
+      const impossible = Math.max(0, ds.length - PROJ_BULLETS);
+      cause.capped += Math.min(missed, impossible);
+      cause.ranker += Math.max(0, missed - impossible);
+    }
+  }
+
+  const total = Object.values(cause).reduce((a, b) => a + b, 0);
+  const pct = v => `${((100 * v) / (total || 1)).toFixed(0)}%`.padStart(4);
+  console.log(`split=${split} · n=${offers.length} offers · ${total} missed differentiators\n`);
+  console.log('cause                                        count  share  fixable by');
+  console.log(`  beaten by its own project siblings         ${String(cause.ranker).padStart(5)}  ${pct(cause.ranker)}  wording / ranker`);
+  console.log(`  project never made the cut                 ${String(cause.projectDropped).padStart(5)}  ${pct(cause.projectDropped)}  project scoring`);
+  console.log(`  >${PROJ_BULLETS} differentiators in one project        ${String(cause.capped).padStart(5)}  ${pct(cause.capped)}  ALLOCATION ONLY`);
+  console.log(`  experience bullet lost                     ${String(cause.experience).padStart(5)}  ${pct(cause.experience)}  wording / ranker`);
+
+  const mean = cache.atoms.map((_, i) =>
+    Object.keys(cache.offers).reduce((a, id) => a + cache.offers[id].maxcos[i], 0) / Object.keys(cache.offers).length);
+  const rows = per.map((s, i) => ({ id: cache.atoms[i].id, ...s, generic: mean[i],
+    where: `${cache.atoms[i].section}/${cache.atoms[i].entity}`.slice(0, 34),
+    text: atomText[i].text.slice(0, 60) }))
+    .filter(r => r.diff).sort((a, b) => b.miss - a.miss);
+  console.log('\nWORST ATOMS — flagged a differentiator, did not reach the page');
+  console.log('  A high `generic` is a wording problem: spike discounts a bullet every');
+  console.log('  posting likes moderately. A low one that still misses is crowding.\n');
+  console.log('id   miss/diff  ship%  generic  where');
+  for (const r of rows.slice(0, 10))
+    console.log(`${String(r.id).padEnd(4)} ${(r.miss + '/' + r.diff).padEnd(10)} ` +
+      `${((100 * r.shipped) / r.seen).toFixed(0).padStart(4)}%  ${r.generic.toFixed(3).padStart(7)}  ${r.where}`);
+}
+
 function ablate(split = 'train') {
   const labels = loadLabels();
   const cache = addSpike(load());
@@ -383,10 +456,12 @@ else if (cmd === 'grades') await grades({ withDistinct: process.argv.includes('-
 else if (cmd === 'validate') validate();
 else if (cmd === 'sweep') sweep(arg('--split', 'train'));
 else if (cmd === 'ablate') ablate(arg('--split', 'train'));
+else if (cmd === 'attribute') attribute(arg('--split', 'all'));
 else if (cmd === 'check') check(arg('--split', 'test'), {
   spikeW: parseFloat(arg('--spike', '0')),
   lambda: parseFloat(arg('--lambda', '0')),
   reserve: parseInt(arg('--reserve', '0'), 10),
   distinctW: parseFloat(arg('--distinct', '0')),
   ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) });
-else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|check [--split train|test|all]');
+else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|attribute|check [--split train|test|all]\n' +
+  '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]');
