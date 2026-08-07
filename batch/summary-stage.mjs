@@ -380,6 +380,35 @@ export function scoreSummary(text, { bullets, cvText }) {
 
 const wordCount = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * Drop trailing sentences until the summary fits the band.
+ *
+ * `scoreSummary` penalises over-length but only ever *compares* — so an
+ * over-long candidate that has no competitor ships at whatever length it came
+ * out at. That is not hypothetical: with no incumbent the comparison is against
+ * -Infinity and every challenger wins, and the observed output was a 130-word
+ * run-on listing every bullet in turn. The band is a layout requirement (the PDF
+ * is hard-capped at 2 pages), not a preference, so it is enforced rather than
+ * scored.
+ *
+ * The first sentence is always kept: a summary trimmed to nothing is worse than
+ * one trimmed to too-long, and the caller's <50-word pad can top it back up.
+ *
+ * @param {string} text
+ * @param {number} max
+ */
+export function clampSummaryWords(text, max = 70) {
+  const s = String(text || '').trim();
+  if (!s || wordCount(s) <= max) return s;
+  const sentences = s.split(/(?<=[.!?])\s+/);
+  let out = sentences[0];
+  for (const next of sentences.slice(1)) {
+    if (wordCount(`${out} ${next}`) > max) break;
+    out += ` ${next}`;
+  }
+  return out.trim();
+}
+
 /** Strip the wrappers a model puts around a "plain text only" answer. */
 export function cleanSummary(raw) {
   return String(raw || '')
@@ -420,6 +449,9 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', c
   // displaces it by a clear margin, never on a rounding difference — measured
   // on offer 182, where the challenger was blander than the JSON field and a
   // bare `>` handed it the slot anyway.
-  if (chalScore > baseScore + margin) return challenger;
-  return base ?? challenger;
+  const winner = chalScore > baseScore + margin ? challenger : (base ?? challenger);
+  // Enforced on the winner, not on each candidate: clamping before scoring would
+  // hand a rambling candidate a free repair and let it beat a tight one on
+  // evidence overlap it only had room for because it overran.
+  return winner === null ? null : clampSummaryWords(winner);
 }

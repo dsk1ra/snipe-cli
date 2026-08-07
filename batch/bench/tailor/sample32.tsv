@@ -1,0 +1,33 @@
+id	report_num	report	jd	company	role	score
+111	068	reports/068-unknown-2026-07-27.md	batch/jds/111.txt	unknown	Engineer	3.5
+4	079	reports/079-jpmorganchase-2026-07-30.md	batch/jds/4.txt	JPMorganChase	Python Software Engineer / PM (Athena platform)	3.7
+56	024	reports/024-unknown-2026-07-19.md	batch/jds/56.txt	unknown	Senior Operational Cyber Software Engineer	3.7
+92	058	reports/058-deep-technology-organisation-2026-07-20.md	batch/jds/92.txt	Deep Technology Organisation	Senior Software Engineer (ML Systems)	3.7
+105	064	reports/064-platformed-ltd-2026-07-20.md	batch/jds/105.txt	Platformed Ltd	Senior Software Engineer	3.7
+165	134	reports/134-redtech-recruitment-ltd-2026-07-31.md	batch/jds/165.txt	RedTech Recruitment Ltd	Software Engineer – Mid-Level or Senior	3.7
+175	142	reports/142-humaans-2026-07-31.md	batch/jds/175.txt	Humaans	Senior Software Engineer (Full Stack)	3.7
+42	010	reports/010-longshot-systems-2026-07-18.md	batch/jds/42.txt	Longshot Systems	Software Engineer	3.8
+151	124	reports/124-deepl-2026-07-31.md	batch/jds/151.txt	DeepL	Software Engineer | Full-Stack	3.9
+231	188	reports/188-onestream-2026-08-06.md	batch/jds/231.txt	OneStream	Associate AI Engineer	4
+156	129	reports/129-helsing-2026-07-31.md	batch/jds/156.txt	Helsing	Junior Security Engineer	4.1
+217	175	reports/175-thought-machine-2026-08-04.md	batch/jds/217.txt	Thought Machine	Back End Engineer	4.2
+93	059	reports/059-well-funded-ai-enterprise-platform-2026-07-20.md	batch/jds/93.txt	Well-funded AI enterprise platform	Software Engineer	4.4
+50	018	reports/018-epam-2026-07-18.md	batch/jds/50.txt	EPAM	Python QA Automation Engineer	4.5
+205	166	reports/166-unknown-2026-08-03.md	batch/jds/205.txt	unknown	Backend Software Engineer	4.5
+41	009	reports/009-a-leading-global-financial-services-firm-2026-07-18.md	batch/jds/41.txt	a leading global financial services firm	Junior Rust Developer	4.7
+219	176	reports/176-unknown-2026-08-04.md	batch/jds/219.txt	unknown	Software Development Engineer	4.7
+5	080	reports/080-jpmorganchase-2026-07-30.md	batch/jds/5.txt	JPMorganChase	Software Engineer / PM	4.8
+54	022	reports/022-landytech-2026-07-18.md	batch/jds/54.txt	Landytech	Software Engineer	4.8
+90	056	reports/056-arq-2026-07-20.md	batch/jds/90.txt	ARQ	Backend Engineer	4.8
+124	077	reports/077-clearroute-2026-07-29.md	batch/jds/124.txt	ClearRoute	Software Engineer (AI-Assisted Development Enablement)	4.8
+150	123	reports/123-deepl-2026-07-31.md	batch/jds/150.txt	DeepL	Software Engineer | Language Products | Full-Stack	4.8
+185	152	reports/152-ufonia-2026-08-01.md	batch/jds/185.txt	Ufonia	Product Engineer	4.8
+210	170	reports/170-kraken-2026-08-03.md	batch/jds/210.txt	Kraken	Software Engineer	4.8
+36	004	reports/004-jd-com-2026-07-18.md	batch/jds/36.txt	JD.com	Backend Engineer (Joybuy Systems)	4.9
+70	038	reports/038-unknown-2026-07-19.md	batch/jds/70.txt	unknown	Java/Python Software Developer	4.9
+119	073	reports/073-spotify-2026-07-29.md	batch/jds/119.txt	Spotify	Fullstack Engineer - Subscriptions	4.9
+170	138	reports/138-a-fast-scaling-ai-enabled-property-techn-2026-07-31.md	batch/jds/170.txt	A fast-scaling, AI-enabled property technology business	Backend Engineer - Python/AWS	4.9
+209	169	reports/169-the-world-s-most-advanced-cybersecurity--2026-08-03.md	batch/jds/209.txt	the world's most advanced cybersecurity technology business	Backend Software Engineer	4.9
+45	013	reports/013-unknown-2026-07-18.md	batch/jds/45.txt	unknown	Java Back-End Engineer	5
+58	026	reports/026-specialist-high-growth-technology-partne-2026-07-19.md	batch/jds/58.txt	Specialist high-growth technology partner	Software Engineer	5
+79	047	reports/047-j-p-morgan-2026-07-19.md	batch/jds/79.txt	J.P. Morgan	Platform Migration Engineer	5

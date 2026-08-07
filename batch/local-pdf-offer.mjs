@@ -27,6 +27,8 @@ import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
          stripFabricatedCredentials,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
+import { verbatimContent } from './cv-writers.mjs';
+import { createHash } from 'crypto';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -55,6 +57,11 @@ function parseArgs(argv) {
     // written); --temperature overrides the production 0.15 so a benchmark can
     // run greedy, where this stack is byte-identical and one run is a valid A/B.
     benchDir: null, temperature: 0.15,
+    // Which component writes the bullets. `model` is the shipped path: hand the
+    // selected CV to snipe-cv and let it rewrite everything. `verbatim` skips the
+    // call and renders the selection as cv.md already words it — see
+    // cv-writers.mjs for why that is a serious candidate rather than a straw man.
+    writer: 'model',
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -75,6 +82,7 @@ function parseArgs(argv) {
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
       case '--bench-dir':    a.benchDir     = argv[++i]; break;
       case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
+      case '--writer':       a.writer       = argv[++i]; break;
     }
   }
   return a;
@@ -539,8 +547,39 @@ const profileNarrative = extractProfileNarrative(profileText);
 // Block B is both what cv-select ranks against and what the summary stage
 // uses to decide which evidence to foreground, so it is parsed once.
 const blockBReqs = extractBlockBRequirements(reportText);
-let cvForPrompt = cvText;
-try {
+
+// Selection costs one 30B judge call — measured 66 s, 80 % of Phase 3's wall
+// clock — and is identical for every writer variant, because none of them touch
+// cv-select. A generation A/B was therefore paying ~35 min per 32-offer arm to
+// recompute the same answer. SNIPE_SELECT_CACHE points at a JSON file keyed on
+// everything selection actually reads, so a sweep pays the judge once.
+//
+// Off unless the env var is set: a production run must always select fresh, and
+// a stale cache is a silent wrong answer rather than a loud failure.
+const SELECT_CACHE = process.env.SNIPE_SELECT_CACHE || '';
+const selectKey = () => createHash('sha1')
+  .update(JSON.stringify([args.id, cvText, blockBReqs, jdText]))
+  .digest('hex').slice(0, 20);
+
+function cachedSelection() {
+  if (!SELECT_CACHE || !existsSync(SELECT_CACHE)) return null;
+  try { return JSON.parse(readFileSync(SELECT_CACHE, 'utf8'))[selectKey()] ?? null; }
+  catch { return null; }
+}
+function storeSelection(text) {
+  if (!SELECT_CACHE) return;
+  try {
+    mkdirSync(dirname(SELECT_CACHE), { recursive: true });
+    let all = {};
+    try { all = JSON.parse(readFileSync(SELECT_CACHE, 'utf8')); } catch {}
+    all[selectKey()] = text;
+    writeFileSync(SELECT_CACHE, JSON.stringify(all), 'utf8');
+  } catch { /* a cache that cannot be written is not a run that should fail */ }
+}
+
+const cached = cachedSelection();
+let cvForPrompt = cached ?? cvText;
+if (!cached) try {
   // Exemplars turn on the 30B reranker inside selectCvForJd (+0.10 pair
   // accuracy on the gold set). Loaded here rather than there because goldset
   // imports cv-select, and the reverse edge is a cycle.
@@ -552,6 +591,7 @@ try {
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots });
+  storeSelection(cvForPrompt);
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
 }
@@ -575,7 +615,17 @@ const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 // failing the whole offer; only a total parse failure is fatal.
 let cvContent = null;
 let lastErr   = '';
-for (let attempt = 1; attempt <= 2; attempt++) {
+if (args.writer === 'verbatim') {
+  // No generation call. The selection is rendered as cv.md words it, and the
+  // summary stage below still runs — so this isolates the *bullet* rewrite as the
+  // single variable, rather than testing two changes at once.
+  cvContent = verbatimContent(cvForPrompt, cvText, jdText);
+  // Both are overwritten unconditionally by the Tier-3 blocks further down;
+  // an empty array here just keeps the shape valid until they are.
+  cvContent.summary = '';
+  cvContent.competencies = [];
+  cvContent.education_modules = [];
+} else for (let attempt = 1; attempt <= 2; attempt++) {
   const um = attempt === 1
     ? userMessage
     : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
@@ -594,7 +644,9 @@ for (let attempt = 1; attempt <= 2; attempt++) {
 }
 
 if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${lastErr}`);
-if (!cvContent.summary || !Array.isArray(cvContent.experience)) {
+// The verbatim writer leaves `summary` empty on purpose — the stage below fills
+// it — so only the model path is held to having one at this point.
+if (args.writer !== 'verbatim' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
 cvContent = clampContent(cvContent);
@@ -666,6 +718,16 @@ try {
 }
 
 const distOf = n => (n < 50 ? 50 - n : n > 70 ? n - 70 : 0);
+// Benchmark-only: the summary as the model wrote it, before any guard touches
+// it. Without this the harness can only see the summary the guards already
+// repaired, so summary_fab would read 0 by construction and score a perfect mark
+// for a model that fabricates on every offer — the example_copy_pct mistake in
+// benchmark rule 5. Gated on --bench-dir so a real run's cv-content.json keeps
+// its shape.
+if (args.benchDir && typeof cvContent.summary === 'string') {
+  cvContent._summary_pre_guard = cvContent.summary;
+}
+
 if (typeof cvContent.summary === 'string') {
   // Sibling strip: a years-of-experience claim the CV never makes. The number
   // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the

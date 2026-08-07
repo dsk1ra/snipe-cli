@@ -10,6 +10,20 @@
  *
  *   role_retention  roles in the output / roles cv.md has          want 1.0
  *   metric_fab      output numbers absent from cv.md               want 0
+ *                   — EXPERIENCE BULLETS ONLY. It read a clean 0
+ *                   through every run in which a summary claimed
+ *                   a tenure, a figure and a university tier the
+ *                   CV never states; see summary_fab_* below
+ *   summary_fab_pct offers whose SHIPPED summary still carries a
+ *                   fabrication — a guard regression, not a
+ *                   model result                                   want 0
+ *   summary_fab_raw offers whose summary carried one BEFORE the
+ *      _pct         guards repaired it. This is the model's
+ *                   actual rate and the number to move; it is
+ *                   read from `_summary_pre_guard`, because
+ *                   scoring the repaired text would report 0 by
+ *                   construction (rule 5). `summary_fab_raw_n`
+ *                   is how many offers could answer at all        want 0
  *   example_copy    offers copying an 8-gram from the prompt's
  *                   own worked example                             want 0
  *   grounding       mean token overlap of each output bullet with
@@ -26,7 +40,8 @@
  * CLI:
  *   node batch/tailor-harness.mjs sample --n 24        write the fixed sample
  *   node batch/tailor-harness.mjs run <label> [--temperature 0]
- *   node batch/tailor-harness.mjs metrics <label>
+ *   node batch/tailor-harness.mjs metrics <label>   (--rows prints
+ *                   `sfab=<shipped>/<raw>(classes)` per offer)
  *   node batch/tailor-harness.mjs compare <a> <b>
  *
  * The sample is written once and reused by every variant — an A/B over
@@ -38,9 +53,38 @@ import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements } from './cv-select.mjs';
+import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
+         stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
-import { productFab } from './summary-stage.mjs';
+import { productFab, credentialFab } from './summary-stage.mjs';
+
+/**
+ * Fabrication classes present in a summary, named.
+ *
+ * Defined by asking the shipped guards whether they would change the text, so
+ * the metric cannot drift away from what is actually enforced — a hand-rolled
+ * second detector would answer a different question the first time either side
+ * was edited.
+ *
+ * Read it against `_summary_pre_guard`, not the shipped summary: run against the
+ * repaired text it is 0 by construction and says nothing about the model. Both
+ * are reported, because they answer different questions — the raw count is how
+ * often the model fabricates, the shipped count is whether anything is leaking
+ * past the guards, and only the second is allowed to be non-zero-worthy news.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {string[]}
+ */
+export function summaryFab(summary, cvText) {
+  if (typeof summary !== 'string' || !summary) return [];
+  const out = [];
+  if (stripUnsupportedTenure(summary, cvText) !== summary) out.push('tenure');
+  if (verifySummaryFigures(summary, cvText) !== summary) out.push('figure');
+  if (credentialFab(summary, cvText).length) out.push('credential');
+  if (productFab(summary, cvText).length) out.push('product');
+  return out;
+}
 
 const readSafe = (p) => { try { return p && existsSync(p) ? readFileSync(p, 'utf8') : ''; } catch { return ''; } };
 
@@ -116,13 +160,13 @@ export function readSample(samplePath = SAMPLE) {
 
 // ── running a variant ─────────────────────────────────────────────────────────
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0 } = {}) {
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
   // two limited runs stay paired. A limited run is only comparable to another
   // run over the same prefix — noted in meta.json so a later reader cannot
   // mistake it for a full one.
-  const sample = limit ? readSample().slice(0, limit) : readSample();
+  const sample = limit ? readSample(samplePath).slice(0, limit) : readSample(samplePath);
   const dir = resolve(BENCH, label);
   mkdirSync(dir, { recursive: true });
   const t0 = Date.now();
@@ -137,7 +181,8 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
         '--company', s.company, '--role', s.role, '--date', '2026-01-01',
         '--model', model, '--ollama-url', ollamaUrl,
         '--threshold', '0', '--temperature', String(temperature), '--bench-dir', dir,
-      ], { stdio: ['ignore', 'pipe', 'pipe'], cwd: PROJECT, timeout: 600_000 });
+        '--writer', writer,
+      ], { stdio: ['ignore', 'pipe', 'pipe'], cwd: PROJECT, timeout: 900_000 });
       ok++;
     } catch (err) {
       failed++;
@@ -148,7 +193,8 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   // flag is indistinguishable from one that had it. Record which arm this was.
   const flags = Object.fromEntries(Object.entries(process.env)
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
-  const meta = { label, temperature, model, n: sample.length, limit: limit || null, ok, failed,
+  const meta = { label, temperature, model, writer, sample: samplePath, n: sample.length,
+                 limit: limit || null, ok, failed,
                  flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   return meta;
@@ -305,8 +351,14 @@ function metricsFor(label, paths = {}) {
   // whole `<id>_<slug>` dir name so a change to the slug rule cannot silently
   // empty every requirement list and read as selection_regret improving.
   const reportById = new Map();
+  // Which sample this run used, as recorded by runVariant. A run over a second
+  // sample file scored against sample.tsv matches no offer, so every requirement
+  // list comes back empty and selection_regret reads null — the same
+  // wrong-sheet failure retrieval-bench hit as a clean 0.000 CI (rule 6).
+  let ranSample = SAMPLE;
+  try { ranSample = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')).sample || SAMPLE; } catch {}
   try {
-    for (const s of readSample()) reportById.set(String(s.id), resolve(PROJECT, s.report));
+    for (const s of readSample(ranSample)) reportById.set(String(s.id), resolve(PROJECT, s.report));
   } catch { /* no sample (unit tests use a fixture tree) — reqs stay empty */ }
   const reportFor = (d) => reportById.get(d.split('_')[0]) || '';
 
@@ -386,6 +438,13 @@ function metricsFor(label, paths = {}) {
       ats_coverage: ats.coverage,
       ats_supportable: ats.supportable,
       summary: c.summary || '',
+      // Shipped vs as-written. `_summary_pre_guard` is only present on runs made
+      // after it was added; older runs fall back to the shipped summary, which
+      // understates their raw count rather than inventing one.
+      summary_fab: summaryFab(c.summary || '', cvText).length,
+      summary_fab_raw: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).length,
+      summary_fab_kinds: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).join('+'),
+      has_pre_guard: typeof c._summary_pre_guard === 'string',
       reqs,
       outBullets: exp.flatMap(e => e.bullets || []),
       jdText,
@@ -424,6 +483,15 @@ function metricsFor(label, paths = {}) {
     num_lost: +mean('num_lost').toFixed(2),
     product_fab: +mean('product_fab').toFixed(3),
     product_fab_pct: +(rows.filter(r => r.product_fab > 0).length / n).toFixed(3),
+    // Leaked past the guards — any non-zero is a guard regression, not a model
+    // result. metric_fab reads only experience bullets and sat at a clean 0
+    // through every run in which a summary claimed Russell Group membership.
+    summary_fab_pct: +(rows.filter(r => r.summary_fab > 0).length / n).toFixed(3),
+    // How often the model fabricates, before repair. This is the one to move.
+    summary_fab_raw_pct: +(rows.filter(r => r.summary_fab_raw > 0).length / n).toFixed(3),
+    // Runs predating _summary_pre_guard cannot answer the raw question; say so
+    // rather than letting a 0 read as good news.
+    summary_fab_raw_n: rows.filter(r => r.has_pre_guard).length,
     ats_coverage: +mean('ats_coverage').toFixed(3),
     mean_bullets: +mean('bullets').toFixed(2),
     rows,
@@ -588,6 +656,7 @@ if (!isMain) {
   // Tailoring only ever runs above the Phase 3 threshold, so a sample spanning
   // 1.0–5.0 spent most of its budget on offers that would never be applied to.
   const s = buildSample(n, {}, parseFloat(String(flag('min-score', '3.5'))));
+  const SAMPLE = resolve(BENCH, String(flag('out', 'sample.tsv')));
   mkdirSync(BENCH, { recursive: true });
   writeFileSync(SAMPLE,
     'id\treport_num\treport\tjd\tcompany\trole\tscore\n' +
@@ -604,12 +673,17 @@ if (!isMain) {
     ollamaUrl: String(flag('ollama-url', 'http://localhost:11434')),
     model: String(flag('model', 'snipe-cv')),
     limit: parseInt(String(flag('limit', '0')), 10),
+    writer: String(flag('writer', 'model')),
+    // rule 6: retrieval-bench reported a clean-looking null result for a whole
+    // sheet because it had no --sheet flag and silently loaded the wrong one.
+    // A second sample file gets a flag from the start.
+    samplePath: resolve(BENCH, String(flag('sample', 'sample.tsv'))),
   }), null, 2));
 } else if (cmd === 'metrics') {
   const m = await allMetrics(positional[0], rest.includes('--no-embed'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const noEmbed = rest.includes('--no-embed');
@@ -627,6 +701,7 @@ if (!isMain) {
   const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
                 'product_fab', 'product_fab_pct', 'ats_coverage',
+                'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets'];
   const pad = (s, w) => String(s).padEnd(w);
   const w = Math.max(14, a.length + 2, b.length + 2);
