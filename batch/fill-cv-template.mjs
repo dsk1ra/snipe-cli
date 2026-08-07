@@ -36,6 +36,9 @@ const outputPath  = args['output'];
 const format      = (args['format'] || 'a4').toLowerCase();
 const maxSkills   = args['max-skills'] ? parseInt(args['max-skills'], 10) : null; // null = all
 const maxBullets  = args['max-bullets'] ? parseInt(args['max-bullets'], 10) : null; // null = all; caps bullets per role
+// Same idea for the project lists, so the density ladder can shorten a project
+// instead of only being able to delete one.
+const maxProjBullets = args['max-project-bullets'] ? parseInt(args['max-project-bullets'], 10) : null;
 
 if (!contentPath || !outputPath) {
   console.error('Usage: fill-cv-template.mjs --content <json> --output <html> [--format a4|letter] [--max-skills N]');
@@ -339,12 +342,14 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
 // `selected_projects` (array of name strings). When the LLM supplies a tailored
 // description we use it; otherwise we fall back to the project's first 2 CV
 // bullets (never the full dump) so descriptions stay tight.
-function buildProjectsHtml(cvProjects, projectsField) {
+function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
   const sel = Array.isArray(projectsField)
     ? projectsField
         .map(p => (typeof p === 'string'
           ? { name: p, description: '', bullets: [] }
-          : { name: p?.name || '', description: p?.description || '', bullets: Array.isArray(p?.bullets) ? p.bullets : [] }))
+          : { name: p?.name || '', description: p?.description || '',
+              bullets: Array.isArray(p?.bullets)
+                ? (maxProjBullets ? p.bullets.slice(0, maxProjBullets) : p.bullets) : [] }))
         .filter(p => p.name)
     : [];
 
@@ -353,10 +358,12 @@ function buildProjectsHtml(cvProjects, projectsField) {
     chosen = [];
     for (const s of sel) {
       const match = cvProjects.find(p => matchProject(s.name, p.name));
-      if (match && !chosen.some(c => c.cv === match)) chosen.push({ cv: match, description: s.description });
+      if (match && !chosen.some(c => c.cv === match)) {
+        chosen.push({ cv: match, description: s.description, bullets: s.bullets });
+      }
     }
   } else {
-    chosen = cvProjects.slice(0, 4).map(cv => ({ cv, description: '' }));
+    chosen = cvProjects.slice(0, 4).map(cv => ({ cv, description: '', bullets: [] }));
   }
 
   return chosen.map(({ cv, description, bullets }) => {
@@ -526,7 +533,7 @@ const replacements = {
   '{{SECTION_EXPERIENCE}}':    'Work Experience',
   '{{EXPERIENCE}}':            buildExperienceHtml(cvExp, content.experience, maxBullets),
   '{{SECTION_PROJECTS}}':      'Projects',
-  '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects),
+  '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects, maxProjBullets),
   '{{SECTION_EDUCATION}}':     'Education',
   '{{EDUCATION}}':             buildEducationHtml(cvEdu, content.education_modules),
   '{{SECTION_CERTIFICATIONS}}':'Certifications',

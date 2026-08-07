@@ -105,7 +105,13 @@ export function selectSkills(cvText, jdText, maxCats = 6, maxItems = 12) {
  * @returns {{summary: null, experience: any[], projects: any[], skills: any[]}}
  */
 export function verbatimContent(selectedCv, cvText, jdText, opts = {}) {
-  const { projectBullets = 3 } = opts;
+  // 2, because that is what renders. Measured across four offers: two project
+  // bullets fit the 2-page cap on all of them, three fit none. The density
+  // ladder can trim further for a long-tail offer, but the default has to be a
+  // shape that actually ships — the bench stops before the PDF, so a default
+  // that only fits in principle would score well on every metric and produce a
+  // three-page CV in production.
+  const { projectBullets = 2 } = opts;
   const named = (n) => parseCvSections(selectedCv).find(s => s.name === n);
   const expSec = named('Experience');
   const projSec = named('Projects');

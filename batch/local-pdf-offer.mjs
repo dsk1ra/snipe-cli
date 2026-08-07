@@ -25,10 +25,9 @@ import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChr
          verifySummaryFigures } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
-         stripFabricatedCredentials,
+         stripFabricatedCredentials, stripJdProperNouns,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 import { verbatimContent } from './cv-writers.mjs';
-import { loadBank, chooseVariants, applyPicks } from './cv-bank.mjs';
 import { createHash } from 'crypto';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
@@ -58,11 +57,12 @@ function parseArgs(argv) {
     // written); --temperature overrides the production 0.15 so a benchmark can
     // run greedy, where this stack is byte-identical and one run is a valid A/B.
     benchDir: null, temperature: 0.15,
-    // Which component writes the bullets. `model` is the shipped path: hand the
-    // selected CV to snipe-cv and let it rewrite everything. `verbatim` skips the
-    // call and renders the selection as cv.md already words it — see
-    // cv-writers.mjs for why that is a serious candidate rather than a straw man.
-    writer: 'model',
+    // Which component writes the bullets. `verbatim` is the shipped path: render
+    // the selection as cv.md already words it, no generation call at all. `model`
+    // hands the selection to snipe-cv to rewrite — the old default, kept as the
+    // benchmark control. It loses on every axis that matters (see
+    // docs/PHASE3-RETENTION-LEDGER.md §4); a bigger writer only loses differently.
+    writer: 'verbatim',
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -289,6 +289,13 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
     system: systemPrompt,
     prompt: userMessage,
     stream: false,
+    // Qwen3.5 and its siblings are hybrid-reasoning models: left to themselves
+    // Ollama routes the answer into a `thinking` field and returns `response` as
+    // an empty string, so every offer fails with "No JSON object found" and the
+    // model looks incapable of structured output when it is merely thinking.
+    // Accepted and ignored by the non-reasoning models already in the pipeline
+    // (verified against snipe-cv and snipe-eval), so it is safe unconditionally.
+    think: false,
     ...(format ? { format } : {}),
     // num_predict 2400: ample for the richer JSON (realistic output ~1.1-1.4k
     // tokens — summary, 6-9 competencies, 3-4 project descriptions, 5-6 skill
@@ -616,40 +623,17 @@ const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 // failing the whole offer; only a total parse failure is fatal.
 let cvContent = null;
 let lastErr   = '';
-if (args.writer === 'verbatim' || args.writer === 'bank') {
+if (args.writer === 'verbatim') {
   // No generation call. The selection is rendered as cv.md words it, and the
   // summary stage below still runs — so this isolates the *bullet* rewrite as the
   // single variable, rather than testing two changes at once.
   //
   // Project bullets are a separate axis, flagged separately for the same reason:
   // bundling the rendering change into the writer change would make a win
-  // unattributable to either.
+  // unattributable to either. 2 is the default because 3 overflows the 2-page cap.
   cvContent = verbatimContent(cvForPrompt, cvText, jdText,
-    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '0', 10) });
+    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '2', 10) });
 
-  // `bank` swaps each selected bullet for the best pre-written phrasing of it.
-  // The source is always a candidate, so a failure here — missing bank, stale
-  // bank, embedder down — degrades to exactly the verbatim arm rather than to
-  // something worse.
-  if (args.writer === 'bank') {
-    try {
-      const bank = loadBank(cvText);
-      if (bank) {
-        const bullets = [
-          ...cvContent.experience.flatMap(e => e.bullets),
-          ...cvContent.projects.flatMap(p => p.bullets || []),
-        ];
-        const picks = await chooseVariants(bullets, blockBReqs, bank, { ollamaUrl: args.ollamaUrl });
-        applyPicks(cvContent, picks);
-        for (const p of cvContent.projects) {
-          if (Array.isArray(p.bullets)) p.bullets = p.bullets.map(b => picks.get(b)?.text ?? b);
-        }
-        if (args.benchDir) cvContent._bank_picks = [...picks.entries()].map(([src, v]) => ({ src, ...v }));
-      }
-    } catch (err) {
-      process.stderr.write(`cv-bank failed (${err.message}) — shipping the source phrasings\n`);
-    }
-  }
   // Both are overwritten unconditionally by the Tier-3 blocks further down;
   // an empty array here just keeps the shape valid until they are.
   cvContent.summary = '';
@@ -779,6 +763,10 @@ if (typeof cvContent.summary === 'string') {
   cvContent.summary = verifySummaryFigures(cvContent.summary, cvText);
   cvContent.summary = stripFabricatedCredentials(cvContent.summary, cvText);
   cvContent.summary = stripFabricatedProducts(cvContent.summary, cvText);
+  // The general case of the company-name strip below: any name the posting
+  // supplies and cv.md does not. The `--company` comparison alone missed a
+  // summary claiming work "for Joybuy Systems" on a JD.com posting.
+  cvContent.summary = stripJdProperNouns(cvContent.summary, cvText, jdText);
 
   // Deterministic fabrication strip — if the target company name survived the
   // retries, drop the sentence claiming it (runs before the length-floor pad).
@@ -837,6 +825,30 @@ if (Array.isArray(cvContent.projects)) {
   // the CV lacks and quotes no figure the project's own entry lacks, so it
   // passes both guards by construction rather than by inspection.
   cvContent.projects = padProjectDescriptions(cvContent.projects, cvText);
+
+  // Project bullets, for whichever writer produced the entries.
+  //
+  // The rendering change is orthogonal to who wrote the prose: projects hold 24
+  // of this CV's 33 atoms, and collapsing them into one paragraph loses the same
+  // evidence whether that paragraph came from the 7B or from cv.md. Attaching
+  // them here rather than in each writer keeps the arms comparable — otherwise a
+  // model arm would score badly on differentiator_coverage for a reason that has
+  // nothing to do with the model.
+  //
+  // Verbatim from the selected CV, which cv-select already ranked against this
+  // posting. The writer's prose stays as the description; these are the evidence
+  // under it.
+  const wantProjBullets = parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '2', 10);
+  if (wantProjBullets) {
+    const sel = parseCvSections(cvForPrompt).find(s => s.name === 'Projects');
+    const byName = new Map((sel ? parseEntries(sel.lines).entries : [])
+      .map(e => [e.head[0].replace(/^###\s+/, '').trim().toLowerCase(), e.bullets]));
+    for (const p of cvContent.projects) {
+      // Only where the writer left none — `verbatim` has already filled them.
+      const src = byName.get(String(p.name || '').toLowerCase());
+      if (src?.length && !p.bullets?.length) p.bullets = src.slice(0, wantProjBullets);
+    }
+  }
 }
 
 // Build output folder
@@ -882,7 +894,7 @@ const format    = detectFormat(reportText, jdText);
 const fillScript = resolve(__dirname, 'fill-cv-template.mjs');
 const generatePdf= resolve(PROJECT, 'generate-pdf.mjs');
 
-function runFill(maxSkills, maxBullets) {
+function runFill(maxSkills, maxBullets, maxProjectBullets) {
   const a = [
     fillScript,
     '--content',    contentFile,
@@ -891,6 +903,7 @@ function runFill(maxSkills, maxBullets) {
     '--max-skills', String(maxSkills),
   ];
   if (maxBullets) a.push('--max-bullets', String(maxBullets));
+  if (maxProjectBullets) a.push('--max-project-bullets', String(maxProjectBullets));
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
 }
 
@@ -913,25 +926,31 @@ const jdTokens = new Set(tokenize(jdText));
 // per role, hitting the least-relevant backfilled roles too), skill breadth, and
 // the weakest (last-ranked) projects. Each step renders and re-checks the page
 // count; we stop at the first step that fits ≤ 2 pages.
+// `projBullets` trims the project lists, which the ladder could not reach at
+// all: it could drop a whole project but not shorten one, so a CV that overran
+// by two lines lost an entire project's worth of evidence. Project bullets carry
+// most of this CV's differentiators, so they are trimmed one at a time and only
+// after the cheaper cuts, and dropping a project stays the last resort it was.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4 }, // full
-  { skills: 6, bullets: 3, projects: 4 },
-  { skills: 5, bullets: 3, projects: 3 },
-  { skills: 5, bullets: 3, projects: 3 },
-  { skills: 4, bullets: 3, projects: 2 }, // tightest
+  { skills: 6, bullets: 4, projects: 4, projBullets: 2 }, // full
+  { skills: 6, bullets: 4, projects: 4, projBullets: 1 },
+  { skills: 6, bullets: 3, projects: 4, projBullets: 1 },
+  { skills: 5, bullets: 3, projects: 4, projBullets: 1 },
+  { skills: 5, bullets: 3, projects: 3, projBullets: 1 },
+  { skills: 4, bullets: 3, projects: 2, projBullets: 1 }, // tightest
 ];
 
 let pdfPath = null;
 let pdfError = null;
 
 for (let step = 0; step < LADDER.length; step++) {
-  const { skills, bullets, projects } = LADDER[step];
+  const { skills, bullets, projects, projBullets } = LADDER[step];
 
   cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
   writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 
   try {
-    runFill(skills, bullets);
+    runFill(skills, bullets, projBullets);
   } catch (err) {
     if (step === 0) fail(`fill-cv-template.mjs failed: ${err.message}`);
     continue; // a later, tighter step may still render
