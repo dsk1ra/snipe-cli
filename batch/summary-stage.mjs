@@ -381,6 +381,54 @@ export function scoreSummary(text, { bullets, cvText }) {
 const wordCount = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
 
 /**
+ * Drop any sentence naming a proper noun that the posting contains and `cv.md`
+ * does not.
+ *
+ * `productFab` is a closed allowlist of *technologies*, so it can only catch what
+ * someone thought to list, and a company or product brand from the posting can
+ * never be on it. Observed shipping: for a JD.com posting the summary claimed the
+ * membership platform was built "for Joybuy Systems" — JD.com's own brand,
+ * substituted for the real client. Every truth guard passed it. `productFab`
+ * returned [], `metric_fab` reads only experience bullets, and the company-name
+ * strip compares against the `--company` argument, which was "JD.com" and does
+ * not match "Joybuy".
+ *
+ * The general rule is the one that actually holds: a name the posting supplies
+ * and the CV does not is, by definition, not the candidate's. That needs no
+ * vocabulary and cannot go stale.
+ *
+ * Sentence-initial words are skipped — every sentence starts with a capital, and
+ * "Delivered" is not a proper noun.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @param {string} jdText
+ */
+export function stripJdProperNouns(summary, cvText, jdText) {
+  const s = String(summary || '');
+  if (!s || !jdText) return s;
+  const norm = (t) => t.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+#.]+$/g, '').replace(/^\.+|\.+$/g, '');
+  const inText = (hay, word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(hay);
+
+  const kept = s.split(/(?<=[.!?])\s+/).filter(sentence => {
+    const words = sentence.split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      const w = norm(words[i]);
+      if (!w || w.length < 3) continue;
+      if (i === 0 && !/^[A-Z]{2,}$/.test(w)) continue;
+      if (!/^[A-Z]/.test(w)) continue;
+      if (inText(cvText, w)) continue;
+      if (inText(jdText, w)) return false;
+    }
+    return true;
+  });
+  // Never strip to nothing: an empty summary is a worse failure than a leaked
+  // name, and the caller's length floor would pad it back into something
+  // shapeless. Keeping the original lets the shipped guards downstream try.
+  return kept.length ? kept.join(' ').trim() : s;
+}
+
+/**
  * Drop trailing sentences until the summary fits the band.
  *
  * `scoreSummary` penalises over-length but only ever *compares* — so an

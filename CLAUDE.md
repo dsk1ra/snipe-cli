@@ -61,6 +61,21 @@ act on next; `o` and the tracker still reach it:
 
 Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
 
+A P1-gated row renders as `· Company — Role  P1-gated | proceed?  link` — the
+same yellow action, because the `--p1-threshold` gate is a cost heuristic over a
+4B pre-screen score, not a verdict.
+
+- **proceed?** — `local-runner.sh --only-id N --p1-threshold 0`. Nothing is
+  re-scored: the Phase 1 offer list skips anything already `scored` (`:918`), so
+  the cached score and JD are reused and the run starts at Phase 2 — reusing
+  Phase 1's work is what the flag already does, so there is no second code path
+  for it. No `--retry-failed`: the row is `p1-gated`, not failed, and Phase 2's
+  own guard (`p2_status != evaled`) already lets it through. Phase 3 follows on
+  its own if the eval clears `--threshold`. The tracker row written by
+  `write_tracker_p1_skip` is updated in place by the merge's company+role dedup —
+  but only if the eval scores *higher* than the P1 pre-score; below it, the merge
+  keeps the older row and the stale "no report — P1-gated" note with it.
+
 ## The 3-phase pipeline (`batch/local-runner.sh`)
 
 | Phase | Script | Model | Output |
@@ -88,7 +103,22 @@ Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both ph
 
 **Phase 3** runs only at score ≥ `auto_pdf_score_threshold` (default 3.0).
 `cv-select.mjs` ranks CV bullets against Block B requirements via embeddings
-first, so the 7B only rewrites — it never selects. PDF is hard-capped at 2 pages.
+first. PDF is hard-capped at 2 pages.
+
+**There is no bullet-generation call.** `--writer verbatim` is the default: the
+selected bullets render as `cv.md` already words them, and projects render 2
+bullets each rather than a prose paragraph. Deleting the 7B rewrite and adding
+those bullets measured **+0.157 differentiator coverage** (20-3, p<0.001),
++0.061 ATS coverage, grounding to a flat 1.000 — 78% of what the 7B emitted was
+byte-identical to its source line anyway, and the 22% it changed is where the
+fabrication lived. Scaling the writer does not fix it: a 9B and the 30B both buy
+~0.05 coverage and lose grounding in *every* offer they change (0-32, 0-11).
+`--writer model` survives as the benchmark control only. Full numbers and the
+two production bugs found on the way: `docs/PHASE3-RETENTION-LEDGER.md`.
+
+`SNIPE_PROJECT_BULLETS` sets the per-project bullet count (default 2). 3 renders
+a 3-page PDF, so the density ladder in `local-pdf-offer.mjs` drops it before it
+drops experience bullets.
 
 That ranking is then reranked by `snipe-eval`, which grades each bullet 0–3 for
 the posting and is blended in at `cos + 0.10 × grade` (+0.10 pair accuracy
@@ -192,14 +222,39 @@ the loop for six of them:
 
 ```bash
 node batch/tailor-harness.mjs run <label> --temperature 0 [--model M] [--limit N]
+                             [--sample F.tsv] [--writer verbatim|model] [--out DIR]
 node batch/tailor-harness.mjs metrics <label> [--rows] [--no-embed]
 node batch/tailor-harness.mjs compare <a> <b>
+node batch/tailor-harness.mjs paired  <a> <b> [--no-embed]
 ```
 
-`compare` pairs on the offers **both** runs produced and says how many. Timing
+`paired` is the one to trust: per-offer deltas with a bootstrap CI95 over offers
+and a two-sided sign test, so a metric that moves on 2 of 32 offers cannot read
+as a win. It drops offers where either run returned null rather than zeroing
+them. `compare` pairs on the offers **both** runs produced and says how many. Timing
 comes free: `SNIPE_TIMING=path` makes every Ollama call append its own
 `load_duration` / `eval_count` (`batch/timing.mjs report`), which is how a model
 reload gets counted rather than guessed.
+
+Those eight metrics all punish **falsity**, and an empty CV scores perfectly on
+every one of them — so none of them can see a CV that dropped the thing that
+differentiates you. `batch/opus-metrics.mjs` closes that hole against a label
+corpus in `batch/bench/opus/labels/` (128 offers, each CV atom graded 0–3 for
+that posting, and the differentiators marked):
+
+| metric | what it catches |
+|---|---|
+| `differentiator_coverage` | fraction of the offer's differentiator atoms that reached the page |
+| `differentiators_lost` / `lost_ids` | which ones did not, by id |
+| `noise_rate` | fraction of shipped content the labeller graded 0 for this posting |
+| `grade_yield` | shipped grade mass ÷ available grade mass |
+
+Coverage is measured **atom→output** (does this atom appear anywhere), the
+opposite direction from `shippedAtomIndices` — an atom split across two bullets
+still counts. Relabelling is `batch/bench-tools/opus-label.mjs`; the labels are
+positional against `cv.md`, so **editing `cv.md` invalidates all 128**.
+`SNIPE_SELECT_CACHE` freezes selection across arms, so a generation A/B costs no
+66 s judge call and every arm ranks identically.
 
 ### Benchmark rules (learned the hard way)
 
@@ -265,6 +320,17 @@ reload gets counted rather than guessed.
    row cites evidence that does not contain the technology the requirement names,
    how often one CV atom is reused across many requirements, and whether any STAR
    story names a technology absent from `cv.md` (must stay zero).
+9. **Ask what the metric suite scores an empty output, before trusting a win.**
+   All eight generation metrics punish falsity, so the null CV is perfect on all
+   of them and "lost the thing that makes me hireable" was invisible for the
+   whole life of the harness. A suite that only measures one direction is not a
+   suite. See `docs/PHASE3-RETENTION-LEDGER.md` §1.
+10. **Try deleting the model call before scaling it.** The 7B tailor was retyping
+    78% of its input verbatim and fabricating in the rest; removing it beat it,
+    and a 9B and the 30B both lost to *no writer at all*. Rendering — projects as
+    bullets rather than a paragraph — was worth more than any model swap and cost
+    nothing. Check what the template can physically print before blaming a model
+    for not printing it.
 
 ## Tracker rules
 

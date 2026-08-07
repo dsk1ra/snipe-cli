@@ -606,6 +606,22 @@ try {
       'selectableAtoms is the corpus Phase 3 selects from — bullets of both sections');
     eq(th.selectableAtoms(FIXTURE_CV)[3].entity, 'Snipe', 'each atom remembers the entry it came from');
 
+    // ---- summaryFab ---------------------------------------------------------
+    // metric_fab reads experience bullets only, so it sat at a clean 0 through
+    // every run whose summary claimed a tenure, a figure and a university tier
+    // cv.md never states. This names each class instead of missing all of them.
+    const sfCv = [FIXTURE_CV, '', '## Education', '', '**Northgate College**',
+      '**BEng (Hons) Software Engineering — First Class Honours** | 2022 – 2026'].join('\n');
+    deepEq(th.summaryFab('Engineer building Rust ingest services.', sfCv), [],
+      'a grounded summary reports no fabrication');
+    deepEq(th.summaryFab('Engineer with 1-3 years of real production experience.', sfCv), ['tenure'],
+      'a tenure range the CV never states is named');
+    deepEq(th.summaryFab('Russell Group graduate with First Class Honours.', sfCv), ['credential'],
+      'an ungrounded credential is named and a grounded one is not');
+    eq(th.summaryFab('Engineer with 1-3 years of experience, Russell Group graduate.', sfCv).length, 2,
+      'a summary carrying two classes reports both');
+    deepEq(th.summaryFab('', sfCv), [], 'an empty summary reports nothing rather than throwing');
+
     // ---- withEmbedMetrics ---------------------------------------------------
     const rows = [
       { dir: '1_acme',
@@ -663,7 +679,12 @@ try {
     eq(summary.meta.label, 'A', "the run's meta.json is carried into the metrics");
     ok(typeof summary.grounding === 'number' && typeof summary.num_retention === 'number',
       'every headline metric comes back as a number');
-    ok(/1_acme\s+roles=1 fab=/.test(metrics.out), '--rows prints one line per offer');
+    ok(/1_acme\s+diff=\S+ noise=\S+ yield=\S+ roles=1 fab=/.test(metrics.out),
+      '--rows prints one line per offer, label metrics first');
+    // The fixture has no labels in batch/bench/opus/labels for these ids, so the
+    // label columns must degrade to a dash rather than to a number that would
+    // read as a real score.
+    ok(/diff=- /.test(metrics.out), 'an offer with no label shows a dash, not a zero');
     ok(/reg=-/.test(metrics.out), 'and shows regret as a dash when --no-embed skipped it');
 
     // A --limit run holds a prefix of the sample, so an unpaired compare is

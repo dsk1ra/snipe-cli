@@ -730,7 +730,11 @@ if (!isMain) {
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
   const pct = (x) => (typeof x === 'number' ? x.toFixed(2) : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  diff=${pct(r.differentiator_coverage)}(-${r.differentiators_lost ?? '-'}) noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  // A bare dash when the offer has no label — "-(--)" reads as a number that
+  // went wrong rather than as a question that was never asked.
+  const diffCol = (r) => (typeof r.differentiator_coverage === 'number'
+    ? `${r.differentiator_coverage.toFixed(2)}(-${r.differentiators_lost})` : '-');
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -740,20 +744,31 @@ if (!isMain) {
   // mean. bootstrapCI and signTest are retrieval-bench's, unchanged, so both
   // benchmarks answer "is this real" the same way.
   const [a, b] = positional;
-  const { bootstrapCI, signTest } = await import('./retrieval-bench.mjs');
+  const { bootstrapCI, signTest } = await import('./stats.mjs');
   let A = await allMetrics(a, rest.includes('--no-embed'));
   let B = await allMetrics(b, rest.includes('--no-embed'));
   const common = A.rows.map(r => r.dir).filter(d => B.rows.some(r => r.dir === d));
   const byDir = (m) => new Map(m.rows.map(r => [r.dir, r]));
   const [ra, rb] = [byDir(A), byDir(B)];
 
-  const keys = ['differentiator_coverage', 'noise_rate', 'grade_yield', 'mean_grade',
-                'ats_coverage', 'grounding', 'num_retention', 'metric_fab', 'product_fab',
-                'summary_cv_fit', 'summary_jd_fit', 'selection_regret', 'mean_bullets'];
+  // Display name → the key the per-offer row actually carries. metricsFor names
+  // several of them differently in the row than in the summary (`fab` becomes
+  // `metric_fab`, `bullets` becomes `mean_bullets` once averaged), and reading
+  // the summary name off a row silently yields undefined — which this reported
+  // as "no paired data" rather than as a wrong number, but reported all the same.
+  const keys = [
+    ['differentiator_coverage', 'differentiator_coverage'], ['noise_rate', 'noise_rate'],
+    ['grade_yield', 'grade_yield'], ['mean_grade', 'mean_grade'],
+    ['ats_coverage', 'ats_coverage'], ['grounding', 'grounding'],
+    ['num_retention', 'num_retention'], ['num_lost', 'num_lost'],
+    ['metric_fab', 'fab'], ['product_fab', 'product_fab'],
+    ['summary_cv_fit', 'summary_cv_fit'], ['summary_jd_fit', 'summary_jd_fit'],
+    ['selection_regret', 'selection_regret'], ['mean_bullets', 'bullets'],
+  ];
   console.log(`paired on ${common.length} offers · ${a} → ${b}\n`);
   console.log(`${'metric'.padEnd(24)}${a.padEnd(10)}${b.padEnd(10)}${'delta'.padEnd(9)}${'CI95'.padEnd(20)}w-l    p`);
   console.log('-'.repeat(24 + 10 + 10 + 9 + 20 + 12));
-  for (const k of keys) {
+  for (const [label, k] of keys) {
     // Only offers where BOTH runs produced the metric. A null on one side is not
     // a zero, and pairing it against a number would invent a delta.
     const deltas = [], av = [], bv = [];
@@ -762,16 +777,15 @@ if (!isMain) {
       if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) continue;
       av.push(x); bv.push(y); deltas.push(y - x);
     }
-    if (!deltas.length) { console.log(`${k.padEnd(24)}${'-'.padEnd(49)}no paired data`); continue; }
+    if (!deltas.length) { console.log(`${label.padEnd(24)}${'-'.padEnd(49)}no paired data`); continue; }
     const mean = (v) => v.reduce((p, q) => p + q, 0) / v.length;
     const ci = bootstrapCI(deltas);
-    const w = deltas.filter(d => d > 1e-9).length, l = deltas.filter(d => d < -1e-9).length;
-    const p = signTest(deltas);
-    const sig = ci[0] > 0 || ci[1] < 0 ? ' *' : '';
-    console.log(`${k.padEnd(24)}${mean(av).toFixed(3).padEnd(10)}${mean(bv).toFixed(3).padEnd(10)}`
-      + `${(mean(deltas) >= 0 ? '+' : '') + mean(deltas).toFixed(3)}`.padEnd(9)
-      + `[${ci[0].toFixed(3)}, ${ci[1].toFixed(3)}]`.padEnd(20)
-      + `${w}-${l}`.padEnd(7) + `${p < 0.001 ? '<0.001' : p.toFixed(3)}${sig}`);
+    const { pos, neg, p } = signTest(deltas);
+    const sig = ci.lo > 0 || ci.hi < 0 ? ' *' : '';
+    console.log(`${label.padEnd(24)}${mean(av).toFixed(3).padEnd(10)}${mean(bv).toFixed(3).padEnd(10)}`
+      + `${(ci.mean >= 0 ? '+' : '') + ci.mean.toFixed(3)}`.padEnd(9)
+      + `[${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]`.padEnd(20)
+      + `${pos}-${neg}`.padEnd(7) + `${p < 0.001 ? '<0.001' : p.toFixed(3)}${sig}`);
   }
   console.log(`\n  n varies per metric — offers where either run returned null are dropped, not zeroed.`);
   console.log(`  * = bootstrap CI95 excludes 0.`);
