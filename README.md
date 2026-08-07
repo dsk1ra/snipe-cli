@@ -137,7 +137,10 @@ can be opened.
 
 **3 · FOLLOW-UPS** — applications that are due for a nudge, from the follow-up
 cadence tracker. Press **↓** to enter the list, **Enter** to mark one nudged,
-**u** to undo, **o** to open its report.
+**u** to undo, **o** to open its report. **r** ends it as *Rejected* and **p**
+advances it a stage (Applied → Responded → Interview → Offer) — both write the
+tracker's Status cell, which is what drops the entry off the list. **r** waits 5
+seconds first, so **u** takes it back while the row is still on screen.
 
 ### Adding and running jobs
 
@@ -204,6 +207,7 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 | **o** | Open the result folder / report |
 | **a** | Mark the selected row **applied `>`** |
 | **x** | Mark the selected row **skip `-`** (mutually exclusive with applied) |
+| **r** · **p** · **u** | Follow-ups tab only: end the entry as *Rejected* (5 s to change your mind), advance it a stage, or undo — the pending rejection first, then the last nudge |
 | **/** | Start a slash command |
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |

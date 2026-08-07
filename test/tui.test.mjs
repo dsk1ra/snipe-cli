@@ -86,6 +86,8 @@ const ENV = {
   ...process.env,
   SNIPE_HOME: HOME,
   SNIPE_TRACKER: join(HOME, 'data/applications.md'),
+  // the rejection grace window, shrunk under the driver's 140ms-per-key clock
+  SNIPE_REJECT_GRACE_MS: '300',
 };
 
 /** Drive the TUI with a key sequence and return its raw frames. */
@@ -148,7 +150,9 @@ async function drive(...keys) {
       '| # | Date | Company | Role | Score | Status | PDF | Report | Notes |',
       '|---|------|---------|------|-------|--------|-----|--------|-------|',
       `| 801 | ${daysAgo(1)} | Fixture Corp | Backend Engineer | 4.2/5 | Evaluated | Y | [801](../reports/801-fixture-corp-${daysAgo(1)}.md) | fixture |`,
-      `| 555 | ${daysAgo(20)} | Overdue Ltd | Platform Engineer | 4.5/5 | Applied | Y | [555](../reports/555-overdue-ltd-${daysAgo(20)}.md) | fixture |`,
+      // #555 links report 400 on purpose: the two sequences diverge in the real
+      // tracker, so a follow-up action keyed on the report number finds no row.
+      `| 555 | ${daysAgo(20)} | Overdue Ltd | Platform Engineer | 4.5/5 | Applied | Y | [400](../reports/400-overdue-ltd-${daysAgo(20)}.md) | fixture |`,
       '',
     ].join('\n'), 'utf8');
     writeFileSync(join(HOME, 'data/follow-ups.md'),
@@ -469,6 +473,34 @@ async function drive(...keys) {
       const undoneAgain = await drive('3', 'DOWN', 'u');
       if (/No nudges recorded/.test(undoneAgain)) pass('"u" with nothing to undo says so');
       else fail('"u" on an un-nudged entry did not report it');
+
+      // r is deferred by SNIPE_REJECT_GRACE_MS; u inside that window must leave
+      // the tracker untouched, and letting it elapse must flip the Status cell.
+      const trackerFile = join(HOME, 'data/applications.md');
+      const cancelled = await drive('3', 'DOWN', 'r', 'u');
+      if (/Rejection cancelled/.test(cancelled)) pass('"u" cancels a rejection inside its grace period');
+      else fail('"u" did not cancel the pending rejection');
+      if (/\| Applied \|/.test(readFileSync(trackerFile, 'utf8'))) pass('a cancelled rejection never reaches the tracker');
+      else fail(`tracker was written despite the undo: ${readFileSync(trackerFile, 'utf8').slice(-200)}`);
+
+      const rejected = await drive('3', 'DOWN', 'r', 'x', 'x', 'x', 'x');
+      if (/rejected ✗/.test(rejected)) pass('"r" completes the rejection once the grace period elapses');
+      else fail('"r" did not report the rejection');
+      // the entry's name is still in the status line, so assert on the empty list
+      if (/No active applications/.test(rejected)) pass('the rejected entry leaves the follow-up list');
+      else fail('the rejected entry is still on the Follow-ups tab');
+      if (/\| Rejected \|/.test(readFileSync(trackerFile, 'utf8'))) pass('the elapsed rejection is written to the tracker');
+      else fail(`tracker after a rejection: ${readFileSync(trackerFile, 'utf8').slice(-200)}`);
+
+      // and it leaves the follow-up list, because cadence only keeps
+      // applied/responded/interview — put it back Applied for the rest of the run.
+      writeFileSync(trackerFile, readFileSync(trackerFile, 'utf8').replace('| Rejected |', '| Applied |'), 'utf8');
+      const proceeded = await drive('3', 'DOWN', 'p');
+      if (/Responded/.test(proceeded)) pass('"p" advances an applied follow-up to Responded');
+      else fail('"p" did not advance the status');
+      if (/\| Responded \|/.test(readFileSync(trackerFile, 'utf8'))) pass('"p" writes the next stage to the tracker');
+      else fail(`tracker after proceed: ${readFileSync(trackerFile, 'utf8').slice(-200)}`);
+      writeFileSync(trackerFile, readFileSync(trackerFile, 'utf8').replace('| Responded |', '| Applied |'), 'utf8');
 
       rmSync(OPENED, { force: true });
       const noRep = await drive('3', 'DOWN', 'o');

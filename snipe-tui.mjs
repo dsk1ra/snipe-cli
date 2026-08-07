@@ -17,7 +17,8 @@
 //       to queue (enqueues) · o open result folder · a mark applied > ·
 //       x mark skip - (mutually exclusive) ·
 //       Esc clear field/step out · q quit (outside input fields)
-//       Follow-ups tab: ↓ enters list · Enter mark nudged · u undo · o report
+//       Follow-ups tab: ↓ enters list · Enter mark nudged · r rejected (5s
+//       grace) · p proceeded (next stage) · u undo · o report
 // Slash commands (typed in the JD box, or just press /): /scan runs the
 //       portal scanner and queues whatever it finds.
 //
@@ -638,10 +639,13 @@ function openLink() {
   setMsg(`Opened ${url}`);
 }
 
-// Flip only the Status cell of the tracker row whose Report cell links [<num>](…),
-// and only if it currently reads `from` — so it never clobbers a later-stage
-// status (Interview/Offer/…).
-function syncTracker(rnum, from, to) {
+// Flip only the Status cell of one tracker row, and only if it currently reads
+// `from` — so it never clobbers a later-stage status (Interview/Offer/…).
+// Two different keys reach the same row, because the tracker's own # and the
+// report number diverge (report numbers are reserved separately, so #227 can
+// link report 176): the queue knows an offer's report_num and matches the
+// Report cell, the follow-up list knows the row # and matches column 1.
+function syncTracker(rnum, from, to, byRow = false) {
   if (!rnum || rnum === '-') return false;
   let txt;
   try { txt = fs.readFileSync(TRACKER_FILE, 'utf8'); } catch { return false; }
@@ -650,7 +654,8 @@ function syncTracker(rnum, from, to) {
   for (let i = 0; i < lines.length; i++) {
     const cells = lines[i].split('|');
     // | # | Date | Company | Role | Score | Status | PDF | Report | Notes |
-    if (cells.length < 10 || !numRe.test(cells[8])) continue;
+    if (cells.length < 10) continue;
+    if (!(byRow ? Number(cells[1]) === Number(rnum) : numRe.test(cells[8]))) continue;
     if (cells[6].trim() !== from) return false;
     cells[6] = ` ${to} `;
     lines[i] = cells.join('|');
@@ -737,6 +742,12 @@ function markNudged(bump) {
 function undoNudge(bump) {
   const e = S.followups?.entries?.[S.fuIdx];
   if (!e) { setMsg('Nothing selected', true); return; }
+  if (fuPending.has(e.num)) { // a rejection still inside its grace window outranks the nudge log
+    clearTimeout(fuPending.get(e.num));
+    fuPending.delete(e.num);
+    setMsg(`Rejection cancelled for ${e.company}`);
+    return;
+  }
   let txt = '';
   try { txt = fs.readFileSync(FOLLOWUPS_FILE, 'utf8'); } catch {}
   const lines = txt.split('\n');
@@ -756,13 +767,56 @@ function undoNudge(bump) {
   refreshFollowups(bump);
 }
 
+// r/p end the cadence instead of nudging it: both flip the tracker Status cell,
+// which is the only thing that decides whether an entry is a follow-up at all
+// (followup-cadence.mjs keeps applied/responded/interview and drops the rest).
+// Rejected is deferred by a grace window so a mis-keyed r is recoverable while
+// the row is still on screen — nothing is written until it elapses.
+const REJECT_GRACE_MS = Number(process.env.SNIPE_REJECT_GRACE_MS) || 5000;
+const fuPending = new Map(); // app num → pending-rejection timer
+const PROCEED = { applied: 'Responded', responded: 'Interview', interview: 'Offer' };
+const statusLabel = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function markRejected(bump) {
+  const e = S.followups?.entries?.[S.fuIdx];
+  if (!e) { setMsg('Nothing selected', true); return; }
+  if (fuPending.has(e.num)) { setMsg(`${e.company} is already being rejected · u undo`, true); return; }
+  fuPending.set(e.num, setTimeout(() => {
+    fuPending.delete(e.num);
+    const synced = syncTracker(e.num, statusLabel(e.status), 'Rejected', true);
+    // the row leaving is the confirmation, so drop it here rather than waiting
+    // on the cadence re-read (which is a spawned node and can also disagree)
+    const list = S.followups?.entries || [];
+    const i = list.indexOf(e);
+    if (i >= 0) list.splice(i, 1);
+    S.fuIdx = Math.min(S.fuIdx, Math.max(0, list.length - 1));
+    setMsg(`${e.company} rejected ✗${synced ? '' : ' · tracker unchanged'}`, !synced);
+    bump();
+    refreshFollowups(bump);
+  }, REJECT_GRACE_MS));
+  setMsg(`${e.company} → Rejected in ${Math.round(REJECT_GRACE_MS / 1000)}s · u undo`);
+}
+
+function markProceeded(bump) {
+  const e = S.followups?.entries?.[S.fuIdx];
+  if (!e) { setMsg('Nothing selected', true); return; }
+  const to = PROCEED[e.status];
+  if (!to) { setMsg(`No next stage after ${e.status}`, true); return; }
+  const synced = syncTracker(e.num, statusLabel(e.status), to, true);
+  if (synced) e.status = to.toLowerCase(); // optimistic; the refresh recomputes urgency
+  setMsg(`${e.company} → ${to}${synced ? '' : ' · tracker unchanged'}`, !synced);
+  refreshFollowups(bump);
+}
+
 // Cadence's own reportPath mis-joins the tracker's ../reports/ links, so find
-// the report by its number prefix instead.
+// the report by its number prefix instead — the number in the Report cell, not
+// the row's own #, which is a different sequence.
 function openFuReport() {
   const e = S.followups?.entries?.[S.fuIdx];
   if (!e) return;
+  const rnum = Number(String(e.report || '').match(/\[0*(\d+)\]/)?.[1] ?? e.num);
   let f = null;
-  try { f = fs.readdirSync(path.join(HOME, 'reports')).find(x => x.startsWith(`${String(e.num).padStart(3, '0')}-`)); } catch {}
+  try { f = fs.readdirSync(path.join(HOME, 'reports')).find(x => x.startsWith(`${String(rnum).padStart(3, '0')}-`)); } catch {}
   if (f) {
     spawn('xdg-open', [path.join(HOME, 'reports', f)], { detached: true, stdio: 'ignore' }).unref();
     setMsg(`Opened ${f}`);
@@ -894,6 +948,8 @@ function makeStdinHandler(bump, quit) {
     if (ch === 'q') quit();
     else if (ch === 'o') openFuReport();
     else if (ch === 'u') undoNudge(bump);
+    else if (ch === 'r') markRejected(bump);
+    else if (ch === 'p') markProceeded(bump);
     else if (ch === 'j' || ch === 'k') moveFuSel(ch === 'j' ? 1 : -1);
   };
 
@@ -1266,17 +1322,19 @@ function TabBar() {
 
 function FuRow({ e, selected, maxNudges }) {
   const due = e.urgency === 'urgent' || e.urgency === 'overdue';
+  const rejecting = fuPending.has(e.num);
   // Four rungs of one ladder (urgent > overdue > waiting > cold, see
   // tracker/followup-cadence.mjs:291), so the notation escalates rather than
   // switching shape per state — and stays distinct without colour. Padded to a
   // fixed 2 columns because '!!' is 2 wide and a ragged left edge otherwise
   // indents every non-urgent row by one.
-  const icon =
+  const icon = rejecting ? h(Text, { color: 'red' }, ' ✗') :
     e.urgency === 'urgent' ? h(Text, { color: 'red', bold: true }, '!!') :
     e.urgency === 'overdue' ? h(Text, { color: 'yellow' }, ' !') :
     e.urgency === 'cold' ? h(Text, { dimColor: true }, ' -') :
     h(Text, { dimColor: true }, ' ·');
-  const when = due ? `due now — applied ${e.daysSinceApplication}d ago`
+  const when = rejecting ? 'rejecting — u to undo'
+    : due ? `due now — applied ${e.daysSinceApplication}d ago`
     : e.urgency === 'cold' ? 'max nudges sent'
     : e.daysUntilNext != null ? `next in ${e.daysUntilNext}d` : '';
   return h(Box, { height: 1, overflow: 'hidden' },
@@ -1284,7 +1342,7 @@ function FuRow({ e, selected, maxNudges }) {
     h(Text, { inverse: selected, wrap: 'truncate' }, ` ${e.company} — ${e.role} `),
     h(Text, { dimColor: true, wrap: 'truncate' },
       ` ${e.status} · nudges ${e.followupCount}/${maxNudges}`),
-    h(Text, { color: due ? 'yellow' : undefined, dimColor: !due, wrap: 'truncate' }, ` · ${when}`));
+    h(Text, { color: rejecting ? 'red' : due ? 'yellow' : undefined, dimColor: !rejecting && !due, wrap: 'truncate' }, ` · ${when}`));
 }
 
 function FollowupsTab() {
@@ -1299,7 +1357,8 @@ function FollowupsTab() {
         : h(Box, { flexDirection: 'column', flexGrow: 1, overflow: 'hidden' },
             fu.entries.map((e, i) => h(FuRow, { key: e.num, e, selected: S.fuIn && i === S.fuIdx, maxNudges }))),
     h(Box, { height: 1 }),
-    h(Text, { dimColor: true }, 'Enter records a follow-up in data/follow-ups.md and resets its clock.'));
+    h(Text, { dimColor: true }, 'Enter records a follow-up in data/follow-ups.md and resets its clock.'),
+    h(Text, { dimColor: true }, `r ends it as Rejected (${Math.round(REJECT_GRACE_MS / 1000)}s to undo) · p advances the tracker status a stage.`));
 }
 
 // "▸ 16 Jul — 2 scans" for the grid cursor — right under the labels, next to the grid
@@ -1539,7 +1598,7 @@ function App() {
   const hints = S.tab === 'stats'
     ? '←→ tabs/row actions · ↑↓ navigate · Enter next/queue/run/retry/debug/link · o result · a applied · x skip · q quit'
     : S.tab === 'followups'
-      ? '←→ tabs · ↑↓ navigate · Enter mark nudged · u undo · o report · q quit'
+      ? '←→ tabs · ↑↓ navigate · Enter nudged · r rejected · p proceeded · u undo · o report · q quit'
       : S.gridSel
         ? (S.actView === 'day' ? '←→ hour · ↑/Esc leave · ‹› period · j/k type · q quit'
           : '←→ week · ↑↓ day · ↑top/Esc leave · ‹› period · j/k type · q quit')
