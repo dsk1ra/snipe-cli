@@ -153,7 +153,8 @@ async function grades({ withDistinct = false } = {}) {
  * @returns {number[]} shipped atom ids
  */
 export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0,
-  projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS } = {}) {
+  projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS, gateK = 1,
+  projKeep = PROJ_KEEP } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
@@ -170,10 +171,22 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
     + spikeW * (cache.spike?.[id]?.[i] ?? 0));
 
   // Which project entries are eligible at all: the funnel keeps the top
-  // PROJ_KEEP of them, ranked by their best bullet, before any bullet is picked.
+  // PROJ_KEEP of them before any bullet is picked.
+  //
+  // `gateK` is how many of a project's bullets that gate reads. 1 is the shipped
+  // rule — max over the project, so a project with three matching bullets and
+  // one with a single matching bullet gate identically. Allocation did not touch
+  // this bucket (71 differentiators lost to it before and after), because it
+  // only spends the budget on projects the gate already admitted.
   const projEntries = [...new Set(A.filter(a => a.section === 'Projects').map(a => a.entity))];
-  const bestOf = e => Math.max(...A.map((a, i) => (a.entity === e ? score[i] : -Infinity)));
-  const keptProjects = new Set(projEntries.sort((x, y) => bestOf(y) - bestOf(x)).slice(0, PROJ_KEEP));
+  const massOf = e => A.map((a, i) => (a.entity === e ? score[i] : null))
+    .filter(s => s !== null).sort((x, y) => y - x).slice(0, gateK)
+    .reduce((s, v) => s + v, 0);
+  // `projKeep` is how many survive. The CV has 5 projects and ships 4, so this
+  // gate chooses which ONE to drop — re-scoring that choice is near zero-sum,
+  // which is why gateK measured nothing. Keeping all 5 on the same bullet budget
+  // is the version of the idea with something to win.
+  const keptProjects = new Set(projEntries.sort((x, y) => massOf(y) - massOf(x)).slice(0, projKeep));
 
   const quota = new Map();
   // Project bullets are drawn from one shared budget rather than a flat cap per
@@ -341,31 +354,36 @@ function sweep(split = 'train') {
 /**
  * One config, one split — the held-out check. Never tune with this.
  *
- * `baseSpike` is what the baseline arm runs, and it is not cosmetic: spike 6 is
- * shipped, so a variant measured against spike 0 reports its own gain *plus*
- * spike's and reads as roughly twice what it is worth. It defaults to 0 because
- * every number already in the ledger was taken that way.
+ * `base` is what the baseline arm runs, and it is not cosmetic: measured against
+ * a baseline that lacks a shipped term, a variant reports its own gain *plus*
+ * that term's and reads as roughly twice what it is worth — allocation read
+ * +0.132 against spike 0 and +0.077 against the spike 6 that actually ships.
+ * Every field defaults to the pre-change value, because every number already in
+ * the ledger was taken that way; pass --base-spike / --base-cap / --base-gate-k
+ * to measure the next change against what is shipped by then.
  */
-function check(split, cfg, baseSpike = 0) {
+function check(split, cfg, base = {}) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW: defaultGradeW, dropped } = scorable(cache, labels, split);
   // The baseline is always the shipped ranker; only the variant may move gradeW,
   // so "delete the judge" is measured against what production actually does.
   const gradeW = cfg.gradeW ?? defaultGradeW;
-  const base = evalCfg(cache, labels, offers, { gradeW: defaultGradeW, spikeW: baseSpike });
+  const baseCfg = { gradeW: defaultGradeW, spikeW: 0, projCap: PROJ_BULLETS, gateK: 1, projKeep: PROJ_KEEP, ...base };
+  const baseline = evalCfg(cache, labels, offers, baseCfg);
   const got = evalCfg(cache, labels, offers, { ...cfg, gradeW });
-  const byId = new Map(base.rows.map(r => [r.id, r]));
+  const byId = new Map(baseline.rows.map(r => [r.id, r]));
   const dCov = got.rows.map(r => r.cov - byId.get(r.id).cov);
   const dYld = got.rows.map(r => r.yld - byId.get(r.id).yld);
   console.log(`split=${split} n=${got.n} · judge term ${gradeW ? 'ON (0.10)' : 'OFF (cosine-only)'}` +
     `${dropped ? ` · ${dropped} ungraded offer(s) dropped` : ''}\n` +
-    `baseline: spikeW=${baseSpike}\n` +
+    `baseline: spikeW=${baseCfg.spikeW} projCap=${baseCfg.projCap} gateK=${baseCfg.gateK}\n` +
     `variant: gradeW=${gradeW} spikeW=${cfg.spikeW ?? 0} lambda=${cfg.lambda ?? 0} ` +
-    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0} projCap=${cfg.projCap ?? PROJ_BULLETS}\n`);
+    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0} projCap=${cfg.projCap ?? PROJ_BULLETS} `+
+    `gateK=${cfg.gateK ?? 1} projKeep=${cfg.projKeep ?? PROJ_KEEP}\n`);
   for (const [name, before, after, d] of [
-    ['differentiator_coverage', base.cov, got.cov, dCov],
-    ['grade_yield', base.yld, got.yld, dYld]]) {
+    ['differentiator_coverage', baseline.cov, got.cov, dCov],
+    ['grade_yield', baseline.yld, got.yld, dYld]]) {
     const ci = bootstrapCI(d), st = signTest(d);
     console.log(`${name.padEnd(24)} ${before.toFixed(3)} -> ${after.toFixed(3)}  ` +
       `${ci.mean >= 0 ? '+' : ''}${ci.mean.toFixed(3)}  CI95 [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]  ` +
@@ -383,11 +401,11 @@ function check(split, cfg, baseSpike = 0) {
  * or ranking problem, a third differentiator inside a two-bullet project is a
  * *budget allocation* problem that no wording can touch.
  */
-function attribute(split = 'all', projCap = PROJ_BULLETS) {
+function attribute(split = 'all', projCap = PROJ_BULLETS, gateK = 1) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW } = scorable(cache, labels, split);
-  const cfg = { gradeW, spikeW: 6, projCap };
+  const cfg = { gradeW, spikeW: 6, projCap, gateK };
   const byId = new Map(cache.atoms.map(a => [a.id, a]));
   const n = cache.atoms.length;
   const atomText = [...labels.values()][0].atoms;
@@ -472,6 +490,15 @@ function ablate(split = 'train') {
   // anything else means the generalisation changed the baseline it generalises.
   for (const c of [2, 3, 4, 6]) show(`projCap ${c} only`, { projCap: c });
   for (const c of [3, 4, 6]) show(`spike 6 + projCap ${c}`, { spikeW: 6, projCap: c });
+  // The project gate: how many bullets decide which projects make the cut.
+  // gateK 1 is shipped and must print delta 0.000. Every project in this CV has
+  // at least 4 bullets, so up to gateK 4 the sum compares equal-length lists and
+  // cannot be won by simply having more bullets to add up.
+  for (const k of [1, 2, 3, 4]) show(`gateK ${k}, shipped alloc`, { spikeW: 6, projCap: 4, gateK: k });
+  // Same budget of 8, spread over all 5 projects instead of 4. Costs a project
+  // header and blurb on the page, which the simulator cannot see -- render before
+  // believing it.
+  show('projKeep 5, shipped alloc', { spikeW: 6, projCap: 4, projKeep: 5 });
   // The judge's own answer to the question spike answers arithmetically.
   if (Object.keys(cache.grades2 || {}).length) {
     for (const d of [0.05, 0.10, 0.20, 0.40]) show(`distinct ${d} only`, { distinctW: d });
@@ -487,15 +514,22 @@ else if (cmd === 'grades') await grades({ withDistinct: process.argv.includes('-
 else if (cmd === 'validate') validate();
 else if (cmd === 'sweep') sweep(arg('--split', 'train'));
 else if (cmd === 'ablate') ablate(arg('--split', 'train'));
-else if (cmd === 'attribute') attribute(arg('--split', 'all'), parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10));
+else if (cmd === 'attribute') attribute(arg('--split', 'all'), parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10),
+  parseInt(arg('--gate-k', '1'), 10));
 else if (cmd === 'check') check(arg('--split', 'test'), {
   spikeW: parseFloat(arg('--spike', '0')),
   lambda: parseFloat(arg('--lambda', '0')),
   reserve: parseInt(arg('--reserve', '0'), 10),
   distinctW: parseFloat(arg('--distinct', '0')),
   projCap: parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10),
+  gateK: parseInt(arg('--gate-k', '1'), 10),
+  projKeep: parseInt(arg('--proj-keep', String(PROJ_KEEP)), 10),
   ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) },
-  parseFloat(arg('--base-spike', '0')));
+  { spikeW: parseFloat(arg('--base-spike', '0')),
+    projCap: parseInt(arg('--base-cap', String(PROJ_BULLETS)), 10),
+    gateK: parseInt(arg('--base-gate-k', '1'), 10),
+    projKeep: parseInt(arg('--base-proj-keep', String(PROJ_KEEP)), 10) });
 else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|attribute|check [--split train|test|all]\n' +
   '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]\n' +
-  '                                   [--proj-cap N] [--base-spike W]');
+  '                                   [--proj-cap N] [--gate-k N] [--proj-keep N]\n' +
+  '                                   [--base-spike W] [--base-cap N] [--base-gate-k N]');
