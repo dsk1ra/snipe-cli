@@ -282,13 +282,50 @@ was costing accuracy.** Three explanations this run cannot separate:
 3. The exemplar pair moved `{5,50}` → `{50,103}`; the binary control on
    `{50,103}` was the option not taken.
 
-### Attempt 2 — expand a ticked project into its bullets
+### Attempt 2 — expand a ticked project into its bullets. Rejected, −0.045
 
 Keeps the binary taste the gold sheet rewards and fixes only the space bug: a
 ticked project contributes its own bullets to `wantText`, so its bullets
-demonstrate as 3 instead of 0. Imports no second rubric. Requires widening
-`loadExemplars`' guard to the consumer's space (`parts`), or the expanded file
-is dropped as unmatched.
+demonstrate as 3 instead of 0. Imports no second rubric, and uses the **same
+`{5,50}` pair production ships**, so attempt 1's exemplar-pair confound is gone.
+`loadExemplars`' guard had to widen to the consumer's space (`parts`) or the
+expanded file is dropped as unmatched — the guard validated titles only, so the
+broken form passed and the correct one would not have.
+
+| variant | shipped (broken) | expanded | delta |
+|---|---|---|---|
+| `cos+judge-0.10` (shipped blend) | 0.781 | 0.736 | **−0.045** |
+| `judge` alone | 0.801 | 0.727 | −0.074 |
+| `prior-only`, `base-cos` (no judge) | 0.810, 0.545 | identical | — |
+
+The no-judge rows are byte-identical across arms, so this is not benchmark rule
+6's zero-width plumbing failure.
+
+### What both attempts mean
+
+**The defect is load-bearing.** Two independent fixes, one graded and one
+binary, both make ranking worse — so the judge's accuracy does not come from
+faithfully reproducing what the human ticked. What the two fixes share is
+*generosity*: the shipped exemplars demonstrate 5 and 3 of 33 items as non-zero,
+expansion takes that to 18 and 12, grading takes it to 22 and 27. Accuracy falls
+monotonically as the demonstrations get more generous (0.781 → 0.736 → 0.633).
+
+That is standing rule 8 arriving from the other side — it warned that generosity
+buys rho without buying truth, and here generosity does not even buy rho. The
+working hypothesis is that the demonstrations calibrate *strictness* rather than
+teach taste, and that the accidental all-projects-are-0 is acting as a severity
+prior the metric likes.
+
+**Do not "fix" this without a measurement that can tell severity from taste.**
+Pair accuracy over binary gold ticks cannot: it rewards hard separation by
+construction. The metric that could is differentiator coverage in production's
+33-item space, which costs a full 128-offer or 66-offer re-grade — the run not
+yet taken. Until then the defect stays documented and unfixed, which is the
+honest state, not an oversight.
+
+Everything needed to retry is committed: `export-shots --graded` / `--expand`,
+the widened guard, `SNIPE_JUDGE_SHOTS` to keep candidates away from production,
+and both grade caches under `batch/bench/`.
 
 ## Superseded — the judge grades binary
 
@@ -320,6 +357,7 @@ is graded exemplars — a human rating a sample 0–3 rather than ticking keep/d
 | project gate scored by top-k mass (`gateK`) | +0.008 held out, 4 of 66 offers, p=0.375 |
 | keeping all 5 projects on the same budget (`projKeep`) | −0.005 coverage, −0.009 yield |
 | graded exemplars from the Opus label corpus | −0.148 pair accuracy held out; see below |
+| expanding a ticked project into its bullets | −0.045 pair accuracy held out; the defect is load-bearing |
 
 ## Standing rules that cost time to learn
 
