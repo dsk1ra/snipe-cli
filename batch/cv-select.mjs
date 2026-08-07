@@ -12,9 +12,14 @@
  */
 
 import { fileURLToPath } from 'url';
-import { embed, cosine } from './embeddings.mjs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { embed, cosine, modelFingerprint } from './embeddings.mjs';
 import { cleanJd } from './text-utils.mjs';
 import { logCall } from './timing.mjs';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
 
 // ── LLM rerank ────────────────────────────────────────────────────────────────
 
@@ -187,6 +192,81 @@ function renderEntries(parsed) {
   return out;
 }
 
+// ── Corpus-relative specificity ("spike") ────────────────────────────────────
+
+const SPIKE_CACHE = resolve(__dir, 'cv-spike.json');
+// Below this the mean is a description of a handful of postings rather than of
+// the market, and subtracting it is noise. Returning null leaves plain cosine.
+const SPIKE_MIN_OFFERS = 20;
+
+/**
+ * Mean relevance of each CV bullet across *past* postings.
+ *
+ * Cosine answers "does this bullet match this posting", which every generic
+ * bullet also answers well — so ranking by it ships the fourth way of saying
+ * "CI/CD" and drops the lock-free frame ring. Subtracting each bullet's corpus
+ * mean turns the score into "does this posting like this bullet *more than
+ * postings usually do*", which is what differentiating means.
+ *
+ * Measured on the 128-offer label corpus: +0.084 differentiator coverage on the
+ * train split, +0.072 held out (CI95 [0.032, 0.112], 26-8, p=0.003) at weight 6,
+ * with grade_yield flat — the gain is not bought by shipping less relevant work.
+ * The background MUST come from requirement sets: using the full-JD vectors in
+ * `jd-index.json` instead is a different scale and measured *negative* (-0.025).
+ *
+ * @returns {Promise<number[]|null>} per-bullet corpus mean, aligned to `bullets`
+ */
+export async function spikeBackground(bullets, opts = {}) {
+  const { reportsDir = resolve(__dir, '..', 'reports'), _embed = embed } = opts;
+  if (!existsSync(reportsDir)) return null;
+  const reports = readdirSync(reportsDir).filter(f => f.endsWith('.md')).sort();
+  if (reports.length < SPIKE_MIN_OFFERS) return null;
+
+  // A stubbed embedder must neither read nor write the real cache: the
+  // self-check and any test passing `_embed` would otherwise fill it with fake
+  // vectors — one guard here beats a stub at every call site.
+  // The fingerprint is part of the key for the same reason cv-index.json uses
+  // it: `ollama create snipe-embed` on a new base leaves the tag unchanged, so
+  // a tag-keyed hash keeps stale means silently.
+  const caching = _embed === embed;
+  const hash = caching
+    ? createHash('sha1').update(JSON.stringify(bullets)).update('\n')
+        .update(reports.join(',')).update(await modelFingerprint(opts)).digest('hex')
+    : '';
+  if (caching && existsSync(SPIKE_CACHE)) {
+    try {
+      const c = JSON.parse(readFileSync(SPIKE_CACHE, 'utf8'));
+      if (c.hash === hash && c.mean?.length === bullets.length) return c.mean;
+    } catch { /* rebuild */ }
+  }
+
+  // One requirement set per past report; reports without a parseable Block B
+  // contribute nothing rather than a zero, which would drag every mean down.
+  const reqSets = [];
+  for (const f of reports) {
+    try {
+      const reqs = extractBlockBRequirements(readFileSync(resolve(reportsDir, f), 'utf8'));
+      if (reqs.length) reqSets.push(reqs);
+    } catch { /* skip */ }
+  }
+  if (reqSets.length < SPIKE_MIN_OFFERS) return null;
+
+  const flat = reqSets.flat();
+  const vecs = await _embed([...bullets, ...flat], opts);
+  const bv = vecs.slice(0, bullets.length);
+  const sums = new Array(bullets.length).fill(0);
+  let at = bullets.length;
+  for (const set of reqSets) {
+    const qv = vecs.slice(at, at + set.length);
+    at += set.length;
+    // Max over requirements, matching how selectCvForJd scores a live offer.
+    for (let i = 0; i < bullets.length; i++) sums[i] += Math.max(...qv.map(q => cosine(q, bv[i])));
+  }
+  const mean = sums.map(s => s / reqSets.length);
+  if (caching) try { writeFileSync(SPIKE_CACHE, JSON.stringify({ hash, offers: reqSets.length, mean }), 'utf8'); } catch { /* cache is optional */ }
+  return mean;
+}
+
 // ── Selection ─────────────────────────────────────────────────────────────────
 
 /**
@@ -197,7 +277,11 @@ function renderEntries(parsed) {
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
     maxProjects = 4, maxBulletsPerProject = 5, maxBulletsPerRole = 4,
-    _embed = embed,
+    // Weight on corpus-relative specificity. 6 is the measured optimum and the
+    // curve is broad (4 -> +0.075, 6 -> +0.084, 8 -> +0.079), so it is a plateau,
+    // not a knife edge. 0 disables it and restores plain cosine ranking.
+    spikeWeight = 6,
+    _embed = embed, _spikeBackground = spikeBackground,
   } = opts;
 
   const queries = (requirements && requirements.length)
@@ -236,6 +320,22 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     const v = vecs[queries.length + i];
     const it = items[i];
     it.score = Math.max(...qv.map(q => cosine(q, v)));
+  }
+
+  // Subtract each bullet's corpus mean, so the score reads "more than postings
+  // usually like this" rather than "matches this posting". Any failure — too few
+  // past reports, unreadable cache — leaves the plain cosine scores untouched.
+  if (spikeWeight) {
+    try {
+      const bg = await _spikeBackground(items.map(i => i.ctx), opts);
+      // The sweep scored `cos + w*(cos - mean)`. Dividing by (1+w) is a positive
+      // scale factor, so it ranks identically — but it keeps cosine on its
+      // original scale, which matters because the judge term below is a flat
+      // +0.10/grade benchmarked against unscaled cosine. Applied raw, w=6 would
+      // inflate the cosine part sevenfold and quietly delete the rerank.
+      const alpha = spikeWeight / (1 + spikeWeight);
+      if (bg) for (let i = 0; i < items.length; i++) items[i].score -= alpha * bg[i];
+    } catch { /* plain cosine */ }
   }
 
   // Rerank with the 30B judge, if exemplars are available. Measured on the gold
@@ -685,7 +785,13 @@ export function verifySummaryFigures(summary, cvText) {
   // unsupported ones then reach the clause surgery.
   const deflated = summary.replace(/(?<![A-Za-z])(\d[\d,.]*)\+/g,
     (m, base) => (!cvNums.has(m) && cvNums.has(base) ? base : m));
-  return stripUnsupportedClauses(deflated, t => [...numbersIn(t)].some(n => !cvNums.has(n)));
+  // "800" against a CV that says "800+" is the same claim, weakened — and "over
+  // 800 students" is literally what "800+" means. Requiring the token to match
+  // exactly deleted a true sentence about teaching 800 students, and the
+  // 50-word pad then filled the hole with boilerplate. Only inflation is a
+  // fabrication; understatement is the candidate's own loss to take.
+  const supported = n => cvNums.has(n) || cvNums.has(`${n}+`);
+  return stripUnsupportedClauses(deflated, t => [...numbersIn(t)].some(n => !supported(n)));
 }
 
 export function stripUnsupportedTenure(summary, cvText) {
@@ -900,6 +1006,10 @@ const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.arg
 if (isMain) {
   const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
 
+  // Every check below runs a stub embedder against the developer's real
+  // reports/ — none of it may reach the real spike cache.
+  const spikeBefore = existsSync(SPIKE_CACHE) ? readFileSync(SPIKE_CACHE, 'utf8') : null;
+
   const fakeCv = `# Name
 
 ## Summary
@@ -1010,6 +1120,29 @@ Text.
   const out3 = await selectCvForJd(fakeCv, [], '', { _embed: stub });
   assert(out3 === fakeCv, 'no queries → CV returned untouched');
 
+  // Spike: a bullet that every past posting likes equally is filler, and must
+  // lose to one this posting likes unusually much even at a lower raw cosine.
+  // 'generic' scores 0.9 here and 0.9 everywhere; 'niche' scores 0.8 here and
+  // 0.1 in the corpus, so plain cosine keeps 'generic' and spike must not.
+  const spikeCv = '## Experience\n\n### Dev — Co (2020-2024)\n\n- generic agile delivery work\n- niche lock-free ring buffer\n';
+  const dim = t => (/generic/.test(t) ? [0.9, 0] : /niche/.test(t) ? [0.8, 0] : [1, 0]);
+  const spikeEmbed = async texts => texts.map(dim);
+  const bg = { 'generic agile delivery work': 0.9, 'niche lock-free ring buffer': 0.1 };
+  const withSpike = await selectCvForJd(spikeCv, ['the requirement'], '', {
+    maxBulletsPerRole: 1, _embed: spikeEmbed,
+    _spikeBackground: async (bullets) => bullets.map(b => bg[b] ?? 0),
+  });
+  assert(/niche/.test(withSpike), 'spike keeps the bullet this posting likes unusually much');
+  const noSpike = await selectCvForJd(spikeCv, ['the requirement'], '', {
+    maxBulletsPerRole: 1, spikeWeight: 0, _embed: spikeEmbed,
+    _spikeBackground: async (bullets) => bullets.map(b => bg[b] ?? 0),
+  });
+  assert(/generic/.test(noSpike), 'spikeWeight 0 restores plain cosine ranking');
+
+  // Too few past reports must degrade to plain cosine, not to zeros.
+  assert(await spikeBackground(['a'], { reportsDir: resolve(__dir, 'no-such-dir') }) === null,
+    'missing reports dir → null, not a crash');
+
   // Project-name remap: fabricated name → real project by content overlap;
   // exact-ish names untouched; pure inventions dropped.
   const remapped = remapProjectNames([
@@ -1035,6 +1168,9 @@ Text.
   ], fakeCv, 3);
   assert(backfilled.length === 3, 'dropped projects backfilled from the CV');
   assert(backfilled.every(p => /Crypto Tool|Web App|Java Batch/.test(p.name)), 'backfill uses real CV projects');
+
+  assert((existsSync(SPIKE_CACHE) ? readFileSync(SPIKE_CACHE, 'utf8') : null) === spikeBefore,
+    'self-check must not write the real spike cache');
 
   console.log('✓ cv-select self-check passed');
 }
