@@ -105,13 +105,14 @@ export function selectSkills(cvText, jdText, maxCats = 6, maxItems = 12) {
  * @returns {{summary: null, experience: any[], projects: any[], skills: any[]}}
  */
 export function verbatimContent(selectedCv, cvText, jdText, opts = {}) {
-  // 2, because that is what renders. Measured across four offers: two project
-  // bullets fit the 2-page cap on all of them, three fit none. The density
-  // ladder can trim further for a long-tail offer, but the default has to be a
-  // shape that actually ships — the bench stops before the PDF, so a default
-  // that only fits in principle would score well on every metric and produce a
-  // three-page CV in production.
-  const { projectBullets = 2 } = opts;
+  // A per-project ceiling, no longer the count. cv-select now shares one total
+  // budget (4 projects x 2 bullets, unchanged) across the projects it kept, so
+  // the entries arriving here already hold 1-4 bullets and the page still gets
+  // eight of them; clipping every project back to 2 here would undo the split.
+  // The number still matters as a ceiling — the bench stops before the PDF, so
+  // a shape that only fits in principle scores well on every metric and renders
+  // three pages in production.
+  const { projectBullets = 4 } = opts;
   const named = (n) => parseCvSections(selectedCv).find(s => s.name === n);
   const expSec = named('Experience');
   const projSec = named('Projects');
