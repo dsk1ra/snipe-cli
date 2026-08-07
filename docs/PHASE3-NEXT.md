@@ -134,6 +134,33 @@ redistribution, not expansion. The density ladder in `local-pdf-offer.mjs:934`
 drops `projBullets` before experience bullets, so a per-project scheme has to
 survive being ladder-trimmed.
 
+## Experiment C — CLOSED. The project gate is not the constraint
+
+Ran 2026-08-07, straight after A, because A was predicted to help the "project
+never made the cut" bucket and moved it by exactly nothing: 71 differentiators
+lost to it before allocation and 71 after. Allocation only spends the budget on
+projects the gate already admitted, so the gate looked like the obvious next
+lever.
+
+It is not, and the attribution says why rather than merely that:
+
+| | total misses | project dropped | over slots | siblings | exp |
+|---|---|---|---|---|---|
+| shipped (keep 4) | 281 | **71** | 60 | 126 | 24 |
+| keep all 5, same budget | 282 | **0** | 106 | 152 | 24 |
+
+Admitting the fifth project drives its bucket to zero and the same 71 losses
+reappear as +46 "more differentiators than slots" and +26 "beaten by its own
+project siblings". **The 8-bullet budget is the binding constraint, not the
+gate.** The CV has 5 projects and ships 4, so the gate chooses which one to
+drop; re-scoring that choice is near zero-sum by construction and measured that
+way (`gateK` 4: +0.008 held out, 4 of 66 offers, p=0.375).
+
+The consequence for what comes next: of the 281 remaining misses, 60 are
+arithmetically unreachable at this budget and **150 (siblings + experience) are
+ranking or wording problems** — which is Experiment B's territory, and now the
+only large bucket with a mechanism behind it.
+
 ## Experiment B — targeted `cv.md` rephrasing (now first)
 
 Attacks the largest remaining bucket (45% after A, 125 of 278 misses). More
@@ -227,6 +254,8 @@ is graded exemplars — a human rating a sample 0–3 rather than ticking keep/d
 | judge distinctiveness rating | does not beat simply weighting `grade` higher (p=0.27) |
 | deleting the judge | costs −0.021 held out; it stays |
 | spike background from `jd-index.json` | −0.025, wrong scale |
+| project gate scored by top-k mass (`gateK`) | +0.008 held out, 4 of 66 offers, p=0.375 |
+| keeping all 5 projects on the same budget (`projKeep`) | −0.005 coverage, −0.009 yield |
 
 ## Standing rules that cost time to learn
 
