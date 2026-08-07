@@ -263,6 +263,38 @@ Yield is flat, so the coverage is not bought by shipping less relevant work.
 The shipped implementation then reproduced it end-to-end — real `selectCvForJd`,
 judge off, 30 offers: **0.429 → 0.520, +0.091, CI [0.022, 0.163], 11-3**.
 
+Confirmed again in a full Phase 3 run with the judge on, against `vbp2` — same
+writer, same rendering, selection the only variable, fresh select cache because
+the old one is keyed on the CV and requirements rather than on the ranker:
+
+| `vbp2` → `spike32`, n=32 | before | after | delta | w-l | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.468 | **0.548** | **+0.080** | 11-2 | 0.022 * |
+| `grade_yield` | 0.689 | 0.710 | +0.021 | 16-10 | 0.33 |
+| `ats_coverage` | 0.697 | 0.696 | −0.001 | 12-15 | 0.70 |
+| `grounding` / `metric_fab` / `product_fab` | 1.000 / 0 / 0 | unchanged | 0 | — | — |
+
+### 4.7b All three changes together
+
+The number that answers the original brief. `ctl32` is the pipeline as it stood
+at the start of this work; `spike32` is it with the rewrite deleted, projects
+rendered as bullets, and ranking on distinctiveness:
+
+| `ctl32` → `spike32`, n=32 | before | after | delta | w-l | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.311 | **0.548** | **+0.237** | 24-2 | <0.001 * |
+| `grade_yield` | 0.622 | 0.710 | +0.088 | 23-7 | 0.005 * |
+| `ats_coverage` | 0.636 | 0.696 | +0.061 | 25-4 | <0.001 * |
+| `grounding` | 0.971 | **1.000** | +0.029 | 26-0 | <0.001 * |
+| `noise_rate` | 0.301 | 0.278 | −0.023 | 13-14 | 1.000 |
+| `metric_fab` / `product_fab` / `num_lost` | 0.000 | 0.000 | 0 | — | — |
+
+Both halves of the brief moved at once and neither was paid for with the other:
+coverage up 76% relative, noise flat-to-down, every falsity metric still zero,
+grounding perfect. Against the oracle ceiling of 1.000 the gap closed from 0.689
+to 0.452 — **34% of the achievable headroom, at no added model cost** (the
+generation call is gone; spike is arithmetic over cached vectors).
+
 The weight curve peaks in the interior (4 → +0.075, 6 → +0.084, 8 → +0.079,
 12 → +0.073), so 6 is a plateau rather than a knife edge.
 
@@ -381,6 +413,7 @@ and the relabel together, or not at all.
 | `bank2` | pre-written variant bank | 2 bullets | — |
 | `q9b` | JSON rewrite | 2 bullets | `qwen3.5:9b-q4_K_M` |
 | `m30b` | JSON rewrite | 2 bullets | `snipe-eval` (Qwen3 30B-A3B) |
+| `spike32` | verbatim, **spike ranking** | 2 bullets | — (judge on) |
 
 **Confound, stated rather than hidden:** `ctl32`/`vb32`/`vbp2`/`bank2` ran before
 `stripJdProperNouns` and `think: false` landed; `q9b`/`m30b` ran after. Both fixes
