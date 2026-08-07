@@ -101,9 +101,11 @@ export function selectSkills(cvText, jdText, maxCats = 6, maxItems = 12) {
  * @param {string} selectedCv the CV that cv-select trimmed for this posting
  * @param {string} cvText the full cv.md
  * @param {string} jdText
+ * @param {{projectBullets?: number}} [opts] 0 keeps the one-paragraph blurb
  * @returns {{summary: null, experience: any[], projects: any[], skills: any[]}}
  */
-export function verbatimContent(selectedCv, cvText, jdText) {
+export function verbatimContent(selectedCv, cvText, jdText, opts = {}) {
+  const { projectBullets = 3 } = opts;
   const named = (n) => parseCvSections(selectedCv).find(s => s.name === n);
   const expSec = named('Experience');
   const projSec = named('Projects');
@@ -120,14 +122,23 @@ export function verbatimContent(selectedCv, cvText, jdText) {
   // verbatim rendering wanted here, and is already the shipped repair path for a
   // description the 7B truncated. Reusing it beats a second clause-joiner that
   // would drift from it.
-  const projects = projSec
-    ? padProjectDescriptions(
-        parseEntries(projSec.lines).entries.map(e => ({
-          name: e.head[0].replace(/^###\s+/, '').trim(),
-          description: '',
-        })),
-        selectedCv)
-    : [];
+  const projEntries = projSec ? parseEntries(projSec.lines).entries : [];
+  const projects = padProjectDescriptions(
+    projEntries.map(e => ({ name: e.head[0].replace(/^###\s+/, '').trim(), description: '' })),
+    selectedCv)
+    .map((p, i) => ({
+      ...p,
+      // Bullets alongside the blurb, not instead of it: the template picks the
+      // list when it is there and falls back to the paragraph otherwise, so a
+      // run with projectBullets 0 renders exactly as before.
+      //
+      // This is the field that carries the differentiators. cv-select already
+      // ranked these bullets against the posting, and the paragraph form was
+      // discarding all but the first clause or two of them — measured against
+      // the Opus labels, every differentiator lost on a sampled offer was a
+      // project bullet the blurb had no room for.
+      bullets: projectBullets ? (projEntries[i]?.bullets || []).slice(0, projectBullets) : [],
+    }));
 
   return { summary: null, experience, projects, skills: selectSkills(cvText, jdText) };
 }

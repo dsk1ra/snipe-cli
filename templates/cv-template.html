@@ -223,6 +223,26 @@
     line-height: 1.35;
   }
 
+  /* Projects render as bullets when the writer supplies them, matching the
+     experience list exactly — a project's evidence is the same kind of thing as
+     a job's, and styling it differently only suggests it counts for less. */
+  .project-bullets {
+    padding-left: 16px;
+    margin-top: 3px;
+  }
+
+  .project-bullets li {
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--ink-soft);
+    margin-bottom: 4px;
+  }
+
+  .project-bullets li strong {
+    font-weight: 700;
+    color: var(--ink);
+  }
+
   .project-tech {
     font-size: 10px;
     color: var(--muted);
@@ -359,7 +379,8 @@
     margin: 0 9px;
   }
 
-  html[lang="ar"] .job ul {
+  html[lang="ar"] .job ul,
+  html[lang="ar"] .project-bullets {
     padding-right: 16px;
     padding-left: 0;
   }
