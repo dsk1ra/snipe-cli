@@ -181,9 +181,13 @@ async function drive(...keys) {
     if (/✓/.test(doneRow) && /4\.2/.test(doneRow)) pass('a completed row shows its company, role and score');
     else fail(`completed row rendered: ${doneRow.trim().slice(0, 100) || '(not found)'}`);
 
+    // The gate is overrulable, so the row advertises it — unselected, like the
+    // failed rows' actions.
     const gatedRow = rowFor(IDS.gated);
-    if (/P1-gated \(no Phase 2\)/.test(gatedRow)) pass('a below-threshold row is labelled P1-gated (no Phase 2)');
+    if (/P1-gated \| proceed\?/.test(gatedRow)) pass('a P1-gated row is labelled "P1-gated | proceed?"');
     else fail(`P1-gated row rendered: ${gatedRow.trim().slice(0, 100) || '(not found)'}`);
+    if (/\blink\b/.test(gatedRow)) pass('a gated row keeps its job link after proceed?');
+    else fail('the gated row dropped its job link');
 
     // Every failed row carries its actions unconditionally — they are not gated
     // on selection, which was the bug the feature shipped to fix. Counted on a
@@ -361,6 +365,21 @@ async function drive(...keys) {
     } else fail(`retry invoked: ${opened().trim() || '(nothing)'}`);
     if (/notify-send snipe/.test(opened())) pass('a finished retry fires one desktop notification');
     else fail('the finished retry sent no notification');
+
+    // ── Proceed past the P1 gate ─────────────────────────────────────────────
+
+    // The gated row is four up from the end; its stops are row → proceed → link.
+    // --p1-threshold 0 and nothing else: Phase 1 is already `scored`, so the
+    // runner reuses that score and the cached JD and starts at Phase 2.
+    rmSync(OPENED, { force: true });
+    driveRaw.extraPath = RUNNER_BIN;
+    const proceeded = await drive('TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'UP', 'RIGHT', 'ENTER');
+    driveRaw.extraPath = null;
+    if (new RegExp(`(Evaluating|Proceed on) #${IDS.gated}`).test(proceeded)) pass('Enter on "proceed?" starts a run of the gated row');
+    else fail('proceed did not announce itself');
+    if (new RegExp(`bash .*local-runner\\.sh --only-id ${IDS.gated} --p1-threshold 0$`, 'm').test(opened())) {
+      pass('proceed re-runs with the P1 gate off and no --retry-failed');
+    } else fail(`proceed invoked: ${opened().trim() || '(nothing)'}`);
 
     // ── The queue / drain button ─────────────────────────────────────────────
 
