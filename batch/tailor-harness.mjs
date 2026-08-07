@@ -57,6 +57,7 @@ import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
          stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
 import { productFab, credentialFab } from './summary-stage.mjs';
+import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
  * Fabrication classes present in a summary, named.
@@ -446,6 +447,10 @@ function metricsFor(label, paths = {}) {
       summary_fab_kinds: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).join('+'),
       has_pre_guard: typeof c._summary_pre_guard === 'string',
       reqs,
+      // Structured, not just folded into outputText: the label metrics have to
+      // ask which project blurb an atom survived into, not merely whether its
+      // words appear somewhere on the page.
+      projects: Array.isArray(c.projects) ? c.projects : [],
       outBullets: exp.flatMap(e => e.bullets || []),
       jdText,
       outputText,
@@ -630,10 +635,51 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
   };
 }
 
-/** All eight metrics. `--no-embed` keeps the four text-only ones runnable with Ollama down. */
+/**
+ * Attach the label-scored metrics, for the offers that have a label.
+ *
+ * Kept separate from the label-free suite rather than merged into it: those
+ * metrics are checkable against source text with no judgement in the loop, and
+ * that property is what makes them trustworthy. These are only as good as
+ * `batch/bench/opus/labels/` and say so — `labelled_n` is reported alongside so a
+ * run scored against six labels cannot be read as one scored against thirty-two.
+ */
+function withLabelMetrics(m) {
+  const labels = loadLabels();
+  if (!labels.size) return m;
+  let scored = 0;
+  for (const r of m.rows) {
+    const label = labels.get(String(r.dir).split('_')[0]);
+    if (!label) continue;
+    Object.assign(r, scoreOffer(label, {
+      experience: (r.outBullets || []).length ? [{ bullets: r.outBullets }] : [],
+      // metricsFor keeps the joined output text but not the structured
+      // projects, and 24 of this CV's 33 atoms are project bullets — scoring
+      // without them would report every project differentiator as lost.
+      projects: r.projects || [],
+      summary: r.summary,
+    }));
+    scored++;
+  }
+  const mean = (k) => {
+    const v = m.rows.map(r => r[k]).filter(x => typeof x === 'number' && Number.isFinite(x));
+    return v.length ? +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(3) : null;
+  };
+  return {
+    ...m,
+    labelled_n: scored,
+    differentiator_coverage: mean('differentiator_coverage'),
+    differentiators_lost: mean('differentiators_lost'),
+    noise_rate: mean('noise_rate'),
+    grade_yield: mean('grade_yield'),
+    mean_grade: mean('mean_grade'),
+  };
+}
+
+/** All metrics. `--no-embed` keeps the text-only ones runnable with Ollama down. */
 async function allMetrics(label, noEmbed = false, keep = null) {
   const m = metricsFor(label, keep ? { keep } : {});
-  return noEmbed ? m : withEmbedMetrics(m);
+  return withLabelMetrics(noEmbed ? m : await withEmbedMetrics(m));
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -683,7 +729,52 @@ if (!isMain) {
   const m = await allMetrics(positional[0], rest.includes('--no-embed'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  const pct = (x) => (typeof x === 'number' ? x.toFixed(2) : '-');
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  diff=${pct(r.differentiator_coverage)}(-${r.differentiators_lost ?? '-'}) noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+} else if (cmd === 'paired') {
+  // `compare` prints two means and their difference, which is exactly the shape
+  // of evidence the retrieval work had to stop trusting: a dozen variants against
+  // a dozen offers will always produce a winner. These runs are paired by
+  // construction — same offers, same selection, one changed component — so the
+  // per-offer delta is available and there is no excuse for reporting only its
+  // mean. bootstrapCI and signTest are retrieval-bench's, unchanged, so both
+  // benchmarks answer "is this real" the same way.
+  const [a, b] = positional;
+  const { bootstrapCI, signTest } = await import('./retrieval-bench.mjs');
+  let A = await allMetrics(a, rest.includes('--no-embed'));
+  let B = await allMetrics(b, rest.includes('--no-embed'));
+  const common = A.rows.map(r => r.dir).filter(d => B.rows.some(r => r.dir === d));
+  const byDir = (m) => new Map(m.rows.map(r => [r.dir, r]));
+  const [ra, rb] = [byDir(A), byDir(B)];
+
+  const keys = ['differentiator_coverage', 'noise_rate', 'grade_yield', 'mean_grade',
+                'ats_coverage', 'grounding', 'num_retention', 'metric_fab', 'product_fab',
+                'summary_cv_fit', 'summary_jd_fit', 'selection_regret', 'mean_bullets'];
+  console.log(`paired on ${common.length} offers · ${a} → ${b}\n`);
+  console.log(`${'metric'.padEnd(24)}${a.padEnd(10)}${b.padEnd(10)}${'delta'.padEnd(9)}${'CI95'.padEnd(20)}w-l    p`);
+  console.log('-'.repeat(24 + 10 + 10 + 9 + 20 + 12));
+  for (const k of keys) {
+    // Only offers where BOTH runs produced the metric. A null on one side is not
+    // a zero, and pairing it against a number would invent a delta.
+    const deltas = [], av = [], bv = [];
+    for (const d of common) {
+      const x = ra.get(d)?.[k], y = rb.get(d)?.[k];
+      if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+      av.push(x); bv.push(y); deltas.push(y - x);
+    }
+    if (!deltas.length) { console.log(`${k.padEnd(24)}${'-'.padEnd(49)}no paired data`); continue; }
+    const mean = (v) => v.reduce((p, q) => p + q, 0) / v.length;
+    const ci = bootstrapCI(deltas);
+    const w = deltas.filter(d => d > 1e-9).length, l = deltas.filter(d => d < -1e-9).length;
+    const p = signTest(deltas);
+    const sig = ci[0] > 0 || ci[1] < 0 ? ' *' : '';
+    console.log(`${k.padEnd(24)}${mean(av).toFixed(3).padEnd(10)}${mean(bv).toFixed(3).padEnd(10)}`
+      + `${(mean(deltas) >= 0 ? '+' : '') + mean(deltas).toFixed(3)}`.padEnd(9)
+      + `[${ci[0].toFixed(3)}, ${ci[1].toFixed(3)}]`.padEnd(20)
+      + `${w}-${l}`.padEnd(7) + `${p < 0.001 ? '<0.001' : p.toFixed(3)}${sig}`);
+  }
+  console.log(`\n  n varies per metric — offers where either run returned null are dropped, not zeroed.`);
+  console.log(`  * = bootstrap CI95 excludes 0.`);
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const noEmbed = rest.includes('--no-embed');
@@ -702,7 +793,9 @@ if (!isMain) {
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
                 'product_fab', 'product_fab_pct', 'ats_coverage',
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
-                'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets'];
+                'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
+                'labelled_n', 'differentiator_coverage', 'differentiators_lost',
+                'noise_rate', 'grade_yield', 'mean_grade'];
   const pad = (s, w) => String(s).padEnd(w);
   const w = Math.max(14, a.length + 2, b.length + 2);
   console.log(`${pad('metric', 18)}${pad(a, w)}${pad(b, w)}delta`);

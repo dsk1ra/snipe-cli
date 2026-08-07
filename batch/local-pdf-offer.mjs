@@ -28,6 +28,7 @@ import { generateSummary, selectedBullets, stripFabricatedProducts,
          stripFabricatedCredentials,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 import { verbatimContent } from './cv-writers.mjs';
+import { loadBank, chooseVariants, applyPicks } from './cv-bank.mjs';
 import { createHash } from 'crypto';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
@@ -615,11 +616,40 @@ const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 // failing the whole offer; only a total parse failure is fatal.
 let cvContent = null;
 let lastErr   = '';
-if (args.writer === 'verbatim') {
+if (args.writer === 'verbatim' || args.writer === 'bank') {
   // No generation call. The selection is rendered as cv.md words it, and the
   // summary stage below still runs — so this isolates the *bullet* rewrite as the
   // single variable, rather than testing two changes at once.
-  cvContent = verbatimContent(cvForPrompt, cvText, jdText);
+  //
+  // Project bullets are a separate axis, flagged separately for the same reason:
+  // bundling the rendering change into the writer change would make a win
+  // unattributable to either.
+  cvContent = verbatimContent(cvForPrompt, cvText, jdText,
+    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '0', 10) });
+
+  // `bank` swaps each selected bullet for the best pre-written phrasing of it.
+  // The source is always a candidate, so a failure here — missing bank, stale
+  // bank, embedder down — degrades to exactly the verbatim arm rather than to
+  // something worse.
+  if (args.writer === 'bank') {
+    try {
+      const bank = loadBank(cvText);
+      if (bank) {
+        const bullets = [
+          ...cvContent.experience.flatMap(e => e.bullets),
+          ...cvContent.projects.flatMap(p => p.bullets || []),
+        ];
+        const picks = await chooseVariants(bullets, blockBReqs, bank, { ollamaUrl: args.ollamaUrl });
+        applyPicks(cvContent, picks);
+        for (const p of cvContent.projects) {
+          if (Array.isArray(p.bullets)) p.bullets = p.bullets.map(b => picks.get(b)?.text ?? b);
+        }
+        if (args.benchDir) cvContent._bank_picks = [...picks.entries()].map(([src, v]) => ({ src, ...v }));
+      }
+    } catch (err) {
+      process.stderr.write(`cv-bank failed (${err.message}) — shipping the source phrasings\n`);
+    }
+  }
   // Both are overwritten unconditionally by the Tier-3 blocks further down;
   // an empty array here just keeps the shape valid until they are.
   cvContent.summary = '';
@@ -644,9 +674,9 @@ if (args.writer === 'verbatim') {
 }
 
 if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${lastErr}`);
-// The verbatim writer leaves `summary` empty on purpose — the stage below fills
+// The non-model writers leave `summary` empty on purpose — the stage below fills
 // it — so only the model path is held to having one at this point.
-if (args.writer !== 'verbatim' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
+if (args.writer === 'model' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
 cvContent = clampContent(cvContent);
