@@ -152,7 +152,8 @@ async function grades({ withDistinct = false } = {}) {
  * specificity term are the two things being tested.
  * @returns {number[]} shipped atom ids
  */
-export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0 } = {}) {
+export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0,
+  projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
@@ -175,7 +176,20 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
   const keptProjects = new Set(projEntries.sort((x, y) => bestOf(y) - bestOf(x)).slice(0, PROJ_KEEP));
 
   const quota = new Map();
-  const cap = a => (a.section === 'Projects' ? PROJ_BULLETS : EXP_KEEP);
+  // Project bullets are drawn from one shared budget rather than a flat cap per
+  // project: a posting that is mostly about what one project did should spend
+  // more of the page on that project. `projCap` bounds how lopsided that gets,
+  // and one slot per kept project is reserved so none ships as a bare title.
+  // projCap = PROJ_BULLETS reproduces the flat allocation exactly, which is what
+  // makes this a null-safe generalisation rather than a new ranker.
+  let spent = 0;
+  const unfed = () => [...keptProjects].filter(e => !quota.get(e)).length;
+  const admits = (a) => {
+    const q = quota.get(a.entity) ?? 0;
+    if (a.section !== 'Projects') return q < EXP_KEEP;
+    if (q >= projCap || spent >= projBudget) return false;
+    return q === 0 || projBudget - spent > unfed();
+  };
   const eligible = A.map((a, i) => ({ a, i }))
     .filter(({ a }) => a.section !== 'Projects' || keptProjects.has(a.entity));
 
@@ -195,13 +209,13 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
   };
 
   while (true) {
-    const pool = eligible.filter(({ a, i }) =>
-      !pickedIdx.includes(i) && (quota.get(a.entity) ?? 0) < cap(a));
+    const pool = eligible.filter(({ a, i }) => !pickedIdx.includes(i) && admits(a));
     if (!pool.length) break;
     const next = order(pool)[0];
     picked.push(next.a.id);
     pickedIdx.push(next.i);
     quota.set(next.a.entity, (quota.get(next.a.entity) ?? 0) + 1);
+    if (next.a.section === 'Projects') spent++;
   }
   return picked;
 }
@@ -324,23 +338,31 @@ function sweep(split = 'train') {
     `${ci.lo > 0 || ci.hi < 0 ? ' *' : ''}`);
 }
 
-/** One config, one split — the held-out check. Never tune with this. */
-function check(split, cfg) {
+/**
+ * One config, one split — the held-out check. Never tune with this.
+ *
+ * `baseSpike` is what the baseline arm runs, and it is not cosmetic: spike 6 is
+ * shipped, so a variant measured against spike 0 reports its own gain *plus*
+ * spike's and reads as roughly twice what it is worth. It defaults to 0 because
+ * every number already in the ledger was taken that way.
+ */
+function check(split, cfg, baseSpike = 0) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW: defaultGradeW, dropped } = scorable(cache, labels, split);
   // The baseline is always the shipped ranker; only the variant may move gradeW,
   // so "delete the judge" is measured against what production actually does.
   const gradeW = cfg.gradeW ?? defaultGradeW;
-  const base = evalCfg(cache, labels, offers, { gradeW: defaultGradeW });
+  const base = evalCfg(cache, labels, offers, { gradeW: defaultGradeW, spikeW: baseSpike });
   const got = evalCfg(cache, labels, offers, { ...cfg, gradeW });
   const byId = new Map(base.rows.map(r => [r.id, r]));
   const dCov = got.rows.map(r => r.cov - byId.get(r.id).cov);
   const dYld = got.rows.map(r => r.yld - byId.get(r.id).yld);
   console.log(`split=${split} n=${got.n} · judge term ${gradeW ? 'ON (0.10)' : 'OFF (cosine-only)'}` +
     `${dropped ? ` · ${dropped} ungraded offer(s) dropped` : ''}\n` +
+    `baseline: spikeW=${baseSpike}\n` +
     `variant: gradeW=${gradeW} spikeW=${cfg.spikeW ?? 0} lambda=${cfg.lambda ?? 0} ` +
-    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0}\n`);
+    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0} projCap=${cfg.projCap ?? PROJ_BULLETS}\n`);
   for (const [name, before, after, d] of [
     ['differentiator_coverage', base.cov, got.cov, dCov],
     ['grade_yield', base.yld, got.yld, dYld]]) {
@@ -361,11 +383,11 @@ function check(split, cfg) {
  * or ranking problem, a third differentiator inside a two-bullet project is a
  * *budget allocation* problem that no wording can touch.
  */
-function attribute(split = 'all') {
+function attribute(split = 'all', projCap = PROJ_BULLETS) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW } = scorable(cache, labels, split);
-  const cfg = { gradeW, spikeW: 6 };
+  const cfg = { gradeW, spikeW: 6, projCap };
   const byId = new Map(cache.atoms.map(a => [a.id, a]));
   const n = cache.atoms.length;
   const atomText = [...labels.values()][0].atoms;
@@ -393,9 +415,13 @@ function attribute(split = 'all') {
     for (const [entity, ds] of Object.entries(diffsByEntity)) {
       const missed = ds.filter(d => !ship.has(d)).length;
       if (!shippedEntities.has(entity)) { cause.projectDropped += missed; continue; }
-      // Only PROJ_BULLETS of a project can ever ship, so anything beyond that
-      // many differentiators in one project is lost by arithmetic, not ranking.
-      const impossible = Math.max(0, ds.length - PROJ_BULLETS);
+      // Only as many bullets as this project was allocated can ever ship, so
+      // anything beyond that many differentiators in it is lost by arithmetic,
+      // not by ranking. Counted off the shipped slots rather than a constant,
+      // because the allocation is no longer flat — under the flat cap the two
+      // are the same number for every kept project.
+      const slots = [...ship].filter(a => byId.get(a).entity === entity).length;
+      const impossible = Math.max(0, ds.length - slots);
       cause.capped += Math.min(missed, impossible);
       cause.ranker += Math.max(0, missed - impossible);
     }
@@ -407,7 +433,7 @@ function attribute(split = 'all') {
   console.log('cause                                        count  share  fixable by');
   console.log(`  beaten by its own project siblings         ${String(cause.ranker).padStart(5)}  ${pct(cause.ranker)}  wording / ranker`);
   console.log(`  project never made the cut                 ${String(cause.projectDropped).padStart(5)}  ${pct(cause.projectDropped)}  project scoring`);
-  console.log(`  >${PROJ_BULLETS} differentiators in one project        ${String(cause.capped).padStart(5)}  ${pct(cause.capped)}  ALLOCATION ONLY`);
+  console.log(`  more differentiators than the project's slots ${String(cause.capped).padStart(3)}  ${pct(cause.capped)}  ALLOCATION ONLY`);
   console.log(`  experience bullet lost                     ${String(cause.experience).padStart(5)}  ${pct(cause.experience)}  wording / ranker`);
 
   const mean = cache.atoms.map((_, i) =>
@@ -441,6 +467,11 @@ function ablate(split = 'train') {
   for (const l of [0.1, 0.2, 0.3, 0.5, 0.8]) show(`mmr ${l} only`, { lambda: l });
   for (const r of [2, 4, 6]) show(`reserve ${r} only`, { reserve: r });
   show('spike 4 + mmr 0.3', { spikeW: 4, lambda: 0.3 });
+  // Adaptive allocation: same total project-bullet budget, distributed by score.
+  // projCap 2 IS the shipped flat allocation, so it must print delta 0.000 —
+  // anything else means the generalisation changed the baseline it generalises.
+  for (const c of [2, 3, 4, 6]) show(`projCap ${c} only`, { projCap: c });
+  for (const c of [3, 4, 6]) show(`spike 6 + projCap ${c}`, { spikeW: 6, projCap: c });
   // The judge's own answer to the question spike answers arithmetically.
   if (Object.keys(cache.grades2 || {}).length) {
     for (const d of [0.05, 0.10, 0.20, 0.40]) show(`distinct ${d} only`, { distinctW: d });
@@ -456,12 +487,15 @@ else if (cmd === 'grades') await grades({ withDistinct: process.argv.includes('-
 else if (cmd === 'validate') validate();
 else if (cmd === 'sweep') sweep(arg('--split', 'train'));
 else if (cmd === 'ablate') ablate(arg('--split', 'train'));
-else if (cmd === 'attribute') attribute(arg('--split', 'all'));
+else if (cmd === 'attribute') attribute(arg('--split', 'all'), parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10));
 else if (cmd === 'check') check(arg('--split', 'test'), {
   spikeW: parseFloat(arg('--spike', '0')),
   lambda: parseFloat(arg('--lambda', '0')),
   reserve: parseInt(arg('--reserve', '0'), 10),
   distinctW: parseFloat(arg('--distinct', '0')),
-  ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) });
+  projCap: parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10),
+  ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) },
+  parseFloat(arg('--base-spike', '0')));
 else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|attribute|check [--split train|test|all]\n' +
-  '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]');
+  '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]\n' +
+  '                                   [--proj-cap N] [--base-spike W]');
