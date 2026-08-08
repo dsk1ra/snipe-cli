@@ -351,6 +351,27 @@ export function bulletLines(text) {
 }
 
 /**
+ * What a bullet costs the page, in line-heights, margin included.
+ *
+ * Every `<li>` carries `margin-bottom: 2px` on top of its 15.6px line height, so
+ * a bullet costs `lines + 2/15.6` — about an eighth of a line each. Counting
+ * only line height understates a nine-bullet page by more than a line and a
+ * thirteen-bullet page by nearly two, which is exactly how the first knapsack
+ * run overran on 6 of 32 offers by 1-2 lines apiece while a line-only model
+ * insisted every one of them fitted.
+ *
+ * The budget is measured the same way — capacity is `(page - chrome) / 15.6`
+ * where chrome excludes bullet margins — so cost and budget agree only if the
+ * margin is charged here.
+ *
+ * @param {string} text
+ * @returns {number}
+ */
+export function bulletCost(text) {
+  return bulletLines(text) + 2 / 15.6;
+}
+
+/**
  * Returns a trimmed cv.md string, or the original text untouched when there is
  * nothing to rank against (no requirements and no JD).
  * opts: { maxProjects, maxBulletsPerProject, maxBulletsPerRole, lineBudget,
@@ -529,11 +550,11 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     const n = new Map(entries.map(e => [e, 1]));
     let spent = entries.reduce((a, e) => {
       const top = [...e.scored].sort((x, y) => y.score - x.score)[0];
-      return a + (top ? bulletLines(top.text) : 0);
+      return a + (top ? bulletCost(top.text) : 0);
     }, 0);
     const rest = entries.flatMap(e =>
       [...e.scored].sort((a, b) => b.score - a.score).slice(1)
-        .map(b => ({ e, cost: bulletLines(b.text), score: b.score })));
+        .map(b => ({ e, cost: bulletCost(b.text), score: b.score })));
     // Sort once by value density. Re-sorting after each pick would be a true
     // greedy knapsack, but the costs here are 1-4 and the scores are cosines in
     // a narrow band, so the order does not change — and the sort is over every
@@ -1444,6 +1465,10 @@ Text.
   assert(bulletLines('x'.repeat(124)) === 1 && bulletLines('x'.repeat(125)) === 2,
     'a bullet costs one line per 124 characters');
   assert(bulletLines('') === 1 && bulletLines(null) === 1, 'an empty bullet still costs its line');
+  // Margin is charged, or a 9-bullet page overruns by more than a line while a
+  // line-only model insists it fits — measured, 6 of 32 offers.
+  assert(bulletCost('x') > bulletLines('x') && bulletCost('x') < bulletLines('x') + 0.2,
+    'a bullet costs its lines plus its margin');
 
   // A budget is spent in lines, so it must hold regardless of how the bullets
   // divide up — the failure this replaces was 16 bullets of any length passing a
