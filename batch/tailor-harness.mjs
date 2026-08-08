@@ -162,7 +162,24 @@ export function readSample(samplePath = SAMPLE) {
 
 // ── running a variant ─────────────────────────────────────────────────────────
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE } = {}) {
+/**
+ * The commit the tree is on, or '' outside a repo.
+ *
+ * Recorded at the start of a run and re-checked at the end. A 32-offer run is
+ * 40 minutes of spawning `local-pdf-offer.mjs`, which re-imports its modules
+ * every time, so a checkout mid-run silently splits it: offers before the switch
+ * ran one version, offers after ran another, and the mean is of neither. That
+ * happened — a branch switch 34 minutes into an E2 arm — and nothing noticed
+ * until the numbers were being read. Benchmark rule 4, enforced rather than
+ * remembered.
+ */
+function headSha() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: PROJECT, encoding: 'utf8' }).trim();
+  } catch { return ''; }
+}
+
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
   // two limited runs stay paired. A limited run is only comparable to another
@@ -171,9 +188,24 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   const sample = limit ? readSample(samplePath).slice(0, limit) : readSample(samplePath);
   const dir = resolve(BENCH, label);
   mkdirSync(dir, { recursive: true });
+  const sha0 = headSha();
   const t0 = Date.now();
-  let ok = 0, failed = 0;
+  let ok = 0, failed = 0, skipped = 0;
   for (const [i, s] of sample.entries()) {
+    // --resume keeps offers that already produced parseable content and runs
+    // only the gaps, so a run interrupted at offer 28 costs four offers to
+    // finish rather than thirty-two. An unparseable or absent file is a gap.
+    // Matched on the id prefix rather than by rebuilding the slug: the naming
+    // rule lives in local-pdf-offer.mjs, and a second copy here would silently
+    // stop matching the first time either changed.
+    if (resume) {
+      let done = false;
+      try {
+        const d = readdirSync(dir).find(x => x.startsWith(`${s.id}_`));
+        done = !!(d && JSON.parse(readFileSync(resolve(dir, d, 'cv-content.json'), 'utf8')));
+      } catch { done = false; }
+      if (done) { skipped++; continue; }
+    }
     process.stderr.write(`[${i + 1}/${sample.length}] #${s.id} ${s.company} — ${s.role}\n`);
     try {
       execFileSync(process.execPath, [
@@ -195,10 +227,21 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   // flag is indistinguishable from one that had it. Record which arm this was.
   const flags = Object.fromEntries(Object.entries(process.env)
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
+  const sha1 = headSha();
+  const split = !!(sha0 && sha1 && sha0 !== sha1);
   const meta = { label, temperature, model, writer, sample: samplePath, n: sample.length,
-                 limit: limit || null, ok, failed,
+                 limit: limit || null, ok, failed, skipped: resume ? skipped : null,
+                 commit: sha0, commit_end: sha1,
+                 // Loud, and in the artifact rather than only on a terminal
+                 // nobody was watching: a split run's mean is of neither version.
+                 split_run: split || null,
                  flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+  if (split) {
+    process.stderr.write(`\n*** HEAD MOVED DURING THIS RUN: ${sha0.slice(0, 8)} -> ${sha1.slice(0, 8)}\n`
+      + `*** local-pdf-offer.mjs re-imports per offer, so offers before and after ran\n`
+      + `*** different code. This run is a mongrel — do not score it. (rule 4)\n\n`);
+  }
   return meta;
 }
 
@@ -759,6 +802,13 @@ function withLabelMetrics(m) {
  */
 async function allMetrics(label, noEmbed = false, keep = null, noPages = false) {
   const m = metricsFor(label, keep ? { keep } : {});
+  // A split run is not a weak result, it is two runs averaged together. Refuse
+  // rather than report, because the number looks entirely normal.
+  if (m.meta?.split_run) {
+    throw new Error(`run "${label}" is a mongrel: HEAD moved from `
+      + `${String(m.meta.commit).slice(0, 8)} to ${String(m.meta.commit_end).slice(0, 8)} during it. `
+      + `Re-run the affected offers (run <label> --resume after deleting them) rather than scoring this.`);
+  }
   const withPages = noPages ? m : await withPageMetrics(m, { label });
   return withLabelMetrics(noEmbed ? withPages : await withEmbedMetrics(withPages));
 }
@@ -805,6 +855,7 @@ if (!isMain) {
     // sheet because it had no --sheet flag and silently loaded the wrong one.
     // A second sample file gets a flag from the start.
     samplePath: resolve(BENCH, String(flag('sample', 'sample.tsv'))),
+    resume: rest.includes('--resume'),
   }), null, 2));
 } else if (cmd === 'metrics') {
   const m = await allMetrics(positional[0], rest.includes('--no-embed'), null, rest.includes('--no-pages'));
@@ -905,7 +956,7 @@ if (!isMain) {
     console.log(`${pad(k, 18)}${pad(A[k], w)}${pad(B[k], w)}${d}`);
   }
 } else {
-  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] | metrics <label> [--rows] [--no-embed] | compare <a> <b> [--no-embed]');
+  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
 }
 
 export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles, withEmbedMetrics, allMetrics };
