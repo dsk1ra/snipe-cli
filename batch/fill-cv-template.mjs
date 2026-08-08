@@ -36,6 +36,9 @@ const outputPath  = args['output'];
 const format      = (args['format'] || 'a4').toLowerCase();
 const maxSkills   = args['max-skills'] ? parseInt(args['max-skills'], 10) : null; // null = all
 const maxBullets  = args['max-bullets'] ? parseInt(args['max-bullets'], 10) : null; // null = all; caps bullets per role
+// Same idea for the project lists, so the density ladder can shorten a project
+// instead of only being able to delete one.
+const maxProjBullets = args['max-project-bullets'] ? parseInt(args['max-project-bullets'], 10) : null;
 
 if (!contentPath || !outputPath) {
   console.error('Usage: fill-cv-template.mjs --content <json> --output <html> [--format a4|letter] [--max-skills N]');
@@ -339,10 +342,14 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
 // `selected_projects` (array of name strings). When the LLM supplies a tailored
 // description we use it; otherwise we fall back to the project's first 2 CV
 // bullets (never the full dump) so descriptions stay tight.
-function buildProjectsHtml(cvProjects, projectsField) {
+function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
   const sel = Array.isArray(projectsField)
     ? projectsField
-        .map(p => (typeof p === 'string' ? { name: p, description: '' } : { name: p?.name || '', description: p?.description || '' }))
+        .map(p => (typeof p === 'string'
+          ? { name: p, description: '', bullets: [] }
+          : { name: p?.name || '', description: p?.description || '',
+              bullets: Array.isArray(p?.bullets)
+                ? (maxProjBullets ? p.bullets.slice(0, maxProjBullets) : p.bullets) : [] }))
         .filter(p => p.name)
     : [];
 
@@ -351,23 +358,41 @@ function buildProjectsHtml(cvProjects, projectsField) {
     chosen = [];
     for (const s of sel) {
       const match = cvProjects.find(p => matchProject(s.name, p.name));
-      if (match && !chosen.some(c => c.cv === match)) chosen.push({ cv: match, description: s.description });
+      if (match && !chosen.some(c => c.cv === match)) {
+        chosen.push({ cv: match, description: s.description, bullets: s.bullets });
+      }
     }
   } else {
-    chosen = cvProjects.slice(0, 4).map(cv => ({ cv, description: '' }));
+    chosen = cvProjects.slice(0, 4).map(cv => ({ cv, description: '', bullets: [] }));
   }
 
-  return chosen.map(({ cv, description }) => {
-    const desc = description && description.trim()
-      ? description.trim()
-      : cv.bullets.slice(0, 2).join(' ');
+  return chosen.map(({ cv, description, bullets }) => {
     const techLine = [cv.tech, cv.period].filter(Boolean).join(' | ');
+    // Bullets when the writer supplies them, one paragraph otherwise.
+    //
+    // The paragraph was the only shape for a long time, and it is where the
+    // candidate's most distinctive evidence was going to die. Projects hold 24 of
+    // this CV's 33 selectable atoms and most of what a reviewer called a
+    // differentiator, and squashing five selected bullets into a 35-55 word blurb
+    // physically cannot carry them: measured against the Opus labels, every
+    // differentiator lost on a sampled offer was a project bullet, and
+    // differentiator_coverage sat at 0.17-0.50 while every falsity metric read
+    // perfect. A list costs vertical space, which is what the density ladder is
+    // for; losing the evidence costs the application.
+    const body = bullets.length
+      ? `<ul class="project-bullets">${bullets.map(b => `<li>${boldMetrics(esc(String(b)))}</li>`).join('')}</ul>`
+      : `<div class="project-desc">${boldMetrics(esc(
+          description && description.trim()
+            ? description.trim()
+            // Same weld as remapProjectNames' backfill had: joining two bullets
+            // with a bare space runs two sentences together with no separator.
+            : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. ')))}</div>`;
     return `
     <div class="project">
       <div>
         <span class="project-title">${esc(cv.name)}</span>${cv.badge ? `\n        <span class="project-badge">${esc(cv.badge)}</span>` : ''}
       </div>
-      <div class="project-desc">${boldMetrics(esc(desc))}</div>
+      ${body}
       ${techLine ? `<div class="project-tech">${esc(techLine)}</div>` : ''}
     </div>`;
   }).join('\n');
@@ -379,7 +404,12 @@ function buildProjectsHtml(cvProjects, projectsField) {
 function buildEducationHtml(eduEntries, selectedModules) {
   const sel = Array.isArray(selectedModules) && selectedModules.length > 0 ? selectedModules : null;
   return eduEntries.map(e => {
-    const degreeMain = e.degree.split('—')[0].trim();
+    // The degree line is "<Degree> — <Classification>"; splitting on the dash and
+    // keeping [0] threw the classification away, so "First Class Honours (80+
+    // average)" — the strongest single credential a recent graduate has — never
+    // reached the PDF. The header is a flex row that wraps, so keeping the whole
+    // line costs nothing but the width it needs.
+    const degreeMain = e.degree.replace(/\s*—\s*/g, ' — ').trim();
     const extra = sel
       ? e.extra.map(line => (/^key modules\s*:/i.test(line) ? `Key Modules: ${sel.join(', ')}` : line))
       : e.extra;
@@ -503,7 +533,7 @@ const replacements = {
   '{{SECTION_EXPERIENCE}}':    'Work Experience',
   '{{EXPERIENCE}}':            buildExperienceHtml(cvExp, content.experience, maxBullets),
   '{{SECTION_PROJECTS}}':      'Projects',
-  '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects),
+  '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects, maxProjBullets),
   '{{SECTION_EDUCATION}}':     'Education',
   '{{EDUCATION}}':             buildEducationHtml(cvEdu, content.education_modules),
   '{{SECTION_CERTIFICATIONS}}':'Certifications',

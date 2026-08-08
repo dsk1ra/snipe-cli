@@ -82,6 +82,66 @@ function phraseSpace(s) {
 const hasPhrase = (haystack, phrase) => haystack.includes(` ${phrase} `);
 
 /**
+ * Credentials, institutions and affiliations that have to be grounded in `cv.md`.
+ *
+ * Same contract as NAMED_PRODUCTS: a *detector*, not a generator — a missing
+ * entry understates the count, it never invents one. Seeded from a real
+ * violation, where a summary called the candidate a "Russell Group graduate"
+ * because the university has "Edinburgh" in its name; it is a post-1992
+ * institution and the claim is simply false. A fabricated credential is worse
+ * than a fabricated technology — it is checkable by anyone reading the CV, and
+ * being caught inventing one ends the application.
+ *
+ * Entries a *truthful* CV states (this one does say "First Class Honours") are
+ * listed too: the phrase is only flagged when `cv.md` lacks it, so listing it
+ * costs nothing here and protects a CV that cannot claim it.
+ */
+export const NAMED_CREDENTIALS = [
+  // institution tiers and affiliations
+  'russell group', 'ivy league', 'oxbridge', 'red brick',
+  // degree classes and honours
+  'first class honours', 'upper second class', 'lower second class',
+  'summa cum laude', 'magna cum laude', 'cum laude', 'valedictorian',
+  'dean s list', 'with distinction',
+  // degrees
+  'phd', 'doctorate', 'mba', 'msc', 'meng', 'mphil', 'postgraduate',
+  // professional certifications
+  'cissp', 'cism', 'cisa', 'oscp', 'ceh', 'comptia', 'security+',
+  'ccna', 'ccnp', 'rhce', 'pmp', 'prince2', 'itil', 'togaf',
+  'aws certified', 'azure certified', 'google cloud certified',
+  'certified kubernetes administrator', 'cka', 'ckad',
+  'chartered engineer', 'chartered',
+];
+
+/**
+ * Credentials the text claims that `cv.md` never mentions.
+ * @param {string} text
+ * @param {string} cvText
+ * @returns {string[]}
+ */
+export function credentialFab(text, cvText) {
+  const out = phraseSpace(text);
+  const cv = phraseSpace(cvText);
+  return NAMED_CREDENTIALS.filter(p => hasPhrase(out, p) && !hasPhrase(cv, p));
+}
+
+/**
+ * Drop the clauses claiming a credential `cv.md` never mentions.
+ *
+ * Costs real content when a false credential shares a clause with a true one —
+ * "Russell Group graduate with First Class Honours" loses the honours along with
+ * the lie. That is the documented trade for products and it holds harder here:
+ * shipping a shorter true summary beats shipping a longer false one.
+ *
+ * @param {string} text
+ * @param {string} cvText
+ * @returns {string}
+ */
+export function stripFabricatedCredentials(text, cvText) {
+  return stripUnsupportedClauses(text, t => credentialFab(t, cvText).length > 0);
+}
+
+/**
  * Named products the text claims that `cv.md` never mentions.
  * @param {string} text
  * @param {string} cvText
@@ -320,6 +380,83 @@ export function scoreSummary(text, { bullets, cvText }) {
 
 const wordCount = (s) => String(s || '').trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * Drop any sentence naming a proper noun that the posting contains and `cv.md`
+ * does not.
+ *
+ * `productFab` is a closed allowlist of *technologies*, so it can only catch what
+ * someone thought to list, and a company or product brand from the posting can
+ * never be on it. Observed shipping: for a JD.com posting the summary claimed the
+ * membership platform was built "for Joybuy Systems" — JD.com's own brand,
+ * substituted for the real client. Every truth guard passed it. `productFab`
+ * returned [], `metric_fab` reads only experience bullets, and the company-name
+ * strip compares against the `--company` argument, which was "JD.com" and does
+ * not match "Joybuy".
+ *
+ * The general rule is the one that actually holds: a name the posting supplies
+ * and the CV does not is, by definition, not the candidate's. That needs no
+ * vocabulary and cannot go stale.
+ *
+ * Sentence-initial words are skipped — every sentence starts with a capital, and
+ * "Delivered" is not a proper noun.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @param {string} jdText
+ */
+export function stripJdProperNouns(summary, cvText, jdText) {
+  const s = String(summary || '');
+  if (!s || !jdText) return s;
+  const norm = (t) => t.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9+#.]+$/g, '').replace(/^\.+|\.+$/g, '');
+  const inText = (hay, word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(hay);
+
+  const kept = s.split(/(?<=[.!?])\s+/).filter(sentence => {
+    const words = sentence.split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      const w = norm(words[i]);
+      if (!w || w.length < 3) continue;
+      if (i === 0 && !/^[A-Z]{2,}$/.test(w)) continue;
+      if (!/^[A-Z]/.test(w)) continue;
+      if (inText(cvText, w)) continue;
+      if (inText(jdText, w)) return false;
+    }
+    return true;
+  });
+  // Never strip to nothing: an empty summary is a worse failure than a leaked
+  // name, and the caller's length floor would pad it back into something
+  // shapeless. Keeping the original lets the shipped guards downstream try.
+  return kept.length ? kept.join(' ').trim() : s;
+}
+
+/**
+ * Drop trailing sentences until the summary fits the band.
+ *
+ * `scoreSummary` penalises over-length but only ever *compares* — so an
+ * over-long candidate that has no competitor ships at whatever length it came
+ * out at. That is not hypothetical: with no incumbent the comparison is against
+ * -Infinity and every challenger wins, and the observed output was a 130-word
+ * run-on listing every bullet in turn. The band is a layout requirement (the PDF
+ * is hard-capped at 2 pages), not a preference, so it is enforced rather than
+ * scored.
+ *
+ * The first sentence is always kept: a summary trimmed to nothing is worse than
+ * one trimmed to too-long, and the caller's <50-word pad can top it back up.
+ *
+ * @param {string} text
+ * @param {number} max
+ */
+export function clampSummaryWords(text, max = 70) {
+  const s = String(text || '').trim();
+  if (!s || wordCount(s) <= max) return s;
+  const sentences = s.split(/(?<=[.!?])\s+/);
+  let out = sentences[0];
+  for (const next of sentences.slice(1)) {
+    if (wordCount(`${out} ${next}`) > max) break;
+    out += ` ${next}`;
+  }
+  return out.trim();
+}
+
 /** Strip the wrappers a model puts around a "plain text only" answer. */
 export function cleanSummary(raw) {
   return String(raw || '')
@@ -360,6 +497,9 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', c
   // displaces it by a clear margin, never on a rounding difference — measured
   // on offer 182, where the challenger was blander than the JSON field and a
   // bare `>` handed it the slot anyway.
-  if (chalScore > baseScore + margin) return challenger;
-  return base ?? challenger;
+  const winner = chalScore > baseScore + margin ? challenger : (base ?? challenger);
+  // Enforced on the winner, not on each candidate: clamping before scoring would
+  // hand a rambling candidate a free repair and let it beat a tight one on
+  // evidence overlap it only had room for because it overran.
+  return winner === null ? null : clampSummaryWords(winner);
 }

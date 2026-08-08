@@ -1,5 +1,6 @@
 # Personal data (user fills these)
 cv.md
+cv.md.backup-*
 article-digest.md
 data/applications.md
 data/applications.db
@@ -34,6 +35,7 @@ coverage/
 .nyc_output/
 batch/cv-index.json
 batch/jd-index.json
+batch/cv-spike.json
 
 # Interview prep (accumulated STAR+R stories — user data)
 interview-prep/*

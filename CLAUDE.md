@@ -61,6 +61,21 @@ act on next; `o` and the tracker still reach it:
 
 Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
 
+A P1-gated row renders as `· Company — Role  P1-gated | proceed?  link` — the
+same yellow action, because the `--p1-threshold` gate is a cost heuristic over a
+4B pre-screen score, not a verdict.
+
+- **proceed?** — `local-runner.sh --only-id N --p1-threshold 0`. Nothing is
+  re-scored: the Phase 1 offer list skips anything already `scored` (`:918`), so
+  the cached score and JD are reused and the run starts at Phase 2 — reusing
+  Phase 1's work is what the flag already does, so there is no second code path
+  for it. No `--retry-failed`: the row is `p1-gated`, not failed, and Phase 2's
+  own guard (`p2_status != evaled`) already lets it through. Phase 3 follows on
+  its own if the eval clears `--threshold`. The tracker row written by
+  `write_tracker_p1_skip` is updated in place by the merge's company+role dedup —
+  but only if the eval scores *higher* than the P1 pre-score; below it, the merge
+  keeps the older row and the stale "no report — P1-gated" note with it.
+
 ## The 3-phase pipeline (`batch/local-runner.sh`)
 
 | Phase | Script | Model | Output |
@@ -88,7 +103,58 @@ Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both ph
 
 **Phase 3** runs only at score ≥ `auto_pdf_score_threshold` (default 3.0).
 `cv-select.mjs` ranks CV bullets against Block B requirements via embeddings
-first, so the 7B only rewrites — it never selects. PDF is hard-capped at 2 pages.
+first. PDF is hard-capped at 2 pages.
+
+Ranking is `cos − α·corpus_mean + 0.10 × judge_grade`, `α = w/(1+w)` at
+`spikeWeight = 6`. That middle term — **corpus-relative specificity** — is what
+makes the ranker prefer *distinctive* evidence over merely relevant evidence:
+a bullet scoring 0.6 against every past posting is filler, one scoring 0.6 here
+and 0.31 elsewhere is a differentiator. Worth **+0.060 differentiator coverage
+held out** against the full production ranker (n=66, CI [0.017, 0.103], 25-9,
+p=0.009) with `grade_yield` flat, and **+0.080 in a full Phase 3 run** (n=32,
+11-2, p=0.022) with ATS coverage and every falsity metric unmoved.
+All three Phase 3 changes together: **0.311 → 0.548 (+0.237, 24-2, p<0.001)**.
+The corpus mean is built from past reports' Block B requirement sets and cached
+in `batch/cv-spike.json`; under 20 usable reports it returns null and ranking
+falls back to plain cosine. **The background cannot come from `jd-index.json`** —
+whole-JD cosine is a different scale from max-cosine-against-requirements, and
+measured −0.025. Only the real embedder may write the cache (`caching =
+_embed === embed`), or a test stub would poison production ranking.
+
+**There is no bullet-generation call.** `--writer verbatim` is the default: the
+selected bullets render as `cv.md` already words them, and projects render 2
+bullets each rather than a prose paragraph. Deleting the 7B rewrite and adding
+those bullets measured **+0.157 differentiator coverage** (20-3, p<0.001),
++0.061 ATS coverage, grounding to a flat 1.000 — 78% of what the 7B emitted was
+byte-identical to its source line anyway, and the 22% it changed is where the
+fabrication lived. Scaling the writer does not fix it: a 9B and the 30B both buy
+~0.05 coverage and lose grounding in *every* offer they change (0-32, 0-11).
+`--writer model` survives as the benchmark control only. Full numbers and the
+two production bugs found on the way: `docs/PHASE3-RETENTION-LEDGER.md`.
+
+Project bullets are **allocated, not capped**. `cv-select.mjs` spends one total
+budget (`maxProjects × 2` = 8, exactly what a flat 2-per-project rendered) across
+the projects that survived the top-4 cut: one bullet each, then the rest to the
+highest-scoring bullets anywhere, ≤ `maxBulletsPerProject` (4) per project. So a
+posting mostly about one project renders 4/2/1/1 and a flat field still renders
+2/2/2/2. Worth **+0.101 differentiator coverage** end to end (n=32, 15-4,
+CI [0.039, 0.161], p=0.019) with `grade_yield` +0.030, `mean_bullets` identically
+8.000, and every falsity metric unmoved — it is redistribution, not expansion.
+Costs `ats_coverage` −0.015 (CI [−0.028, −0.002], 7× its A/A floor, so real).
+Attacks the one loss bucket no ranker or rewrite can reach: a third flagged
+differentiator inside a two-bullet project.
+
+`SNIPE_PROJECT_BULLETS` is now the per-project **ceiling**, not the count
+(default 4) — it only has to avoid clipping the allocation, since cv-select
+already spent the budget. The same is true of the density ladder's step 0 in
+`local-pdf-offer.mjs`; every tighter step still drops project bullets before
+experience bullets. All 32 bench offers render at 2 pages on step 0.
+
+**`trim()`'s metric-bullet guarantee overrides the ranker at keep=1**, which the
+allocation now reaches: all 57 single-slot project bullets across the 32 offers
+carry a digit against a 72% base rate, and the swap fires on 42% of them. It cost
+one differentiator in 32 offers, so it is not eating the gain — but it is the
+first suspect for that ATS dip.
 
 That ranking is then reranked by `snipe-eval`, which grades each bullet 0–3 for
 the posting and is blended in at `cos + 0.10 × grade` (+0.10 pair accuracy
@@ -96,7 +162,19 @@ against the human gold set, holds under a disjoint exemplar pair — see
 `docs/PHASE3-RETRIEVAL-LEDGER.md`). It is few-shot from two hand-labelled
 offers in `batch/judge-shots.json`; **0-shot it is worse than no rerank at
 all**, so a missing or unmatched exemplar file disables it rather than
-degrading it, as does any model failure. Costs one 30B call, **measured 66 s**
+degrading it, as does any model failure. Still worth its 66 s: deleting it costs
+−0.021 differentiator coverage held out even with spike on. (42 s was the plan's
+estimate and is not a measurement — it survived in two places until a wall-clock
+check on a fresh select cache put a verbatim-writer offer at 67 s end to end,
+which is the judge plus the summary stage and little else.)
+
+**Known defect — the judge grades binary.** Its exemplars are built as
+`want.has(text) ? 3 : 0` from binary human ticks, so every demonstration is a 0
+or a 3, and demonstrations beat the system prompt's "use the full range": **30 of
+4191 gradings across 128 offers use the middle of the scale.** The retrieval
+ledger already priced binarisation at 0.03 pair accuracy, so the judge has been
+paying that all along. The fix is graded exemplars, not a prompt edit — see
+`docs/PHASE3-RETENTION-LEDGER.md` §4.10. Not attempted yet. Costs one 30B call, **measured 66 s**
 — 80% of Phase 3's wall clock, and validated held-out on `goldset-2.md` at
 **+0.115 pair accuracy, 11 wins 0 losses, CI [0.074, 0.159]**. Alone it is worth
 nothing (0.801 vs cosine's 0.815); only the blend pays. Do not binarise the
@@ -192,14 +270,68 @@ the loop for six of them:
 
 ```bash
 node batch/tailor-harness.mjs run <label> --temperature 0 [--model M] [--limit N]
+                             [--sample F.tsv] [--writer verbatim|model] [--out DIR]
 node batch/tailor-harness.mjs metrics <label> [--rows] [--no-embed]
 node batch/tailor-harness.mjs compare <a> <b>
+node batch/tailor-harness.mjs paired  <a> <b> [--no-embed]
 ```
 
-`compare` pairs on the offers **both** runs produced and says how many. Timing
+`paired` is the one to trust: per-offer deltas with a bootstrap CI95 over offers
+and a two-sided sign test, so a metric that moves on 2 of 32 offers cannot read
+as a win. It drops offers where either run returned null rather than zeroing
+them. `compare` pairs on the offers **both** runs produced and says how many. Timing
 comes free: `SNIPE_TIMING=path` makes every Ollama call append its own
 `load_duration` / `eval_count` (`batch/timing.mjs report`), which is how a model
 reload gets counted rather than guessed.
+
+Those eight metrics all punish **falsity**, and an empty CV scores perfectly on
+every one of them — so none of them can see a CV that dropped the thing that
+differentiates you. `batch/opus-metrics.mjs` closes that hole against a label
+corpus in `batch/bench/opus/labels/` (128 offers, each CV atom graded 0–3 for
+that posting, and the differentiators marked):
+
+| metric | what it catches |
+|---|---|
+| `differentiator_coverage` | fraction of the offer's differentiator atoms that reached the page |
+| `differentiators_lost` / `lost_ids` | which ones did not, by id |
+| `noise_rate` | fraction of shipped content the labeller graded 0 for this posting |
+| `grade_yield` | shipped grade mass ÷ available grade mass |
+
+Coverage is measured **atom→output** (does this atom appear anywhere), the
+opposite direction from `shippedAtomIndices` — an atom split across two bullets
+still counts. Relabelling is `batch/bench-tools/opus-label.mjs`; the labels are
+positional against `cv.md`, so **editing `cv.md` invalidates all 128**.
+`SNIPE_SELECT_CACHE` freezes selection across arms, so a generation A/B costs no
+66 s judge call and every arm ranks identically — which also means **a selection
+change must not reuse an existing select cache**, since the key is over the CV
+and requirements, not the ranker.
+
+Selection changes get swept offline instead, because testing one end-to-end costs
+a judge call per offer:
+
+```bash
+node batch/bench-tools/select-sweep.mjs prep      # cosines, local and free
+node batch/bench-tools/select-sweep.mjs grades    # 30B grades, ~110 s/offer, cached
+node batch/bench-tools/select-sweep.mjs validate  # does the sim match the real run?
+node batch/bench-tools/select-sweep.mjs ablate --split train
+node batch/bench-tools/select-sweep.mjs check  --split test --spike 6
+```
+
+`attribute` says *why* the remaining differentiators are lost — beaten by their
+own project siblings, project never made the cut, or more than `PROJ_BULLETS`
+differentiators inside one project, which no ranker or rewrite can recover.
+The fix differs per bucket, so read it before proposing one.
+**`docs/PHASE3-NEXT.md` holds the current attribution, the two candidate
+experiments, and the ideas already closed** — read it before re-opening any of them.
+
+`validate` is the load-bearing command: the simulator reproduces the funnel over
+cached cosines, and its deltas mean nothing until it reproduces the number a real
+run measured (it lands within 0.039). Offers split train/test by id parity —
+`sweep`/`ablate` tune on train, `check` scores one config on held-out and is
+never used to choose one. A half-populated grade cache silently ranks the
+ungraded offers as all-zero, which is a different ranker rather than a missing
+term, so the tools drop the judge term entirely unless every offer in the split
+has grades.
 
 ### Benchmark rules (learned the hard way)
 
@@ -207,10 +339,32 @@ reload gets counted rather than guessed.
    historical archive whose calibration corpus grew underneath it (21→37→64→65
    offers over Jul 18–21), so it scores ~0.5 higher than the same code does today
    and silently invalidates any comparison against it.
-2. **Run at temperature 0.** Greedy decoding is byte-identical on this stack —
-   verified across 4 offers × 2 runs, evals *and* report prose. That makes the
-   noise floor 0 and a single run a valid A/B. At temp 0.1 the floor was 0.091 and
-   individual offers swung up to 2.1 points between identical runs.
+2. **Run at temperature 0** — but the noise floor is 0 only where it was measured.
+   Greedy decoding is byte-identical for **Phase 2**: verified across 4 offers × 2
+   runs, evals *and* report prose. At temp 0.1 that floor was 0.091 and individual
+   offers swung up to 2.1 points between identical runs.
+   **Phase 3's 7B tailor call is not byte-identical at temp 0** and never was in
+   that check — GPU batch/split variation flips a token regardless of temperature.
+   `PHASE3-EXPERIMENT-LEDGER.md` measured this directly (24-offer A/A: 12.5% of
+   offers vary; `grounding` ±0.020, `example_copy_pct` ±0.042, `mean_bullets`
+   ±0.120) and **is the authority** — this rule used to contradict it. A later
+   12-offer A/A adds floors for the metrics the ledger never floored:
+
+   | metric | floor | from |
+   |---|---|---|
+   | `ats_coverage` | ±0.002 | 12-offer A/A |
+   | `selection_regret` | ±0.001 | 12-offer A/A |
+   | `summary_cv_fit` | ±0.004 | 12-offer A/A |
+   | `summary_jd_fit` | ±0.016 | 12-offer A/A |
+   | `grounding` | **±0.020** | 24-offer ledger — use this, not the 12-offer 0.009 |
+   | `mean_bullets` | **±0.120** | 24-offer ledger |
+
+   Take the wider floor when two measurements disagree. This is not academic: the
+   content-floor change scored `grounding +0.021`, which reads as a win against the
+   12-offer floor and is **inside** the 24-offer one, so it is not claimable —
+   while `ats_coverage +0.145` clears its floor by 70×. Run the A/A whenever a
+   Phase 3 result rests on a small delta; two runs of the *same* label cost what
+   one A/B costs and are the only thing that says which deltas exist.
 3. **Know the resolution limit before believing a delta.** With 18 labels spanning
    3 distinct values, one label being off by ±1 moves Spearman rho by ~0.30. Any
    improvement smaller than that is indistinguishable from label noise, no matter
@@ -243,6 +397,17 @@ reload gets counted rather than guessed.
    row cites evidence that does not contain the technology the requirement names,
    how often one CV atom is reused across many requirements, and whether any STAR
    story names a technology absent from `cv.md` (must stay zero).
+9. **Ask what the metric suite scores an empty output, before trusting a win.**
+   All eight generation metrics punish falsity, so the null CV is perfect on all
+   of them and "lost the thing that makes me hireable" was invisible for the
+   whole life of the harness. A suite that only measures one direction is not a
+   suite. See `docs/PHASE3-RETENTION-LEDGER.md` §1.
+10. **Try deleting the model call before scaling it.** The 7B tailor was retyping
+    78% of its input verbatim and fabricating in the rest; removing it beat it,
+    and a 9B and the 30B both lost to *no writer at all*. Rendering — projects as
+    bullets rather than a paragraph — was worth more than any model swap and cost
+    nothing. Check what the template can physically print before blaming a model
+    for not printing it.
 
 ## Tracker rules
 
