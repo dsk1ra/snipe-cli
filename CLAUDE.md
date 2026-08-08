@@ -19,6 +19,16 @@ scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
 `config/profile.md` is a hard dependency — `batch/ollama-scorer.mjs` and
 `batch/staged-evaluator.mjs` read it at runtime.
 
+`cv.pinned_projects` in `config/profile.yml` forces a project past the
+`maxProjects` cut whatever the posting scores it, matched case-insensitively as a
+substring of the `### ` title. It is the escape hatch for an entry whose value is
+not its subject — an Honours dissertation loses the cut on any posting with no
+use for its topic, and is the first thing a reader of a graduate CV looks for.
+Each pin spends one of the three slots, so it is a project the ranker no longer
+chooses. **It also moves the benchmark**: the bench runs `local-pdf-offer.mjs`,
+which reads this file, so a pin changes selection for every arm. Note it when
+comparing against a run made before the pin existed.
+
 ## Entry points
 
 ```
