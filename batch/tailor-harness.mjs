@@ -48,9 +48,10 @@
  * different offers measures the offers, not the change.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, mkdtempSync, rmSync } from 'fs';
 import { resolve, dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
@@ -352,6 +353,10 @@ function metricsFor(label, paths = {}) {
   // whole `<id>_<slug>` dir name so a change to the slug rule cannot silently
   // empty every requirement list and read as selection_regret improving.
   const reportById = new Map();
+  // The role each offer was tailored for. Needed only so the rendered page
+  // carries the same target-role line a real run would print — it is one line,
+  // but measuring a page without it measures a page nobody ships.
+  const roleById = new Map();
   // Which sample this run used, as recorded by runVariant. A run over a second
   // sample file scored against sample.tsv matches no offer, so every requirement
   // list comes back empty and selection_regret reads null — the same
@@ -359,7 +364,10 @@ function metricsFor(label, paths = {}) {
   let ranSample = SAMPLE;
   try { ranSample = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')).sample || SAMPLE; } catch {}
   try {
-    for (const s of readSample(ranSample)) reportById.set(String(s.id), resolve(PROJECT, s.report));
+    for (const s of readSample(ranSample)) {
+      reportById.set(String(s.id), resolve(PROJECT, s.report));
+      roleById.set(String(s.id), s.role || '');
+    }
   } catch { /* no sample (unit tests use a fixture tree) — reqs stay empty */ }
   const reportFor = (d) => reportById.get(d.split('_')[0]) || '';
 
@@ -433,6 +441,7 @@ function metricsFor(label, paths = {}) {
 
     rows.push({
       dir: d,
+      role: roleById.get(d.split('_')[0]) || '',
       roles: exp.length,
       products: fabProducts,
       product_fab: fabProducts.length,
@@ -636,6 +645,74 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
 }
 
 /**
+ * Attach page geometry: how tall each offer's CV actually renders, and whether
+ * it fits on one page.
+ *
+ * Every other metric in this file scores `cv-content.json`, which
+ * `local-pdf-offer.mjs` writes and then exits on in bench mode — deliberately,
+ * so the density ladder cannot flatter a generation change. The consequence is
+ * that the whole suite was blind to the page: an arm that shipped twice as much
+ * content scored identically to one that fit, and a one-page experiment would
+ * have read as a clean null across every arm (benchmark rule 5 — ask what the
+ * metric reads if the change lands).
+ *
+ * Measured, not simulated. The content JSON goes through the real
+ * `fill-cv-template.mjs` and is laid out by the real browser at the real content
+ * box, so the number cannot drift from what `generate-pdf.mjs` would print. One
+ * browser for the whole run, not one per offer.
+ *
+ * `pages` is fractional on purpose. A boolean "fits" cannot tell an arm that
+ * overran by two lines from one that overran by a page, and the difference is
+ * the whole question during the one-page work.
+ */
+async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = 6 } = {}) {
+  if (!m.rows.length) return m;
+  let chromium;
+  try { ({ chromium } = await import('playwright')); }
+  catch { return { ...m, pages: null, page_note: 'playwright unavailable' }; }
+  const { CONTENT_BOX } = await import(pathToFileURL(resolve(PROJECT, 'generate-pdf.mjs')).href);
+
+  const tmp = mkdtempSync(join(tmpdir(), 'snipe-pages-'));
+  const fill = resolve(PROJECT, 'batch/fill-cv-template.mjs');
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: CONTENT_BOX.width, height: 1200 });
+    for (const r of m.rows) {
+      const src = join(benchRoot, label, r.dir, 'cv-content.json');
+      const html = join(tmp, `${r.dir}.html`);
+      try {
+        const a = [fill, '--content', src, '--output', html, '--max-skills', String(maxSkills)];
+        if (r.role) a.push('--role', r.role);
+        execFileSync(process.execPath, a, { stdio: 'ignore', cwd: PROJECT });
+        await page.goto(pathToFileURL(html).href, { waitUntil: 'load' });
+        r.page_px = await page.evaluate(() =>
+          Math.round(document.querySelector('.page').getBoundingClientRect().height));
+        r.pages = +(r.page_px / CONTENT_BOX.height).toFixed(3);
+        r.fits_one_page = r.pages <= 1 ? 1 : 0;
+      } catch { r.page_px = null; r.pages = null; r.fits_one_page = null; }
+    }
+  } finally {
+    await browser.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  const got = m.rows.filter(r => typeof r.pages === 'number');
+  if (!got.length) return { ...m, pages: null, page_note: 'no offer rendered' };
+  const avg = k => +(got.reduce((a, r) => a + r[k], 0) / got.length).toFixed(3);
+  return {
+    ...m,
+    pages: avg('pages'),
+    page_px: Math.round(got.reduce((a, r) => a + r.page_px, 0) / got.length),
+    // The gate for the one-page work. A mean page count says nothing on its own:
+    // 30 offers fitting and 2 overrunning is not "1.05 pages", it is a failure.
+    one_page_rate: +(got.filter(r => r.fits_one_page).length / got.length).toFixed(3),
+    one_page_n: got.filter(r => r.fits_one_page).length,
+    pages_n: got.length,
+  };
+}
+
+/**
  * Attach the label-scored metrics, for the offers that have a label.
  *
  * Kept separate from the label-free suite rather than merged into it: those
@@ -676,10 +753,14 @@ function withLabelMetrics(m) {
   };
 }
 
-/** All metrics. `--no-embed` keeps the text-only ones runnable with Ollama down. */
-async function allMetrics(label, noEmbed = false, keep = null) {
+/**
+ * All metrics. `--no-embed` keeps the text-only ones runnable with Ollama down;
+ * `--no-pages` skips the browser, which is the only part that needs one.
+ */
+async function allMetrics(label, noEmbed = false, keep = null, noPages = false) {
   const m = metricsFor(label, keep ? { keep } : {});
-  return withLabelMetrics(noEmbed ? m : await withEmbedMetrics(m));
+  const withPages = noPages ? m : await withPageMetrics(m, { label });
+  return withLabelMetrics(noEmbed ? withPages : await withEmbedMetrics(withPages));
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -726,7 +807,7 @@ if (!isMain) {
     samplePath: resolve(BENCH, String(flag('sample', 'sample.tsv'))),
   }), null, 2));
 } else if (cmd === 'metrics') {
-  const m = await allMetrics(positional[0], rest.includes('--no-embed'));
+  const m = await allMetrics(positional[0], rest.includes('--no-embed'), null, rest.includes('--no-pages'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
   const pct = (x) => (typeof x === 'number' ? x.toFixed(2) : '-');
@@ -734,7 +815,10 @@ if (!isMain) {
   // went wrong rather than as a question that was never asked.
   const diffCol = (r) => (typeof r.differentiator_coverage === 'number'
     ? `${r.differentiator_coverage.toFixed(2)}(-${r.differentiators_lost})` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  // Pages first: during the one-page work it is the gate, and a row that does not
+  // fit is not improved by whatever its other columns say.
+  const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -745,8 +829,9 @@ if (!isMain) {
   // benchmarks answer "is this real" the same way.
   const [a, b] = positional;
   const { bootstrapCI, signTest } = await import('./stats.mjs');
-  let A = await allMetrics(a, rest.includes('--no-embed'));
-  let B = await allMetrics(b, rest.includes('--no-embed'));
+  const noPages = rest.includes('--no-pages');
+  let A = await allMetrics(a, rest.includes('--no-embed'), null, noPages);
+  let B = await allMetrics(b, rest.includes('--no-embed'), null, noPages);
   const common = A.rows.map(r => r.dir).filter(d => B.rows.some(r => r.dir === d));
   const byDir = (m) => new Map(m.rows.map(r => [r.dir, r]));
   const [ra, rb] = [byDir(A), byDir(B)];
@@ -792,7 +877,8 @@ if (!isMain) {
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const noEmbed = rest.includes('--no-embed');
-  let A = await allMetrics(a, noEmbed), B = await allMetrics(b, noEmbed);
+  const noPages = rest.includes('--no-pages');
+  let A = await allMetrics(a, noEmbed, null, noPages), B = await allMetrics(b, noEmbed, null, noPages);
   // Compare only the offers BOTH runs produced. A --limit run holds a prefix of
   // the sample, so without this the means are taken over different offer sets
   // and the "delta" is mostly the difference between those sets, not the change.
@@ -800,8 +886,8 @@ if (!isMain) {
   if (common.size !== A.rows.length || common.size !== B.rows.length) {
     console.log(`paired on ${common.size} offers common to both runs `
       + `(${a}: ${A.rows.length}, ${b}: ${B.rows.length})\n`);
-    A = await allMetrics(a, noEmbed, common);
-    B = await allMetrics(b, noEmbed, common);
+    A = await allMetrics(a, noEmbed, common, noPages);
+    B = await allMetrics(b, noEmbed, common, noPages);
   }
   const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',

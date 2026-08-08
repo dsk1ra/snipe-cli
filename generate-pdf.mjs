@@ -298,6 +298,25 @@ export async function inlineLocalFonts(html) {
 }
 
 /**
+ * Print margin, and the A4 content box it leaves, at 96 CSS px per inch.
+ *
+ * 0.45in rather than the 0.6in this used to be. Measured: the content box goes
+ * 679x1007 -> 708x1036 px. The extra width matters as much as the height, since
+ * a wider column wraps fewer bullets onto a third line. Well inside any
+ * printer's unprintable margin, and the PDF is read on screen anyway. Do not go
+ * below 0.4in; that starts to look cramped.
+ *
+ * Exported because `tailor-harness.mjs` measures rendered CVs against exactly
+ * this box. Two copies of the geometry would let a margin change here silently
+ * invalidate every page measurement there.
+ */
+export const MARGIN_IN = 0.45;
+export const CONTENT_BOX = {
+  width:  Math.round((8.27  - 2 * MARGIN_IN) * 96),   // 708
+  height: Math.round((11.69 - 2 * MARGIN_IN) * 96),   // 1036
+};
+
+/**
  * Render an HTML string to a PDF file via headless Chromium.
  *
  * Local url('./fonts/...') references are inlined as data: URLs first so
@@ -351,16 +370,11 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
     const pdfBuffer = await page.pdf({
       format: 'a4',
       printBackground: true,
-      // 0.45in, not 0.6in. Measured on A4: the content box goes 679x1007 ->
-      // 708x1036 px, worth 29px of height and 29px of width — and the width
-      // matters as much, since a wider column wraps fewer bullets onto a third
-      // line. Well inside any printer's unprintable margin, and the PDF is read
-      // on screen anyway. Do not go below 0.4in; that starts to look cramped.
       margin: {
-        top: '0.45in',
-        right: '0.45in',
-        bottom: '0.45in',
-        left: '0.45in',
+        top: `${MARGIN_IN}in`,
+        right: `${MARGIN_IN}in`,
+        bottom: `${MARGIN_IN}in`,
+        left: `${MARGIN_IN}in`,
       },
       preferCSSPageSize: false,
     });
