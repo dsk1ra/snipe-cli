@@ -924,57 +924,80 @@ function trimProjectsByRelevance(list, n, jdTok) {
 }
 const jdTokens = new Set(tokenize(jdText));
 
-// Tier 5 — relevance-preserving density ladder. The summary and competencies are
-// NEVER cut to fit the page; we only reduce experience-bullet depth (fill caps
-// per role, hitting the least-relevant backfilled roles too), skill breadth, and
-// the weakest (last-ranked) projects. Each step renders and re-checks the page
-// count; we stop at the first step that fits ≤ 2 pages.
-// `projBullets` trims the project lists, which the ladder could not reach at
-// all: it could drop a whole project but not shorten one, so a CV that overran
-// by two lines lost an entire project's worth of evidence. Project bullets carry
-// most of this CV's differentiators, so they are trimmed one at a time and only
-// after the cheaper cuts, and dropping a project stays the last resort it was.
-// Step 0's `projBullets` is 4 rather than 2 because cv-select already spent a
-// fixed total budget across the kept projects — the page still carries eight
-// project bullets, just not two apiece, and a cap of 2 here would flatten the
-// allocation back out at render time. Every tighter step is unchanged.
+// Tier 5 — relevance-preserving density ladder. The summary is NEVER cut to fit
+// the page; we only reduce experience-bullet depth (fill caps per role, hitting
+// the least-relevant backfilled roles too), skill breadth, and the weakest
+// (last-ranked) projects.
+//
+// The target is ONE page. It used to be two, which meant the ladder was
+// perfectly satisfied by the output that prompted this whole exercise — it
+// stopped at step 0 on every offer and never fired at all.
+//
+// Its role has changed with it. cv-select now spends a rendered-line budget, so
+// selection already fits the page on 31 of 32 offers and the ladder is a safety
+// net rather than the mechanism: it exists for the residual that selection
+// cannot predict, because chrome moves between runs (the summary is
+// model-written and varies by ~200 characters). Steps are therefore gentle at
+// the top — one project bullet at a time — where they used to jump straight
+// from 4 to 1 and throw away a project's worth of evidence to save two lines.
+//
+// Step 0 must not clip what cv-select allocated: its caps are the same 4/4 the
+// selector bounds itself by, so it renders the selection untouched.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // full
-  { skills: 6, bullets: 4, projects: 4, projBullets: 1 },
-  { skills: 6, bullets: 3, projects: 4, projBullets: 1 },
-  { skills: 5, bullets: 3, projects: 4, projBullets: 1 },
-  { skills: 5, bullets: 3, projects: 3, projBullets: 1 },
-  { skills: 4, bullets: 3, projects: 2, projBullets: 1 }, // tightest
+  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // as selected
+  { skills: 6, bullets: 4, projects: 4, projBullets: 3 },
+  { skills: 6, bullets: 3, projects: 4, projBullets: 2 },
+  { skills: 5, bullets: 3, projects: 3, projBullets: 2 },
+  { skills: 5, bullets: 2, projects: 3, projBullets: 1 },
+  { skills: 4, bullets: 2, projects: 2, projBullets: 1 }, // tightest
 ];
 
 let pdfPath = null;
 let pdfError = null;
+let ladderStep = null;
+let ladderPages = null;
 
-for (let step = 0; step < LADDER.length; step++) {
-  const { skills, bullets, projects, projBullets } = LADDER[step];
+// One page is the target; two is the ceiling, not the goal. Every density step
+// is tried at one page first, and only if none of them fits does the ladder
+// accept two — and then at the FULLEST step, because a CV that has to run to two
+// pages should carry the evidence it was going to carry rather than the
+// stripped-down version that failed to save it.
+outer:
+for (const maxPages of [1, 2]) {
+  // Every step is tried at one page. At the two-page ceiling only the fullest
+  // one is: a CV forced onto a second page should carry the evidence it was
+  // going to carry, not the stripped-down version that failed to save it.
+  const steps = maxPages === 1 ? LADDER.map((s, i) => [i, s]) : [[0, LADDER[0]]];
 
-  cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
-  writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
+  for (const [step, { skills, bullets, projects, projBullets }] of steps) {
+    // Trimmed from the full project list every time, not cumulatively from the
+    // last step's output — the old loop reassigned cvContent.projects, so once a
+    // step had cut to 3 no later step could see the 4th again, and the two-page
+    // fallback could not restore what the one-page attempts had shed.
+    const kept = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
+    writeFileSync(contentFile, JSON.stringify({ ...cvContent, projects: kept }, null, 2), 'utf8');
 
-  try {
-    runFill(skills, bullets, projBullets);
-  } catch (err) {
-    if (step === 0) fail(`fill-cv-template.mjs failed: ${err.message}`);
-    continue; // a later, tighter step may still render
-  }
+    try {
+      runFill(skills, bullets, projBullets);
+    } catch (err) {
+      if (step === 0 && maxPages === 1) fail(`fill-cv-template.mjs failed: ${err.message}`);
+      continue; // a later, tighter step may still render
+    }
 
-  try {
-    execFileSync(process.execPath, [
-      generatePdf, htmlFile, pdfFile,
-      '--max-pages=2',
-      `--source-url=${args.url}`,
-    ], { stdio: 'inherit', cwd: PROJECT });
-    pdfPath = `output/${args.date}_${companySlug}_${args.reportNum}/${candidateName}-CV.pdf`;
-    break;
-  } catch {
-    if (step === LADDER.length - 1) pdfError = `PDF still >2 pages after ${LADDER.length} density steps`;
+    try {
+      execFileSync(process.execPath, [
+        generatePdf, htmlFile, pdfFile,
+        `--max-pages=${maxPages}`,
+        `--source-url=${args.url}`,
+      ], { stdio: 'inherit', cwd: PROJECT });
+      pdfPath = `output/${args.date}_${companySlug}_${args.reportNum}/${candidateName}-CV.pdf`;
+      ladderStep = step;
+      ladderPages = maxPages;
+      break outer;
+    } catch { /* try the next step, or the two-page ceiling */ }
   }
 }
+if (!pdfPath) pdfError = `PDF still >2 pages after ${LADDER.length} density steps`;
 
 // Update **PDF:** line in the report
 if (pdfPath && args.reportPath && existsSync(args.reportPath)) {
@@ -1013,4 +1036,10 @@ out({
   report:     args.reportPath,
   tracker:    `batch/tracker-additions/${args.id}.tsv`,
   error:      pdfError,
+  // Which density step the page actually needed, and how many pages it took.
+  // Step 0 at 1 page is the healthy case: selection fitted and the ladder never
+  // fired. Anything else is the ladder paying for evidence, and it is only
+  // visible if it is recorded — the old loop kept no trace of which step won.
+  ladder_step: ladderStep,
+  pages:       ladderPages,
 });

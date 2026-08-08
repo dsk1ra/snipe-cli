@@ -152,6 +152,81 @@ Worth a paired check before any E2 arm reuses a cache.
 
 ---
 
+## 1b. Results — E0 to E3 are done
+
+Ran 2026-08-08. Everything below is measured, 32 offers, paired.
+
+### The gate is met
+
+| | pages (mean) | one_page_rate |
+|---|---|---|
+| before any of this | 1.72 | 0/32 |
+| after Phase A layout | 1.286 | 0/32 |
+| E2 knapsack, at render | 0.960 | 31/32 |
+| **+ E3 ladder** | — | **32/32** |
+
+31 offers fit at ladder step 0, so the ladder never fires on them. One (`id=5`)
+renders at 1.013 pages and is fixed at step 2. Nothing fails to reach one page.
+E3's target was "fires on ≤ 3 of 32, no offer past step 2" — it fires on 1, at
+step 2.
+
+### E2 — the knapsack beat naive count-cutting
+
+Both arms fit one page; the question was which keeps more in the same space.
+
+| metric | e2ctl | e2knap | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.289 | **0.409** | **+0.120** | [0.073, 0.168] | 18-1 | <0.001 |
+| `grade_yield` | 0.637 | 0.691 | +0.054 | [0.022, 0.083] | 23-6 | 0.002 |
+| `mean_grade` | 1.720 | 1.820 | +0.101 | [0.018, 0.178] | 21-7 | 0.013 |
+| `ats_coverage` | 0.582 | 0.581 | −0.001 | [−0.013, 0.011] | 12-13 | 1.000 |
+| `grounding`, all fab | 1.000 / 0.000 | 1.000 / 0.000 | 0.000 | — | 0-0 | — |
+
++0.120 against a +0.05 bar and a 0.000 floor. **Ship the knapsack.**
+
+### What one page costs, which is the number that matters
+
+| metric | 2 pages (`aa1`) | 1 page (`e2knap`) | delta | w-l | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.643 | 0.409 | **−0.234** | 1-24 | <0.001 |
+| `ats_coverage` | 0.691 | 0.581 | **−0.110** | **0-32** | <0.001 |
+| `grade_yield` | 0.739 | 0.691 | −0.048 | 6-24 | 0.001 |
+| `grounding`, all fab | 1.000 / 0.000 | 1.000 / 0.000 | 0.000 | 0-0 | — |
+
+One page costs a third of the differentiator coverage and 11 points of ATS
+keyword coverage, the latter on **every single offer**. The knapsack recovers
++0.120 of the −0.234 — about half — and no ranker recovers the rest: 40 lines of
+evidence do not fit in 21.
+
+### Two targets in this document were not met
+
+- **Primary was `differentiator_coverage` ≥ 0.55. Landed 0.409.** The decision
+  table says below 0.45 means reopening whether one page is the right constraint.
+  It is a real result, not a tuning failure — the page holds 21 lines and the
+  evidence is 40.
+- **The `ats_coverage` ≥ 0.66 guard is unreachable at one page.** Both arms sit
+  at 0.58, so the guard as written kills every one-page variant including the
+  control. It was calibrated against a 2-page CV; that was a mistake in this
+  document, not a regression in the code. What it is really measuring is the
+  keyword cost of the format decision.
+
+### Bugs the experiments found
+
+1. **`ceil(len/95)` was wrong** — calibrated for the 0.6in margins, over-estimated
+   20 of 32 bullets once Phase A widened the column. 124 chars/line is exact on
+   30 of 32 and never under-predicts.
+2. **The cost model ignored `margin-bottom: 2px` per bullet** — about ⅛ line each,
+   over a line on a 9-bullet page. The first knapsack run overran on 6 of 32 by
+   1-2 lines apiece while the model insisted all 32 fitted.
+3. **The `--role` line costs 21px** and was the entire reason `id=5` overran. An
+   E3 probe that forgot to pass `--role` measured 32/32 fitting — a CV that
+   production never renders.
+4. **A benchmark survived its own source being swapped.** A branch switch 34
+   minutes into an E2 arm split it silently; `runVariant` now records `commit`
+   and `commit_end`, and `allMetrics` refuses to score a split run.
+
+---
+
 ## 2. Experiments
 
 Run in order. Each is gated on the previous.
