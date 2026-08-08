@@ -58,6 +58,7 @@ import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
          stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
 import { productFab, credentialFab } from './summary-stage.mjs';
+import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
@@ -378,6 +379,43 @@ export function atsCoverage(jdText, cvText, outputText) {
 }
 
 /**
+ * Of the skills this posting **names** and `cv.md` genuinely claims, the fraction
+ * that reach the page.
+ *
+ * `ats_coverage` is the blunt version of this question and answers a different
+ * one. It counts every ≥3-char token a JD and `cv.md` share, so on this corpus
+ * its 202 distinct misses are led by `complex`, `location`, `fast`, `where` and
+ * `never` — 185 of them generic English rather than anything a recruiter searches
+ * for. It cannot reach 1.0 by any legitimate means, and driving it up rewards
+ * padding. Keep it as a breadth signal; do not target it.
+ *
+ * This one is matched as **phrases against cv.md's own skill taxonomy**, so
+ * there is no stoplist to tune and "NAT Traversal (STUN/TURN)" cannot contribute
+ * a spurious `turn`. It is honest in both directions: bounded above by what the
+ * CV actually claims, so it cannot be gamed by inventing, and it goes down when a
+ * real skill is cut — which is exactly what the skills block used to do silently.
+ *
+ * Returns `null` coverage when a posting names no skill at all, rather than 0 —
+ * a posting with nothing to match is not a failure to match it.
+ *
+ * @param {string} jdText
+ * @param {string} cvText
+ * @param {string} outputText
+ */
+export function skillCoverage(jdText, cvText, outputText) {
+  const norm = normPhrase;
+  const items = [...new Set(parseSkillCategories(cvText).flatMap(c => c.items))];
+  const jd = norm(jdText), out = norm(outputText);
+  const asked = items.filter(s => jd.includes(norm(s)));
+  const missed = asked.filter(s => !out.includes(norm(s)));
+  return {
+    coverage: asked.length ? (asked.length - missed.length) / asked.length : null,
+    asked: asked.length,
+    missed,
+  };
+}
+
+/**
  * @param {string} label
  * @param {{benchRoot?: string, cvPath?: string, keep?: Set<string>|null}} [paths]
  *   injectable for tests; `keep` restricts to a set of run directories so two
@@ -463,13 +501,21 @@ function metricsFor(label, paths = {}) {
         }
       }
     }
-    // Everything the model actually wrote, as one blob. Competencies, modules
-    // and skills are code-derived (Tier 3), but they ship on the PDF, so a
-    // fabricated product there counts exactly as much as one in a bullet.
+    // Everything that reaches the PDF, as one blob. Modules and skills are
+    // code-derived (Tier 3), but they ship, so a fabricated product there counts
+    // exactly as much as one in a bullet.
+    //
+    // Two corrections, and they very nearly cancelled — which is why neither was
+    // visible. Core Competencies was deleted from the template during the
+    // one-page work but kept being scored, inflating every number by 0.009; and
+    // project *bullets*, the field CLAUDE.md calls the one that carries the
+    // differentiators, were never read at all, deflating them by 0.008. Offsetting
+    // errors are luck, not correctness: the phantom section is now gone for good,
+    // so the inflation would not have offset anything again.
     const outputText = [
       c.summary || '',
-      (c.competencies || []).join(' '),
-      (c.projects || []).map(p => `${p.name || ''} ${p.description || ''}`).join(' '),
+      (c.projects || []).map(p =>
+        `${p.name || ''} ${p.description || ''} ${(p.bullets || []).join(' ')} ${p.tech || ''} ${p.url || ''}`).join(' '),
       (c.education_modules || []).join(' '),
       (c.skills || []).map(s => `${s.category || ''} ${s.items || ''}`).join(' '),
       exp.map(e => (e.bullets || []).join(' ')).join(' '),
@@ -477,6 +523,7 @@ function metricsFor(label, paths = {}) {
     const jdText = readSafe(join(dir, d, 'job-description.txt'));
     const fabProducts = productFab(outputText, cvText);
     const ats = atsCoverage(jdText, cvText, outputText);
+    const skill = skillCoverage(jdText, cvText, outputText);
     // Block B is what cv-select ranked against, so selection_regret has to be
     // scored against the same requirements the selector actually saw. The bench
     // dir is named `<id>_<slug>`, which is enough to find the offer's report.
@@ -490,6 +537,9 @@ function metricsFor(label, paths = {}) {
       product_fab: fabProducts.length,
       ats_coverage: ats.coverage,
       ats_supportable: ats.supportable,
+      skill_coverage: skill.coverage,
+      skills_asked: skill.asked,
+      skills_missed: skill.missed,
       summary: c.summary || '',
       // Shipped vs as-written. `_summary_pre_guard` is only present on runs made
       // after it was added; older runs fall back to the shipped summary, which
@@ -525,6 +575,13 @@ function metricsFor(label, paths = {}) {
 
   const n = rows.length || 1;
   const mean = k => rows.reduce((a, r) => a + r[k], 0) / n;
+  // Skips the offers a metric could not score, rather than averaging their nulls
+  // in as zeros — a posting that names no skill has no coverage to report and
+  // must not drag the mean down as though it were a miss.
+  const meanOf = (k) => {
+    const got = rows.filter(r => typeof r[k] === 'number');
+    return got.length ? got.reduce((a, r) => a + r[k], 0) / got.length : null;
+  };
   let meta = {};
   try { meta = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')); } catch {}
   return {
@@ -550,6 +607,10 @@ function metricsFor(label, paths = {}) {
     // rather than letting a 0 read as good news.
     summary_fab_raw_n: rows.filter(r => r.has_pre_guard).length,
     ats_coverage: +mean('ats_coverage').toFixed(3),
+    // The one to target. See `skillCoverage` for why `ats_coverage` is not.
+    skill_coverage: meanOf('skill_coverage') === null ? null : +meanOf('skill_coverage').toFixed(3),
+    skill_coverage_n: rows.filter(r => typeof r.skill_coverage === 'number').length,
+    skills_asked: +mean('skills_asked').toFixed(1),
     mean_bullets: +mean('bullets').toFixed(2),
     rows,
   };
@@ -708,7 +769,11 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
  * overran by two lines from one that overran by a page, and the difference is
  * the whole question during the one-page work.
  */
-async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = 6 } = {}) {
+// `maxSkills` defaults to null to match LADDER step 0, the step production
+// renders at unless the page overruns. A 6 here measured a document the pipeline
+// does not produce: cv-writers keeps a category the posting named even past the
+// sixth, so the bench would have rendered 6 rows while the PDF carried 8.
+async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = null } = {}) {
   if (!m.rows.length) return m;
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -725,7 +790,8 @@ async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = 6
       const src = join(benchRoot, label, r.dir, 'cv-content.json');
       const html = join(tmp, `${r.dir}.html`);
       try {
-        const a = [fill, '--content', src, '--output', html, '--max-skills', String(maxSkills)];
+        const a = [fill, '--content', src, '--output', html];
+        if (maxSkills) a.push('--max-skills', String(maxSkills));
         if (r.role) a.push('--role', r.role);
         execFileSync(process.execPath, a, { stdio: 'ignore', cwd: PROJECT });
         await page.goto(pathToFileURL(html).href, { waitUntil: 'load' });
@@ -869,7 +935,7 @@ if (!isMain) {
   // Pages first: during the one-page work it is the gate, and a row that does not
   // fit is not improved by whatever its other columns say.
   const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -895,6 +961,7 @@ if (!isMain) {
   const keys = [
     ['differentiator_coverage', 'differentiator_coverage'], ['noise_rate', 'noise_rate'],
     ['grade_yield', 'grade_yield'], ['mean_grade', 'mean_grade'],
+    ['skill_coverage', 'skill_coverage'],
     ['ats_coverage', 'ats_coverage'], ['grounding', 'grounding'],
     ['num_retention', 'num_retention'], ['num_lost', 'num_lost'],
     ['metric_fab', 'fab'], ['product_fab', 'product_fab'],
@@ -942,7 +1009,7 @@ if (!isMain) {
   }
   const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
-                'product_fab', 'product_fab_pct', 'ats_coverage',
+                'product_fab', 'product_fab_pct', 'skill_coverage', 'skills_asked', 'ats_coverage',
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
                 'labelled_n', 'differentiator_coverage', 'differentiators_lost',

@@ -902,8 +902,12 @@ function runFill(maxSkills, maxBullets, maxProjectBullets) {
     fillScript,
     '--content',    contentFile,
     '--output',     htmlFile,
-    '--max-skills', String(maxSkills),
   ];
+  // null renders every category cv-writers selected. It already dropped the ones
+  // the posting had no use for, and it refuses to cut a category the posting
+  // named — so slicing here would silently delete a skill the CV claims and the
+  // JD asked for, which is the whole defect that work fixed.
+  if (maxSkills) a.push('--max-skills', String(maxSkills));
   if (args.role) a.push('--role', args.role);
   if (maxBullets) a.push('--max-bullets', String(maxBullets));
   if (maxProjectBullets) a.push('--max-project-bullets', String(maxProjectBullets));
@@ -941,10 +945,12 @@ const jdTokens = new Set(tokenize(jdText));
 // the top — one project bullet at a time — where they used to jump straight
 // from 4 to 1 and throw away a project's worth of evidence to save two lines.
 //
-// Step 0 must not clip what cv-select allocated: its caps are the same 4/4 the
-// selector bounds itself by, so it renders the selection untouched.
+// Step 0 must not clip what the selectors allocated: its caps are the same 4/4
+// cv-select bounds itself by, and its skills cap is null because cv-writers has
+// already cut the block to what the posting can use. It renders the selection
+// untouched; only a step below it is allowed to take evidence away.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // as selected
+  { skills: null, bullets: 4, projects: 4, projBullets: 4 }, // as selected
   { skills: 6, bullets: 4, projects: 4, projBullets: 3 },
   { skills: 6, bullets: 3, projects: 4, projBullets: 2 },
   { skills: 5, bullets: 3, projects: 3, projBullets: 2 },

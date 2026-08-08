@@ -132,6 +132,43 @@ fabrication lived. Scaling the writer does not fix it: a 9B and the 30B both buy
 `--writer model` survives as the benchmark control only. Full numbers and the
 two production bugs found on the way: `docs/PHASE3-RETENTION-LEDGER.md`.
 
+**Skills are selected, not dumped** (`selectSkills` in `cv-writers.mjs`). The
+block used to ship 52 items — near enough the whole taxonomy, merely reordered —
+of which 12.9 shared a term with the posting. The other 75% bought nothing an ATS
+could read and cost 4.4 rendered lines on a page whose entire evidence budget is
+21. Items now ship in three tiers and everything below them is dropped:
+
+1. **named** — the posting's own terms, matched as whole phrases
+2. **related** — what `cv.md` writes on the same line as a named item, so a Java
+   posting still gets Spring Boot. The Skills section is excluded from that
+   evidence: its lines list a category's items together by definition, so
+   counting them would promote whole categories on one match
+3. **floor** — `minItems` (3) in `cv.md`'s own order, so a block never shrinks to
+   a mirror of the posting. Without it the CV reads as pandering and loses the
+   distinctive evidence, which is `docs/PHASE3-RETENTION-LEDGER.md` §1 all over
+
+`maxCats` (6) budgets only the categories the posting did *not* name; one it did
+is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0
+now passes no `--max-skills` at all. **Worth `skill_coverage` 0.932 → 1.000**
+(+0.068, CI [0.032, 0.106], 9-0, p=0.004) and `ats_coverage` +0.014 (13-0,
+p<0.001) against a 0.000 A/A floor, with 52 → 30 items, 979 → 958 px, and every
+falsity metric and the one-page rate unmoved.
+
+Three bugs were in the way, each of which silently deleted a real skill:
+
+- **`parseSkillCategories` dropped every parenthesis**, so `Message Queues
+  (RabbitMQ, Kafka)` shipped as "Message Queues". Kafka, AES-256-GCM, EC2/Lambda/
+  S3/IAM, Jest, Jenkins, Ollama and MCP were deleted at parse time from every
+  tailored PDF ever generated. Parts are now judged individually, so a name is
+  promoted to an item and prose ("working knowledge") is still dropped.
+- **`tokenize` has a 3-character floor**, so `C#` and `CI/CD` produce no tokens
+  and scored 0 however loudly a posting asked. Ranking hid it — they shipped
+  last; filtering exposed it. Selection now also tests whole-phrase presence.
+- **A `.` survives phrase normalisation** for `Next.js`, which welded the period
+  in "…experience with Kafka." onto the term. `normPhrase` is exported from
+  `cv-writers.mjs` and used by the harness too, so the metric scores what the
+  selector selected rather than drifting from it.
+
 Project bullets are **allocated, not capped**. `cv-select.mjs` spends one total
 budget (`maxProjects × 2` = 8, exactly what a flat 2-per-project rendered) across
 the projects that survived the top-4 cut: one bullet each, then the rest to the
@@ -284,6 +321,18 @@ comes free: `SNIPE_TIMING=path` makes every Ollama call append its own
 `load_duration` / `eval_count` (`batch/timing.mjs report`), which is how a model
 reload gets counted rather than guessed.
 
+**`ats_coverage` is a breadth signal, not a target.** It counts every ≥3-char
+token a JD and `cv.md` share, so most of what it calls a miss is generic English:
+of 202 distinct missed terms over 32 offers, the leaders are `complex`,
+`location`, `fast`, `where` and `never`, and only 17 are technologies. It cannot
+reach 1.0 by any honest means and rewards padding on the way up. **`skill_coverage`
+is the one to target** — of the skills a posting *names* and `cv.md` genuinely
+claims, the fraction reaching the page, matched as phrases against the CV's own
+taxonomy so there is no stoplist to tune and `NAT Traversal (STUN/TURN)` cannot
+contribute a spurious `turn`. It is bounded above by what the CV claims, so
+inventing cannot raise it, and it falls when a real skill is cut. It is `null`,
+never 0, for a posting that names no skill at all. It sits at **1.000**.
+
 Those eight metrics all punish **falsity**, and an empty CV scores perfectly on
 every one of them — so none of them can see a CV that dropped the thing that
 differentiates you. `batch/opus-metrics.mjs` closes that hole against a label
@@ -420,6 +469,16 @@ has grades.
     bullets rather than a paragraph — was worth more than any model swap and cost
     nothing. Check what the template can physically print before blaming a model
     for not printing it.
+11. **The bench must render the document production renders, and score the
+    document it rendered.** Three ways that broke, all found in one sitting:
+    `withPageMetrics` passed `--max-skills 6` while LADDER step 0 had stopped
+    capping, so it measured a 6-row page against an 8-row PDF; `outputText` still
+    scored Core Competencies months after the template deleted it (+0.009); and it
+    never read project *bullets* at all (−0.008). The last two nearly cancelled,
+    which is why neither showed. Offsetting errors are luck — when the phantom
+    section finally went, nothing would have offset the omission. After any
+    template or ladder change, diff what the metric concatenates against what the
+    page prints.
 
 ## Tracker rules
 
