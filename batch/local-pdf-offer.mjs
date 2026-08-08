@@ -20,11 +20,15 @@ import { execFileSync, execSync } from 'child_process';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
          reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
-         verifyProjectFigures, cvCompanies,
-         stripUnsupportedTenure } from './cv-select.mjs';
+         verifyProjectFigures, cvCompanies, parseCvSections, parseEntries,
+         padProjectDescriptions, stripUnsupportedTenure,
+         verifySummaryFigures } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
+         stripFabricatedCredentials, stripJdProperNouns,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
+import { verbatimContent } from './cv-writers.mjs';
+import { createHash } from 'crypto';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
@@ -53,6 +57,12 @@ function parseArgs(argv) {
     // written); --temperature overrides the production 0.15 so a benchmark can
     // run greedy, where this stack is byte-identical and one run is a valid A/B.
     benchDir: null, temperature: 0.15,
+    // Which component writes the bullets. `verbatim` is the shipped path: render
+    // the selection as cv.md already words it, no generation call at all. `model`
+    // hands the selection to snipe-cv to rewrite — the old default, kept as the
+    // benchmark control. It loses on every axis that matters (see
+    // docs/PHASE3-RETENTION-LEDGER.md §4); a bigger writer only loses differently.
+    writer: 'verbatim',
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -73,6 +83,7 @@ function parseArgs(argv) {
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
       case '--bench-dir':    a.benchDir     = argv[++i]; break;
       case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
+      case '--writer':       a.writer       = argv[++i]; break;
     }
   }
   return a;
@@ -219,14 +230,55 @@ function experienceCompanies(selectedCv) {
   try { return cvCompanies(selectedCv); } catch { return []; }
 }
 
+/**
+ * Bullet- and project-count floors, read off the CV the model was handed.
+ *
+ * `minItems` on the entry count stopped the model dropping a whole employer, but
+ * nothing stopped it dropping four fifths of one: the bullets array had no floor
+ * at all and `projects` floored at the schema's hardcoded 3, which the model
+ * then took as the answer on every run. Both must come from the selected CV, not
+ * a constant — demanding 3 bullets from a role that only has 1 is an instruction
+ * to invent, which is the one failure this pipeline spends everything to avoid.
+ *
+ * @param {string} selectedCv
+ * @returns {{bullets: number, projects: number}}
+ */
+function contentFloors(selectedCv) {
+  const floors = { bullets: 1, projects: 3 };
+  try {
+    const named = n => parseCvSections(selectedCv).find(s => s.name === n);
+    const exp = named('Experience');
+    if (exp) {
+      const counts = parseEntries(exp.lines).entries.map(e => e.bullets.length).filter(n => n > 0);
+      if (counts.length) floors.bullets = Math.min(3, ...counts);
+    }
+    const proj = named('Projects');
+    const n = proj ? parseEntries(proj.lines).entries.length : 0;
+    if (n) floors.projects = Math.min(4, n);
+  } catch { /* keep the conservative defaults */ }
+  return floors;
+}
+
 function schemaWithExperienceFloor(selectedCv) {
   const roles = experienceCompanies(selectedCv).length;
-  if (roles < 2) return TAILOR_SCHEMA;
+  const floors = contentFloors(selectedCv);
+  const exp = TAILOR_SCHEMA.properties.experience;
   return {
     ...TAILOR_SCHEMA,
     properties: {
       ...TAILOR_SCHEMA.properties,
-      experience: { ...TAILOR_SCHEMA.properties.experience, minItems: roles },
+      projects: { ...TAILOR_SCHEMA.properties.projects, minItems: floors.projects },
+      experience: {
+        ...exp,
+        ...(roles >= 2 ? { minItems: roles } : {}),
+        items: {
+          ...exp.items,
+          properties: {
+            ...exp.items.properties,
+            bullets: { ...exp.items.properties.bullets, minItems: floors.bullets },
+          },
+        },
+      },
     },
   };
 }
@@ -237,6 +289,13 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
     system: systemPrompt,
     prompt: userMessage,
     stream: false,
+    // Qwen3.5 and its siblings are hybrid-reasoning models: left to themselves
+    // Ollama routes the answer into a `thinking` field and returns `response` as
+    // an empty string, so every offer fails with "No JSON object found" and the
+    // model looks incapable of structured output when it is merely thinking.
+    // Accepted and ignored by the non-reasoning models already in the pipeline
+    // (verified against snipe-cv and snipe-eval), so it is safe unconditionally.
+    think: false,
     ...(format ? { format } : {}),
     // num_predict 2400: ample for the richer JSON (realistic output ~1.1-1.4k
     // tokens — summary, 6-9 competencies, 3-4 project descriptions, 5-6 skill
@@ -496,8 +555,39 @@ const profileNarrative = extractProfileNarrative(profileText);
 // Block B is both what cv-select ranks against and what the summary stage
 // uses to decide which evidence to foreground, so it is parsed once.
 const blockBReqs = extractBlockBRequirements(reportText);
-let cvForPrompt = cvText;
-try {
+
+// Selection costs one 30B judge call — measured 66 s, 80 % of Phase 3's wall
+// clock — and is identical for every writer variant, because none of them touch
+// cv-select. A generation A/B was therefore paying ~35 min per 32-offer arm to
+// recompute the same answer. SNIPE_SELECT_CACHE points at a JSON file keyed on
+// everything selection actually reads, so a sweep pays the judge once.
+//
+// Off unless the env var is set: a production run must always select fresh, and
+// a stale cache is a silent wrong answer rather than a loud failure.
+const SELECT_CACHE = process.env.SNIPE_SELECT_CACHE || '';
+const selectKey = () => createHash('sha1')
+  .update(JSON.stringify([args.id, cvText, blockBReqs, jdText]))
+  .digest('hex').slice(0, 20);
+
+function cachedSelection() {
+  if (!SELECT_CACHE || !existsSync(SELECT_CACHE)) return null;
+  try { return JSON.parse(readFileSync(SELECT_CACHE, 'utf8'))[selectKey()] ?? null; }
+  catch { return null; }
+}
+function storeSelection(text) {
+  if (!SELECT_CACHE) return;
+  try {
+    mkdirSync(dirname(SELECT_CACHE), { recursive: true });
+    let all = {};
+    try { all = JSON.parse(readFileSync(SELECT_CACHE, 'utf8')); } catch {}
+    all[selectKey()] = text;
+    writeFileSync(SELECT_CACHE, JSON.stringify(all), 'utf8');
+  } catch { /* a cache that cannot be written is not a run that should fail */ }
+}
+
+const cached = cachedSelection();
+let cvForPrompt = cached ?? cvText;
+if (!cached) try {
   // Exemplars turn on the 30B reranker inside selectCvForJd (+0.10 pair
   // accuracy on the gold set). Loaded here rather than there because goldset
   // imports cv-select, and the reverse edge is a cycle.
@@ -509,6 +599,7 @@ try {
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots });
+  storeSelection(cvForPrompt);
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
 }
@@ -532,7 +623,24 @@ const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 // failing the whole offer; only a total parse failure is fatal.
 let cvContent = null;
 let lastErr   = '';
-for (let attempt = 1; attempt <= 2; attempt++) {
+if (args.writer === 'verbatim') {
+  // No generation call. The selection is rendered as cv.md words it, and the
+  // summary stage below still runs — so this isolates the *bullet* rewrite as the
+  // single variable, rather than testing two changes at once.
+  //
+  // Project bullets are a separate axis, flagged separately for the same reason:
+  // bundling the rendering change into the writer change would make a win
+  // unattributable to either. 4 is a per-project ceiling rather than a count —
+  // cv-select allocates the total budget, so this only has to not clip it.
+  cvContent = verbatimContent(cvForPrompt, cvText, jdText,
+    { projectBullets: parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '4', 10) });
+
+  // Both are overwritten unconditionally by the Tier-3 blocks further down;
+  // an empty array here just keeps the shape valid until they are.
+  cvContent.summary = '';
+  cvContent.competencies = [];
+  cvContent.education_modules = [];
+} else for (let attempt = 1; attempt <= 2; attempt++) {
   const um = attempt === 1
     ? userMessage
     : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
@@ -551,7 +659,9 @@ for (let attempt = 1; attempt <= 2; attempt++) {
 }
 
 if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${lastErr}`);
-if (!cvContent.summary || !Array.isArray(cvContent.experience)) {
+// The non-model writers leave `summary` empty on purpose — the stage below fills
+// it — so only the model path is held to having one at this point.
+if (args.writer === 'model' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
 cvContent = clampContent(cvContent);
@@ -566,7 +676,9 @@ if (!cvContent.projects && Array.isArray(cvContent.selected_projects)) {
 // the template's name match can't silently drop a project slot (observed:
 // "Distributed Odds Feed Orchestrator" invented for a betting-infra JD).
 if (Array.isArray(cvContent.projects)) {
-  cvContent.projects = remapProjectNames(cvContent.projects, cvText);
+  // The backfill floor has to match the schema floor, or the two disagree and the
+  // model's 4th project is dropped here and never replaced (4 of 12 offers).
+  cvContent.projects = remapProjectNames(cvContent.projects, cvText, contentFloors(cvForPrompt).projects);
 }
 
 // Tier 3 — the model doesn't reliably keep UK reverse-chronological order;
@@ -621,11 +733,41 @@ try {
 }
 
 const distOf = n => (n < 50 ? 50 - n : n > 70 ? n - 70 : 0);
+// Benchmark-only: the summary as the model wrote it, before any guard touches
+// it. Without this the harness can only see the summary the guards already
+// repaired, so summary_fab would read 0 by construction and score a perfect mark
+// for a model that fabricates on every offer — the example_copy_pct mistake in
+// benchmark rule 5. Gated on --bench-dir so a real run's cv-content.json keeps
+// its shape.
+if (args.benchDir && typeof cvContent.summary === 'string') {
+  cvContent._summary_pre_guard = cvContent.summary;
+}
+
 if (typeof cvContent.summary === 'string') {
   // Sibling strip: a years-of-experience claim the CV never makes. The number
   // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the
   // token is allowed; it is the tenure that is invented.
   cvContent.summary = stripUnsupportedTenure(cvContent.summary, cvText);
+
+  // The summary's siblings to verifyBulletFigures / verifyProjectFigures /
+  // verifyBulletProducts. It had none of them: one shipped summary claimed a
+  // platform "serving 150+ users" (the CV says 170) and called the candidate a
+  // "Russell Group graduate" (the university is post-1992), while metric_fab
+  // reported 0 because it only reads experience bullets.
+  //
+  // The product strip runs here as well as inside generateSummary, because the
+  // stage is in a try/catch: when it fails, the JSON summary ships, and that path
+  // was never product-guarded despite T2's comment claiming the summary was.
+  //
+  // Order matters — all three can shorten the summary, and the 50-word floor pad
+  // below has to see the shortened text so it can top it back up.
+  cvContent.summary = verifySummaryFigures(cvContent.summary, cvText);
+  cvContent.summary = stripFabricatedCredentials(cvContent.summary, cvText);
+  cvContent.summary = stripFabricatedProducts(cvContent.summary, cvText);
+  // The general case of the company-name strip below: any name the posting
+  // supplies and cv.md does not. The `--company` comparison alone missed a
+  // summary claiming work "for Joybuy Systems" on a JD.com posting.
+  cvContent.summary = stripJdProperNouns(cvContent.summary, cvText, jdText);
 
   // Deterministic fabrication strip — if the target company name survived the
   // retries, drop the sentence claiming it (runs before the length-floor pad).
@@ -675,6 +817,39 @@ if (Array.isArray(cvContent.projects)) {
   // number guard at all, so both a wholly invented "970%+ revenue growth" and a
   // real-but-borrowed "sub-500ms load times" shipped on the same CV.
   cvContent.projects = verifyProjectFigures(cvContent.projects, cvText);
+  // Tier 3 — the length floor is asserted LAST, after the two guards above.
+  // Padding before them was the obvious placement and the wrong one:
+  // stripFabricatedProducts does clause surgery, so a description that met the
+  // floor could lose a clause and ship under it (every short description in the
+  // floors2/floors3 A/B — 27 words against a floor of 35). Nothing re-checked.
+  // Safe to run last because padded text is verbatim cv.md: it names no product
+  // the CV lacks and quotes no figure the project's own entry lacks, so it
+  // passes both guards by construction rather than by inspection.
+  cvContent.projects = padProjectDescriptions(cvContent.projects, cvText);
+
+  // Project bullets, for whichever writer produced the entries.
+  //
+  // The rendering change is orthogonal to who wrote the prose: projects hold 24
+  // of this CV's 33 atoms, and collapsing them into one paragraph loses the same
+  // evidence whether that paragraph came from the 7B or from cv.md. Attaching
+  // them here rather than in each writer keeps the arms comparable — otherwise a
+  // model arm would score badly on differentiator_coverage for a reason that has
+  // nothing to do with the model.
+  //
+  // Verbatim from the selected CV, which cv-select already ranked against this
+  // posting. The writer's prose stays as the description; these are the evidence
+  // under it.
+  const wantProjBullets = parseInt(process.env.SNIPE_PROJECT_BULLETS ?? '4', 10);
+  if (wantProjBullets) {
+    const sel = parseCvSections(cvForPrompt).find(s => s.name === 'Projects');
+    const byName = new Map((sel ? parseEntries(sel.lines).entries : [])
+      .map(e => [e.head[0].replace(/^###\s+/, '').trim().toLowerCase(), e.bullets]));
+    for (const p of cvContent.projects) {
+      // Only where the writer left none — `verbatim` has already filled them.
+      const src = byName.get(String(p.name || '').toLowerCase());
+      if (src?.length && !p.bullets?.length) p.bullets = src.slice(0, wantProjBullets);
+    }
+  }
 }
 
 // Build output folder
@@ -720,7 +895,7 @@ const format    = detectFormat(reportText, jdText);
 const fillScript = resolve(__dirname, 'fill-cv-template.mjs');
 const generatePdf= resolve(PROJECT, 'generate-pdf.mjs');
 
-function runFill(maxSkills, maxBullets) {
+function runFill(maxSkills, maxBullets, maxProjectBullets) {
   const a = [
     fillScript,
     '--content',    contentFile,
@@ -729,6 +904,7 @@ function runFill(maxSkills, maxBullets) {
     '--max-skills', String(maxSkills),
   ];
   if (maxBullets) a.push('--max-bullets', String(maxBullets));
+  if (maxProjectBullets) a.push('--max-project-bullets', String(maxProjectBullets));
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
 }
 
@@ -751,25 +927,35 @@ const jdTokens = new Set(tokenize(jdText));
 // per role, hitting the least-relevant backfilled roles too), skill breadth, and
 // the weakest (last-ranked) projects. Each step renders and re-checks the page
 // count; we stop at the first step that fits ≤ 2 pages.
+// `projBullets` trims the project lists, which the ladder could not reach at
+// all: it could drop a whole project but not shorten one, so a CV that overran
+// by two lines lost an entire project's worth of evidence. Project bullets carry
+// most of this CV's differentiators, so they are trimmed one at a time and only
+// after the cheaper cuts, and dropping a project stays the last resort it was.
+// Step 0's `projBullets` is 4 rather than 2 because cv-select already spent a
+// fixed total budget across the kept projects — the page still carries eight
+// project bullets, just not two apiece, and a cap of 2 here would flatten the
+// allocation back out at render time. Every tighter step is unchanged.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4 }, // full
-  { skills: 6, bullets: 3, projects: 4 },
-  { skills: 5, bullets: 3, projects: 3 },
-  { skills: 5, bullets: 3, projects: 3 },
-  { skills: 4, bullets: 3, projects: 2 }, // tightest
+  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // full
+  { skills: 6, bullets: 4, projects: 4, projBullets: 1 },
+  { skills: 6, bullets: 3, projects: 4, projBullets: 1 },
+  { skills: 5, bullets: 3, projects: 4, projBullets: 1 },
+  { skills: 5, bullets: 3, projects: 3, projBullets: 1 },
+  { skills: 4, bullets: 3, projects: 2, projBullets: 1 }, // tightest
 ];
 
 let pdfPath = null;
 let pdfError = null;
 
 for (let step = 0; step < LADDER.length; step++) {
-  const { skills, bullets, projects } = LADDER[step];
+  const { skills, bullets, projects, projBullets } = LADDER[step];
 
   cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
   writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
 
   try {
-    runFill(skills, bullets);
+    runFill(skills, bullets, projBullets);
   } catch (err) {
     if (step === 0) fail(`fill-cv-template.mjs failed: ${err.message}`);
     continue; // a later, tighter step may still render

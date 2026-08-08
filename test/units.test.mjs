@@ -355,7 +355,79 @@ try {
   eq(out[0].bullets.length, 2, 'a backfilled role carries the CV bullets');
   eq(out[0].bullets[0].includes('800+ undergraduates'), true,
     'backfilled bullets are the real CV text, not invented');
-  deepEq(out[1].bullets, acme.bullets, 'a claimed role keeps the model rewrite');
+  eq(out[1].bullets[0], acme.bullets[0], 'a claimed role keeps the model rewrite first');
+
+  // A claimed role the model half-filled is topped back up: the schema had no
+  // floor on bullets at all, so one bullet under a four-bullet role shipped as a
+  // one-line job. The rewrite leads; the CV bullets it did NOT come from follow.
+  eq(out[1].bullets.length, 2, 'a claimed role is topped up to the CV bullet count');
+  eq(out[1].bullets[1].includes('Automated billing'), true,
+    'the topped-up bullet is the CV source the rewrite did not claim');
+  eq(out[1].bullets.some(b => /two-developer team/.test(b) && /MVP in 4 weeks/.test(b)
+                              && b !== acme.bullets[0]), false,
+    'the CV bullet the rewrite came from is not re-appended alongside it');
+
+  // A role the model filled completely is left exactly as it rewrote it.
+  const full = reconcileExperience([{ company: 'Acme SaaS', bullets: [
+    'Led a two-dev team, subscription platform MVP in 4 weeks',
+    'Automated billing and onboarding with Stripe and OAuth 2.0',
+  ] }], cv);
+  eq(full[1].bullets.length, 2, 'a fully-filled role gains nothing from the top-up');
+
+  // Project descriptions: the prompt asks for 35-55 words and got a median of 17
+  // across twelve runs, 0 of 36 in band. Padding comes from the project's own CV
+  // bullets, stops at the floor, and never repeats what the model already said.
+  const { padProjectDescriptions } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  const pcv = [
+    '## Projects', '',
+    '### Re:Link — Remote Access',
+    '**Honours** | Rust | 2025', '',
+    '- Designed a blind rendezvous protocol with client-side AES-256-GCM encryption; the server holds only ephemeral state',
+    '- Eliminated an 8 MB-per-frame copy with a lock-free pre-allocated frame ring using atomic CAS slot ownership',
+    '- Shipped cross-platform builds with 4 GitHub Actions CI pipelines and dual-stack IPv4/IPv6 ICE handling',
+  ].join('\n');
+  const wc = s => s.trim().split(/\s+/).length;
+
+  const padded = padProjectDescriptions(
+    [{ name: 'Re:Link — Remote Access', description: 'Built a peer-to-peer remote access system with AES-256-GCM encryption.' }],
+    pcv);
+  eq(wc(padded[0].description) >= 35, true, 'a short description is padded to the floor');
+  eq(wc(padded[0].description) <= 55, true, 'and stops at the ceiling rather than overshooting');
+  eq(/frame ring|CI pipelines/.test(padded[0].description), true,
+    'the padding is real CV text from that project');
+  eq((padded[0].description.match(/AES-256-GCM/g) || []).length, 1,
+    'the clause the model already rewrote is not repeated');
+
+  // A semicolon inside a parenthetical is not a clause boundary — splitting there
+  // shipped a description ending mid-aside with the bracket never closed.
+  const bracketCv = [
+    '## Projects', '', '### Testbed', '**Personal** | Rust | 2025', '',
+    '- Built a Rust microservice testbed (API gateway, hashing; manifest-signing services) comparing NIST post-quantum signatures against classical baselines',
+    '- Executed 63,000+ benchmark runs across 7 signature schemes and 5 payload sizes with bootstrap confidence intervals',
+    '- Hardened the pipeline against STRIDE-class threats with keyed token-bucket rate limiting and structured audit logging',
+  ].join('\n');
+  const bd = padProjectDescriptions([{ name: 'Testbed', description: 'Benchmarked signatures for cloud migration.' }], bracketCv)[0].description;
+  const opens = (bd.match(/\(/g) || []).length, closes = (bd.match(/\)/g) || []).length;
+  eq(opens, closes, 'padding never leaves an unbalanced bracket');
+
+  // A fragment for an opening sentence is discarded, not padded around.
+  const frag = padProjectDescriptions([{ name: 'Testbed', description: 'Built a high-performance.' }], bracketCv)[0].description;
+  eq(/^Built a high-performance\./.test(frag), false, 'a fragment opening is dropped, not kept at the head');
+  eq(wc(frag) >= 35, true, 'and the description is rebuilt from the CV to the floor');
+  eq(/^[A-Z]/.test(frag) && !frag.startsWith('.'), true, 'a rebuilt description does not start with a stray period');
+
+  const long = 'x '.repeat(40).trim();
+  deepEq(padProjectDescriptions([{ name: 'Re:Link — Remote Access', description: long }], pcv),
+    [{ name: 'Re:Link — Remote Access', description: long }],
+    'a description already over the floor is untouched');
+  deepEq(padProjectDescriptions([{ name: 'Nothing On The CV', description: 'short' }], pcv),
+    [{ name: 'Nothing On The CV', description: 'short' }],
+    'a project with no CV entry is left alone rather than padded from another');
+  eq(Array.isArray(padProjectDescriptions(/** @type {any} */ (null), pcv)), false,
+    'a non-array is returned untouched');
+  deepEq(padProjectDescriptions([{ name: 'Re:Link', description: 'short' }], 'no projects section'),
+    [{ name: 'Re:Link', description: 'short' }],
+    'a CV with no Projects section pads nothing');
 
   // Regression (report 146): the model named the right employer but pasted the
   // OTHER role's bullets under it. A name hit scored 1+overlap, which cleared
@@ -368,7 +440,7 @@ try {
     'a bullet belonging to another role is rejected despite the right company name');
   eq(fixed.some(e => e.bullets.some(b => /subscription platform/.test(b) && e.company === 'Northgate College')), false,
     "the other role's bullet never appears under the wrong employer");
-  deepEq(fixed[1].bullets, acme.bullets, 'the correctly-labelled role still keeps its rewrite');
+  eq(fixed[1].bullets[0], acme.bullets[0], 'the correctly-labelled role still keeps its rewrite');
 
   // Degenerate inputs must not throw or silently empty the section.
   deepEq(reconcileExperience([], cv).map(e => e.company),
@@ -379,6 +451,81 @@ try {
   deepEq(reconcileExperience([acme], 'no experience section here'), [acme],
     'a CV with no Experience section leaves the model output alone');
 
+  // ── Summary fabrication guards ────────────────────────────────────────────
+  // One shipped summary carried three false claims at once and every metric read
+  // 0, because metric_fab only inspects experience bullets. The summary was the
+  // one surface with no figure, tenure-range or credential guard at all.
+  {
+    const { verifySummaryFigures } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+    const { stripFabricatedCredentials, credentialFab } =
+      await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const scv = ['# Me', '', '## Experience', '', '### Dev', '**Acme** | 2024', '',
+      '- Grew paying subscribers from 80 at launch to 170 across 4 locations',
+      '- Tested at 3M+ simulated events', '',
+      '## Education', '', '**Northgate College**',
+      '**BEng (Hons) Software Engineering — First Class Honours** | 2022 – 2026'].join('\n');
+    const scvPlus = scv + '\n- Taught 800+ undergraduate students across two languages';
+
+    // A figure the CV does not state — 170 members reported as "150+ users".
+    const figs = verifySummaryFigures(
+      'Engineer building secure systems. Delivered a platform serving 150+ users daily.', scv);
+    eq(/150\+/.test(figs), false, 'a summary figure the CV never states is stripped');
+    eq(/secure systems/.test(figs), true, 'and the clause that was fine survives');
+    eq(verifySummaryFigures('Tested at 3M+ simulated events.', scv).includes('3M+'), true,
+      'a figure the CV does state is kept');
+    // The real 170 with a "+" appended overstates it — the pattern the bullet
+    // guard already documents as a measured fabrication.
+    // The "+" is the lie, not the claim — deflate to the CV's figure and keep the
+    // sentence rather than deleting real evidence to remove one character.
+    eq(verifySummaryFigures('Grew a GDPR-compliant platform to 170+ paying users.', scv),
+      'Grew a GDPR-compliant platform to 170 paying users.',
+      'an inflating "+" is corrected to the CV figure, keeping the clause');
+    eq(/150\+/.test(verifySummaryFigures('Delivered a platform serving 150+ users.', scv)), false,
+      'a figure with no CV basis at all is still stripped, not deflated');
+    // Understating a "N+" figure is not a fabrication — "over 800 students" is
+    // exactly what "800+" means, and deleting that sentence cost a true claim.
+    eq(verifySummaryFigures('Taught over 800 students across two languages.', scvPlus),
+      'Taught over 800 students across two languages.',
+      'dropping the "+" from a CV figure understates it and is left alone');
+    // A digit inside an identifier is a name, not a claim.
+    eq(verifySummaryFigures('Targeting L40 Engineer roles at scale.', scv),
+      'Targeting L40 Engineer roles at scale.',
+      'a job level like L40 is not mistaken for an invented figure');
+
+    // A credential the CV never claims. Napier is post-1992; the model inferred
+    // "Russell Group" from the city in the school's name.
+    deepEq(credentialFab('Russell Group graduate with First Class Honours.', scv), ['russell group'],
+      'an ungrounded credential is detected and a grounded one is not');
+    eq(credentialFab('First Class Honours graduate.', scv).length, 0,
+      'a credential the CV does state is never flagged');
+    eq(/Russell Group/i.test(stripFabricatedCredentials('Built systems. Russell Group graduate, strong fundamentals.', scv)),
+      false, 'the ungrounded credential clause is dropped');
+
+    // Clause surgery must not leave a sentence starting lowercase.
+    const rebuilt = stripFabricatedCredentials('Russell Group graduate, strong fundamentals.', scv);
+    eq(rebuilt === '' || /^[A-Z]/.test(rebuilt), true,
+      'a rebuilt sentence is re-capitalised after its first clause is dropped');
+
+    // A name lifted from the posting. productFab is an allowlist of technologies,
+    // so a company or brand can never be on it: a JD.com posting shipped a summary
+    // claiming the platform was built "for Joybuy Systems" — JD.com's own brand —
+    // and every truth guard passed it.
+    const { stripJdProperNouns } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const jd = 'We are Joybuy Systems, part of JD.com. You will build Kubernetes tooling.';
+    eq(/Joybuy/.test(stripJdProperNouns(
+      'Led a team building a membership platform for Joybuy Systems. Grew subscribers from 80 to 170.', scv, jd)),
+      false, 'a company name the posting supplies and the CV lacks is dropped');
+    // ...but a name the CV does state is the candidate's, however often the
+    // posting also mentions it.
+    eq(stripJdProperNouns('Studied at Northgate College and shipped systems.', scv, 'Northgate College alumni welcome.'),
+      'Studied at Northgate College and shipped systems.',
+      'a name grounded in the CV survives even when the posting names it too');
+    // Stripping to nothing is a worse failure than the leak; the caller pads a
+    // short summary, so an empty one would be padded into shapelessness.
+    eq(stripJdProperNouns('Built tooling for Joybuy Systems.', scv, jd),
+      'Built tooling for Joybuy Systems.', 'the guard never empties the summary');
+  }
+
   // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"
   // also occurs as "2+ hours" in an unrelated bullet, so the token is allowed —
   // the claim is what is invented, not the digit.
@@ -387,6 +534,14 @@ try {
   eq(stripUnsupportedTenure('Engineer with 2+ years of hands-on experience in Rust.', tenureCv),
     'Engineer with experience in Rust.',
     'an unsupported tenure claim is stripped without mangling the sentence');
+  // A *range* — the shape the original pattern missed entirely, which is how
+  // "1-3 years of real production experience" (lifted from the posting) shipped.
+  eq(stripUnsupportedTenure('Engineer with 1-3 years of real production experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'a tenure range is stripped, not just a single value');
+  eq(stripUnsupportedTenure('Engineer with 2 to 4 years of experience in Rust.', tenureCv),
+    'Engineer with experience in Rust.',
+    'a written "N to M years" range is stripped too');
   eq(stripUnsupportedTenure('Engineer with 5 years in Rust.', tenureCv),
     'Engineer with experience in Rust.',
     'the bare "with N years" form is stripped too');

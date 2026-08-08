@@ -1,0 +1,412 @@
+{
+  "offer": {
+    "id": "167",
+    "company": "unknown",
+    "role": "Software Engineer (Rust)",
+    "score": 4.8,
+    "report": "reports/135-unknown-2026-07-31.md"
+  },
+  "atoms": [
+    {
+      "id": 1,
+      "section": "Experience",
+      "entity": "Teaching Assistant",
+      "text": "Delivered technical instruction to 800+ undergraduate students across Java and C++ development, database systems, advanced web technologies (Python), and advanced Oracle SQL — 3–4 lab sessions a week for cohorts averaging 80 — adapting explanations and one-to-one consultations to widely varying technical backgrounds"
+    },
+    {
+      "id": 2,
+      "section": "Experience",
+      "entity": "Teaching Assistant",
+      "text": "Authored troubleshooting documentation and standardised environment setup guides, cutting configuration time from 2+ hours to 30 minutes per student and reducing staff escalations by 90%"
+    },
+    {
+      "id": 3,
+      "section": "Experience",
+      "entity": "Teaching Assistant",
+      "text": "Kept labs unblocked by debugging the teaching materials themselves: found defects in the provided lab sheets — phpMyAdmin database configuration, broken JavaScript, mis-wired HTML/CSS references, a Python version mismatch in Advanced Web Technologies — and reported each to the module lecturer with the exact correction required — around 8 across the modules I supported, most in Web Technologies; all were blocking, so fast turnaround kept cohorts on schedule"
+    },
+    {
+      "id": 4,
+      "section": "Experience",
+      "entity": "Teaching Assistant",
+      "text": "Coordinated session cover and complex-issue triage with the TA team, proposed TAs to module leaders for modules matching their strengths, and brought mid-term joiners up to speed on session format, cohort progress, and known constraints"
+    },
+    {
+      "id": 5,
+      "section": "Experience",
+      "entity": "PM / Software Engineer",
+      "text": "Led a two-developer team building a membership platform for a business networking club: delivered the MVP in 4 weeks, established bi-weekly release cycles, and grew paying subscribers from 80 at launch to 170 and locations from 2 to 4 across UK"
+    },
+    {
+      "id": 6,
+      "section": "Experience",
+      "entity": "PM / Software Engineer",
+      "text": "Automated manual billing and onboarding with Stripe subscription management and Google OAuth 2.0 (Next.js, Node.js/Express, MongoDB), cutting user onboarding time by over 80% while keeping the data pipeline GDPR-compliant"
+    },
+    {
+      "id": 7,
+      "section": "Experience",
+      "entity": "PM / Software Engineer",
+      "text": "Built the admin console — drag-and-drop newsletter builder (5–6 sends/month), audience segmentation, RBAC user management — backed by Redis caching, Prometheus monitoring, Jenkins CI/CD, and 85%+ test coverage"
+    },
+    {
+      "id": 8,
+      "section": "Experience",
+      "entity": "PM / Software Engineer",
+      "text": "Owned production security and reliability: TLS, input sanitisation, XSS/injection prevention, and rate limiting; diagnosed and resolved a critical SSL/DNS failure affecting mobile-network traffic, maintaining 99.9% average uptime across the engagement"
+    },
+    {
+      "id": 9,
+      "section": "Experience",
+      "entity": "PM / Software Engineer",
+      "text": "Migrated payment handling from manually-tracked scheduled invoicing to Stripe as the sole payment processor, removing card and payment data from internal databases entirely and reducing PCI DSS compliance scope to Stripe's hosted flow"
+    },
+    {
+      "id": 10,
+      "section": "Projects",
+      "entity": "Post-Quantum and Hybrid Signature Benchmarking in Cloud File-Signing Workflows",
+      "text": "Built a Rust microservice testbed (API gateway, hashing, and manifest-signing services; PostgreSQL + MinIO object store) comparing NIST post-quantum signatures (ML-DSA, SLH-DSA, FN-DSA) against classical baselines (RSA-PSS, ECDSA, EdDSA) for cloud migration readiness"
+    },
+    {
+      "id": 11,
+      "section": "Projects",
+      "entity": "Post-Quantum and Hybrid Signature Benchmarking in Cloud File-Signing Workflows",
+      "text": "Executed 63,000+ benchmark runs across 7 signature schemes, 3 hash algorithms, and 5 payload sizes, with seeded randomisation, warm-up runs, and bootstrap confidence intervals"
+    },
+    {
+      "id": 12,
+      "section": "Projects",
+      "entity": "Post-Quantum and Hybrid Signature Benchmarking in Cloud File-Signing Workflows",
+      "text": "Showed FN-DSA matches classical ECDSA on signing (~0.4 ms) with the fastest verification in the suite (0.25 ms), while SLH-DSA costs ~1,600 ms per signature; quantified storage amplification — ML-DSA's 3.3 KB signatures add ~200 TB over five years for a 1-billion-record/month log pipeline — as the dominant migration cost, not compute"
+    },
+    {
+      "id": 13,
+      "section": "Projects",
+      "entity": "Post-Quantum and Hybrid Signature Benchmarking in Cloud File-Signing Workflows",
+      "text": "Hardened the pipeline against STRIDE-class threats — API-key authentication with RBAC, keyed token-bucket rate limiting, path-traversal policy, constant-time credential comparison, and structured audit logging with sensitive-field masking — with CBOR canonical encoding guaranteeing deterministic, signature-stable payloads"
+    },
+    {
+      "id": 14,
+      "section": "Projects",
+      "entity": "Post-Quantum and Hybrid Signature Benchmarking in Cloud File-Signing Workflows",
+      "text": "Benchmarked under Toxiproxy-simulated WAN conditions (latency, jitter, and bandwidth toxics) and evaluated hybrid classical-plus-PQC dual-signing as a transitional migration strategy"
+    },
+    {
+      "id": 15,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Designed a blind rendezvous protocol with full client-side end-to-end encryption (AES-256-GCM); the signalling server handles only ephemeral, encrypted state, enforcing a \"nothing stored, nothing to steal\" model"
+    },
+    {
+      "id": 16,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Implemented three-key derivation (k_sig, k_mac, sas) via HMAC-SHA256, delivering the root secret through the URL fragment so it never reaches the server; short-authentication-string verification mitigates man-in-the-middle attacks on the signalling channel"
+    },
+    {
+      "id": 17,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Built the Axum signalling server with a broadcast-channel push hub and Redis ephemeral state (allkeys-lru eviction); peers exchange encrypted WebRTC signalling through server-hosted mailboxes, then connect directly via STUN/TURN NAT traversal"
+    },
+    {
+      "id": 18,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Eliminated an 8 MB-per-frame copy on the video path — a lock-free, pre-allocated frame ring with atomic CAS slot ownership, handing decoded frames to the Flutter UI as zero-copy pointer views without ever blocking the decoder"
+    },
+    {
+      "id": 19,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Implemented an actor-based async file-transfer engine over WebRTC data channels — 64 KB chunking, SHA-256 integrity verification, and high/low-water-mark backpressure for transfers up to 4 GB"
+    },
+    {
+      "id": 20,
+      "section": "Projects",
+      "entity": "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System",
+      "text": "Shipped cross-platform — Flatpak (Linux), Windows installer, Docker Compose server — with 4 GitHub Actions CI pipelines and dual-stack IPv4/IPv6 ICE handling. Viva completed."
+    },
+    {
+      "id": 21,
+      "section": "Projects",
+      "entity": "Zero Trust Security Analytics Dashboard",
+      "text": "Won MongoDB as client through a competitive pitch; served as Project Manager and Lead Engineer for a 6-person cross-functional team (3 software, 2 security engineers), achieving Distinction across implementation, presentation, and evaluation"
+    },
+    {
+      "id": 22,
+      "section": "Projects",
+      "entity": "Zero Trust Security Analytics Dashboard",
+      "text": "Architected an enterprise-grade SIEM dashboard implementing Zero Trust authentication with OAuth 2.0 PKCE and DPoP-bound tokens, tested at 3M+ simulated quarterly authentication events (~11K/day)"
+    },
+    {
+      "id": 23,
+      "section": "Projects",
+      "entity": "Zero Trust Security Analytics Dashboard",
+      "text": "Built a high-performance ingestion and visualisation pipeline achieving sub-500ms dashboard load times through cache warming, Django-Q background workers, and incremental rollups"
+    },
+    {
+      "id": 24,
+      "section": "Projects",
+      "entity": "Zero Trust Security Analytics Dashboard",
+      "text": "Tracked 25+ security metrics including authentication success rates, MFA adoption, device trust scores, geographic distribution, and multi-severity alerting"
+    },
+    {
+      "id": 25,
+      "section": "Projects",
+      "entity": "Snipe — Fully Local LLM Job-Application Pipeline",
+      "text": "Re-architected an open-source AI job-search agent into a fully local three-phase evaluation pipeline (pre-score classifier → staged evaluation → CV tailoring) running entirely on a 6 GB consumer GPU with zero cloud LLM calls"
+    },
+    {
+      "id": 26,
+      "section": "Projects",
+      "entity": "Snipe — Fully Local LLM Job-Application Pipeline",
+      "text": "Cut fabricated job requirements ~9x (8.2% → 0.9% of extracted claims) across a 115-offer benchmark and raised rank agreement +0.317 Spearman (bootstrap 95% CI [0.153, 0.498], none of 4,000 resamples favouring the baseline), by replacing free-form generation with a schema-constrained evaluator and an evaluation harness that gates every model and prompt change before it ships"
+    },
+    {
+      "id": 27,
+      "section": "Projects",
+      "entity": "Snipe — Fully Local LLM Job-Application Pipeline",
+      "text": "Caught two measurement errors before they drove decisions: the reference labels the benchmark trusted were themselves fabricating requirements, so retired the metric rather than tune against it; and a hallucination metric was over-counting 5x because hedged-but-accurate claims scored as fabrications"
+    },
+    {
+      "id": 28,
+      "section": "Projects",
+      "entity": "Snipe — Fully Local LLM Job-Application Pipeline",
+      "text": "Raised evidence-selection accuracy from 0.815 to 0.930 against a hand-labelled gold set, then proved it holds on twelve offers that played no part in choosing it (+0.115, 95% CI [0.074, 0.159], 11 wins 0 losses) — a model-graded reranker blended with embedding similarity, where the grader alone scores *below* plain similarity, so only the blend ships"
+    },
+    {
+      "id": 29,
+      "section": "Projects",
+      "entity": "Distributed Store Management System",
+      "text": "Designed an event-driven microservices system for retail operations across 5+ domain services (inventory, orders, fulfilment, client services, finance) using Spring Boot and RabbitMQ"
+    },
+    {
+      "id": 30,
+      "section": "Projects",
+      "entity": "Distributed Store Management System",
+      "text": "Applied CQRS with GraphQL Federation across service schemas — separate read/write models and denormalised read views for query performance, independent scaling of query and command paths, and per-service schema ownership behind a single federated graph"
+    },
+    {
+      "id": 31,
+      "section": "Projects",
+      "entity": "Distributed Store Management System",
+      "text": "Implemented the saga pattern for distributed transaction coordination, trading strict consistency for eventual consistency with compensating actions across asynchronous service boundaries"
+    },
+    {
+      "id": 32,
+      "section": "Projects",
+      "entity": "Distributed Store Management System",
+      "text": "Conducted a comparative broker analysis with parallel Kafka and RabbitMQ implementations, selecting Kafka for its persistent, replayable log: independent consumer offsets let inventory, finance, and fulfilment consume the same events at their own pace, while disk retention provides a built-in audit trail and event replay for failure recovery"
+    },
+    {
+      "id": 33,
+      "section": "Projects",
+      "entity": "Distributed Store Management System",
+      "text": "Built a resilience layer with Resilience4j circuit breakers (3-retry threshold, 30s timeout) and Zipkin distributed tracing for end-to-end request monitoring"
+    }
+  ],
+  "model": "opus",
+  "at": "2026-08-07T01:48:58.573Z",
+  "cost": 0.34592449999999997,
+  "role_family": "backend",
+  "seniority": "senior",
+  "key_requirements": [
+    "Rust as primary production language",
+    "Ultra-low-latency, high-performance systems",
+    "Concurrency, memory and allocation control",
+    "Scalable, reliable distributed services",
+    "Rigorous performance measurement and benchmarking",
+    "Systems-level networking and I/O",
+    "Very high engineering bar / deep technical depth"
+  ],
+  "grades": [
+    {
+      "id": 1,
+      "grade": 1,
+      "why": "Teaching C++/Java, not building systems"
+    },
+    {
+      "id": 2,
+      "grade": 0,
+      "why": "Docs for students, irrelevant here"
+    },
+    {
+      "id": 3,
+      "grade": 0,
+      "why": "Lab sheet defects, no engineering signal"
+    },
+    {
+      "id": 4,
+      "grade": 0,
+      "why": "TA staffing coordination, irrelevant"
+    },
+    {
+      "id": 5,
+      "grade": 1,
+      "why": "Team lead delivery, not systems work"
+    },
+    {
+      "id": 6,
+      "grade": 0,
+      "why": "Stripe/OAuth web CRUD, off-topic"
+    },
+    {
+      "id": 7,
+      "grade": 0,
+      "why": "Newsletter admin console, off-topic"
+    },
+    {
+      "id": 8,
+      "grade": 1,
+      "why": "Production reliability ownership, weakly relevant"
+    },
+    {
+      "id": 9,
+      "grade": 0,
+      "why": "PCI scope reduction, irrelevant"
+    },
+    {
+      "id": 10,
+      "grade": 3,
+      "why": "Rust services built end to end"
+    },
+    {
+      "id": 11,
+      "grade": 3,
+      "why": "Statistically rigorous large-scale benchmarking"
+    },
+    {
+      "id": 12,
+      "grade": 3,
+      "why": "Sub-millisecond latency and cost quantification"
+    },
+    {
+      "id": 13,
+      "grade": 2,
+      "why": "Constant-time, rate limiting, deterministic encoding"
+    },
+    {
+      "id": 14,
+      "grade": 2,
+      "why": "Measured under injected network fault conditions"
+    },
+    {
+      "id": 15,
+      "grade": 2,
+      "why": "Protocol design in Rust, security-leaning"
+    },
+    {
+      "id": 16,
+      "grade": 1,
+      "why": "Crypto key derivation, tangential to latency"
+    },
+    {
+      "id": 17,
+      "grade": 3,
+      "why": "Async Rust server, broadcast hub, NAT traversal"
+    },
+    {
+      "id": 18,
+      "grade": 3,
+      "why": "Lock-free ring, CAS, zero-copy"
+    },
+    {
+      "id": 19,
+      "grade": 3,
+      "why": "Async actor engine with backpressure"
+    },
+    {
+      "id": 20,
+      "grade": 1,
+      "why": "Packaging and CI, low signal"
+    },
+    {
+      "id": 21,
+      "grade": 0,
+      "why": "Pitch win and PM role, irrelevant"
+    },
+    {
+      "id": 22,
+      "grade": 0,
+      "why": "Auth dashboard at trivial scale"
+    },
+    {
+      "id": 23,
+      "grade": 1,
+      "why": "500ms web page load, not low latency"
+    },
+    {
+      "id": 24,
+      "grade": 0,
+      "why": "Security metric list, irrelevant"
+    },
+    {
+      "id": 25,
+      "grade": 1,
+      "why": "Resource-constrained pipeline, wrong domain"
+    },
+    {
+      "id": 26,
+      "grade": 2,
+      "why": "Harness gating every change, measurement discipline"
+    },
+    {
+      "id": 27,
+      "grade": 2,
+      "why": "Found and retired broken metrics"
+    },
+    {
+      "id": 28,
+      "grade": 1,
+      "why": "Retrieval accuracy, ML-flavoured and off-topic"
+    },
+    {
+      "id": 29,
+      "grade": 1,
+      "why": "Java microservices, generic distributed work"
+    },
+    {
+      "id": 30,
+      "grade": 1,
+      "why": "CQRS/GraphQL federation, wrong layer"
+    },
+    {
+      "id": 31,
+      "grade": 1,
+      "why": "Saga pattern, common and off-stack"
+    },
+    {
+      "id": 32,
+      "grade": 2,
+      "why": "Measured broker trade-off with reasoning"
+    },
+    {
+      "id": 33,
+      "grade": 1,
+      "why": "Circuit breakers and tracing, commodity"
+    }
+  ],
+  "differentiators": [
+    18,
+    19,
+    17,
+    12,
+    11,
+    27
+  ],
+  "noise": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    9,
+    21,
+    22,
+    24
+  ],
+  "summary_angle": "Lead with Rust as the primary language for latency-critical systems — lock-free zero-copy media paths, async Axum/actor servers with backpressure — backed by sub-millisecond benchmarking measured with statistical rigour rather than asserted."
+}
