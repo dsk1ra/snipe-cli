@@ -210,6 +210,17 @@ evidence do not fit in 21.
   document, not a regression in the code. What it is really measuring is the
   keyword cost of the format decision.
 
+  **Retired in E4, because the guard was measuring the wrong thing.**
+  `ats_coverage` counts every ≥3-char token a JD and `cv.md` share. Over these 32
+  offers that yields 202 distinct missed terms whose leaders are `complex`,
+  `location`, `fast`, `where` and `never` — 185 of the 202 are generic English and
+  17 are technologies. Its ceiling with *every* bullet on the page is 0.913 and
+  with the full CV 0.953, so 0.66 was never a keyword threshold; it was a proxy
+  for document length. Replaced by `skill_coverage` — of the skills a posting
+  names and `cv.md` claims, the fraction reaching the page — which sits at
+  **1.000** on one page. **Gate: `skill_coverage` = 1.000, and `ats_coverage`
+  reported but not targeted.**
+
 ### Bugs the experiments found
 
 1. **`ceil(len/95)` was wrong** — calibrated for the 0.6in margins, over-estimated
@@ -224,8 +235,45 @@ evidence do not fit in 21.
 4. **A benchmark survived its own source being swapped.** A branch switch 34
    minutes into an E2 arm split it silently; `runVariant` now records `commit`
    and `commit_end`, and `allMetrics` refuses to score a split run.
+5. **`parseSkillCategories` dropped every parenthesis**, so `Message Queues
+   (RabbitMQ, Kafka)` shipped as "Message Queues". Kafka, AES-256-GCM,
+   EC2/Lambda/S3/IAM, Jest, Jenkins, Ollama and MCP had been deleted at parse
+   time from every tailored PDF ever generated.
+6. **`tokenize` has a 3-character floor**, so `C#` and `CI/CD` scored 0 however
+   loudly a posting asked for them. Ranking hid it — they shipped last — and
+   filtering exposed it by dropping them outright.
+7. **A `.` survives phrase normalisation** for `Next.js`, welding the period in
+   "…experience with Kafka." onto the term, so a skill named at the end of a
+   sentence never matched.
+8. **The bench rendered a document production does not produce.**
+   `withPageMetrics` passed `--max-skills 6` after LADDER step 0 stopped capping,
+   so it measured a 6-row page against an 8-row PDF. Two more in the same string:
+   `outputText` still scored Core Competencies months after the template deleted
+   it (+0.009) and never read project bullets at all (−0.008). Those two nearly
+   cancelled, which is why neither was visible.
 
 ---
+
+## E4 — skills are selected, not dumped
+
+The block shipped 52 items, near enough the whole taxonomy reordered, of which
+12.9 shared a term with the posting. Three tiers now: named by the posting,
+related to a named item by a `cv.md` line writing them together, then a floor of
+3 in CV order. Held selection byte-identical, so this is the skills change alone.
+
+| metric | control | E4 | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `skill_coverage` | 0.932 | **1.000** | **+0.068** | [0.032, 0.106] | 9-0 | 0.004 |
+| `ats_coverage` | 0.579 | 0.594 | +0.014 | [0.008, 0.021] | 13-0 | <0.001 |
+| `differentiator_coverage` | 0.409 | 0.409 | 0.000 | [0.000, 0.000] | 0-0 | 1.000 |
+| `grounding` / `product_fab` | 1.000 / 0 | 1.000 / 0 | 0.000 | — | 0-0 | 1.000 |
+
+Skill items 52.0 → 29.8, page 979 → 958 px, one-page rate 32/32 throughout.
+Against the `--writer verbatim` A/A floor of 0.000, both moves are signal.
+
+**`skill_coverage` is perfect on 30 of 30 offers that name a skill.** The 21px it
+frees is not yet spent; raising `SNIPE_LINE_BUDGET` to claim it changes selection
+and so needs a fresh judge run rather than a re-derivation.
 
 ## 2. Experiments
 
