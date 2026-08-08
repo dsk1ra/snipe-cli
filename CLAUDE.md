@@ -61,9 +61,35 @@ act on next; `o` and the tracker still reach it:
 
 Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
 
-A P1-gated row renders as `· Company — Role  P1-gated | proceed?  link` — the
+The footer hint line names **only what the focused element does** (`hintFor()`),
+plus ` · ? keys`. The full reference is `HELP_ROWS`, shown by `?` as an overlay
+that replaces the body and is closed by the next keypress (Ctrl-C excepted — a
+help screen must not trap a quit). One place, not two: the window is routinely a
+quarter of a screen wide, and a footer that spells every key out just truncates.
+`HELP_ROWS` is ordered most-used first, since a short terminal clips the tail.
+Two navigation tests used to assert on that footer string and so only proved the
+hint line; they now anchor on each tab's own body.
+
+A P1-gated row renders as `· Company — Role  P1 2.0 | proceed?  link` — the
 same yellow action, because the `--p1-threshold` gate is a cost heuristic over a
-4B pre-screen score, not a verdict.
+4B pre-screen score, not a verdict. The number is `p1_score` straight from
+`local-state.tsv`, drawn through the same `ScoreText` colour bands as an eval
+score, because "how close was it" is the only input to the decision the row is
+asking for. Rows whose `p1_score` is `-` fall back to the bare `P1-gated` label.
+
+`proceed?` is a **question**, so it takes an answer as well as Enter — but only
+while it is the focused stop, so no new global hotkeys and `q` still quits:
+
+- **y** / **Enter** — proceed (below).
+- **n** / **Backspace** / **Delete** — dismiss. Nothing on the pipeline changes;
+  the row was already finished. The offer retires and the row renders as
+  `· Company — Role  P1 2.0  link`. The answer is written to
+  `batch/p1-declined.tsv` (`readMarkMap`/`writeMarkMap`, same id→ISO shape as
+  `applied.tsv`/`skipped.tsv`) because the row list is rebuilt from disk every
+  second and from scratch on every launch — an in-memory "no" would come back.
+  Undo is deleting the line. Deliberately **not** the `x` skip mark: `toggleMark`
+  requires an eval and drives the tracker to SKIP, and a gated offer has neither
+  an eval nor a report number to `syncTracker` against.
 
 - **proceed?** — `local-runner.sh --only-id N --p1-threshold 0`. Nothing is
   re-scored: the Phase 1 offer list skips anything already `scored` (`:918`), so

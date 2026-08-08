@@ -17,6 +17,7 @@ import { dirname, resolve } from 'node:path';
 const KEYS = {
   UP: '\x1b[A', DOWN: '\x1b[B', RIGHT: '\x1b[C', LEFT: '\x1b[D',
   ENTER: '\r', ESC: '\x1b', TAB: '\t', SHIFTTAB: '\x1b[Z',
+  BS: '\x7f', DEL: '\x1b[3~',
 };
 
 const [outFile, ...keySpec] = process.argv.slice(2);

@@ -4,21 +4,21 @@
 // (snipe --drain). Pure consumer: all pipeline state is read from disk
 // (snipe-queue.txt, local-state.tsv, scores/, evals/, output/) every second.
 //
-// Keys: ←→ or 1/2/3 switch tabs · ↑↓ walk every element top-to-bottom (tab
-//       level → list → JD → URL → Add; ↑ past the top returns to tab level;
+// Keys: the reference is HELP_ROWS, shown by ? — one place, not two. The footer
+//       carries only what the focused element does, because the window is
+//       routinely a quarter of a screen wide and a full key list just truncates.
+//       What is not obvious from that list: ↑↓ walk every element top-to-bottom
+//       (tab level → list → JD → URL → Add; ↑ past the top returns to tab level;
 //       → hops JD → ▶) · → on a selected list row walks its inline actions and
 //       Enter fires the focused one (← walks back, then switches tab): the link
 //       on a normal row, see error / retry / debug on a failed one (which ends
 //       at debug and shows no link), proceed? on a P1-gated one · see error is a
 //       file:// hyperlink to batch/errors/<id>.txt, retry re-runs all three
 //       phases, debug opens the JD that phase read so it can be edited before
-//       the retry, proceed? re-runs with the P1 gate off · Tab/
-//       Shift-Tab still cycles input ↔ ▶ ↔ list · Enter loops JD → URL → Add
-//       to queue (enqueues) · o open result folder · a mark applied > ·
-//       x mark skip - (mutually exclusive) ·
-//       Esc clear field/step out · q quit (outside input fields)
-//       Follow-ups tab: ↓ enters list · Enter mark nudged · r rejected (5s
-//       grace) · p proceeded (next stage) · u undo · o report
+//       the retry · proceed? is a question: y/Enter re-runs with the P1 gate
+//       off, n/Backspace/Delete dismisses it and leaves the row showing the
+//       pre-score that gated it · a and x are mutually exclusive · r on a
+//       follow-up has a 5 s undo grace
 // Slash commands (typed in the JD box, or just press /): /scan runs the
 //       portal scanner and queues whatever it finds.
 //
@@ -81,7 +81,7 @@ function readStateRows() {
   for (const line of txt.split('\n').slice(1)) {
     const c = line.split('\t');
     if (c.length < 10 || !/^\d+$/.test(c[0])) continue;
-    rows.set(c[0], { p1s: c[2], p2s: c[5], rnum: c[6], p3s: c[7], err: c[8] });
+    rows.set(c[0], { p1s: c[2], p1: c[3], p2s: c[5], rnum: c[6], p3s: c[7], err: c[8] });
   }
   return rows;
 }
@@ -175,6 +175,10 @@ function labelFor(id) {
 
 const APPLIED_FILE = path.join(BATCH, 'applied.tsv');
 const SKIPPED_FILE = path.join(BATCH, 'skipped.tsv'); // reviewed, decided not to apply
+// "n" on a P1-gated row's proceed?. Same id→timestamp shape as the two above, and
+// on disk for the same reason: the row list is rebuilt from local-state.tsv every
+// second and from scratch on every launch, so an in-memory no would come back.
+const DECLINED_FILE = path.join(BATCH, 'p1-declined.tsv');
 const TRACKER_FILE = process.env.SNIPE_TRACKER || path.join(HOME, 'data', 'applications.md');
 const FOLLOWUPS_FILE = path.join(HOME, 'data', 'follow-ups.md');
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -236,12 +240,14 @@ const S = {
   act: null,         // activityBuckets() — only while the Activity tab is open
   applied: new Map(),
   skipped: new Map(),
+  declined: new Map(), // ids whose P1 gate was answered "no" — see DECLINED_FILE
   followups: null,   // followup-cadence.mjs --json output (null until first load)
   fuIdx: 0,          // selection on the Follow-ups tab
   fuIn: false,       // false = tab level; ↓/Enter/Tab dives into the list
   focus: 'none', // nothing focused at launch — h/l/q work immediately; paste auto-focuses jd
   lastInput: 'jd', // where Tab re-enters the input group
   jd: '', url: '',
+  help: false,       // ? overlay — the key reference the footer no longer carries
   msg: '', msgIsError: false,
   busy: false,
   drainActive: false,
@@ -271,6 +277,7 @@ function poll() {
   };
   S.applied = readMarkMap(APPLIED_FILE);
   S.skipped = readMarkMap(SKIPPED_FILE);
+  S.declined = readMarkMap(DECLINED_FILE);
   for (const [id, row] of rows) if (failedPhase(row)) writeErrorFile(id, row);
   if (S.tab === 'activity') S.act = activityBuckets();
 }
@@ -352,8 +359,19 @@ function itemInfo(id) {
   if (row && row.p3s === 'skipped') {
     // A P1-gated row is the one finished state with an action left: the gate is a
     // cost heuristic applied to a 4B pre-screen score, not a verdict, so the row
-    // carries the override rather than making it a command-line re-run.
-    if (row.p2s === 'p1-gated') return { ...base, kind: 'done', note: 'P1-gated', gated: true };
+    // carries the override rather than making it a command-line re-run — and it
+    // shows the number that was gated, since "how close was it" is the whole
+    // input to that decision. `gated` is the offer, not the state: answering it
+    // with n retires the action and leaves the score.
+    if (row.p2s === 'p1-gated') {
+      const p1 = Number(row.p1);
+      const known = Number.isFinite(p1);
+      return {
+        ...base, kind: 'done', p1: known ? p1 : null,
+        note: known ? null : 'P1-gated', // no score on the row: name the state instead
+        gated: !S.declined.has(id),
+      };
+    }
     return { ...base, kind: 'done', note: 'below threshold' };
   }
   if (S.snap.queueIds.includes(id)) return { ...base, kind: 'waiting' };
@@ -524,6 +542,23 @@ function proceedItem(bump) {
     start: `Evaluating #${id} — P1 gate overridden…`,
     done: `Proceed on #${id}`,
   }, bump);
+}
+
+// The other answer to proceed?. Nothing on the pipeline changes — the row was
+// already finished — so this only retires the offer, leaving the row as its
+// company, role and the score that gated it. Deliberately not the `x` skip mark:
+// that one requires an eval and drives the tracker to SKIP, and a gated offer has
+// neither an eval nor a report to sync against.
+function declineItem() {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  if (!itemInfo(id).gated) { setMsg('Nothing to dismiss — this item is not offering the P1 gate', true); return; }
+  const map = readMarkMap(DECLINED_FILE);
+  map.set(id, new Date().toISOString());
+  writeMarkMap(DECLINED_FILE, map);
+  S.declined = map;
+  S.rowFocus = 'row'; // the stop it was sitting on no longer exists
+  setMsg(`P1 gate dismissed on #${id} — undo by deleting its line in batch/p1-declined.tsv`);
 }
 
 // The row's "see error" already carries a file:// hyperlink for terminals that
@@ -910,6 +945,9 @@ function makeStdinHandler(bump, quit) {
   const cycleTab = dir => setTab(TABS[(TABS.indexOf(S.tab) + dir + TABS.length) % TABS.length]);
   // typing in a text field claims all printable keys and ←→
   const typing = () => S.tab === 'stats' && (S.focus === 'jd' || S.focus === 'url');
+  // Backspace/Delete mean "no" only while the P1 gate is asking; everywhere else
+  // backspace still edits the field it is in.
+  const onProceed = () => S.tab === 'stats' && S.focus === 'list' && S.rowFocus === 'proceed';
 
   const movePeriod = dir => {
     const d = new Date(S.actDate);
@@ -955,6 +993,7 @@ function makeStdinHandler(bump, quit) {
 
   const onChar = ch => {
     if (!typing()) {
+      if (ch === '?') { S.help = true; return; } // shift+/, so it never eats a slash command
       const jump = '123'.indexOf(ch);
       if (jump >= 0) { setTab(TABS[jump]); return; }
       if (ch === 'h' || ch === 'l') { cycleTab(ch === 'l' ? 1 : -1); return; } // legacy aliases for ←→
@@ -964,6 +1003,11 @@ function makeStdinHandler(bump, quit) {
     if (S.focus === 'jd') S.jd += ch;
     else if (S.focus === 'url') S.url += ch;
     else if (ch === '/') { S.focus = 'jd'; S.lastInput = 'jd'; S.jd = '/'; } // start a slash command from anywhere on the tab
+    // proceed? is a question, so it takes an answer as well as Enter. Scoped to
+    // the focused stop: no new global hotkeys, and q still quits from here.
+    else if ((ch === 'y' || ch === 'n') && S.focus === 'list' && S.rowFocus === 'proceed') {
+      if (ch === 'y') proceedItem(bump); else declineItem();
+    }
     else if (ch === 'q') quit();
     else if (ch === 'o' && S.focus === 'list') openResult();
     else if (ch === 'a' && S.focus === 'list') toggleMark('applied');
@@ -1019,6 +1063,14 @@ function makeStdinHandler(bump, quit) {
   };
 
   const handleKeys = seg => {
+    // The help overlay is modal by the cheapest rule there is: the next keypress
+    // dismisses it and does nothing else, so nothing fires from behind it.
+    // Ctrl-C is the exception — trapping a quit inside a help screen is rude.
+    if (S.help) {
+      if (seg.includes('\x03')) { quit(); return; }
+      S.help = false;
+      return;
+    }
     let i = 0;
     while (i < seg.length) {
       const rest = seg.slice(i);
@@ -1042,6 +1094,9 @@ function makeStdinHandler(bump, quit) {
         else if (!typing()) cycleTab(-1);
         i += 3; continue;
       }
+      // Delete, before the generic CSI skip swallows it: the other half of
+      // "backspace or delete says no" on a focused proceed?.
+      if (rest.startsWith('\x1b[3~')) { if (onProceed()) declineItem(); i += 4; continue; }
       if (rest.startsWith('\x1b[5~')) { if (inStats && S.focus === 'list') moveSel(-(S.listWin || 5)); i += 4; continue; } // PgUp
       if (rest.startsWith('\x1b[6~')) { if (inStats && S.focus === 'list') moveSel(S.listWin || 5); i += 4; continue; }    // PgDn
       if (rest.startsWith('\x1b[')) { // any other CSI: skip to its final byte
@@ -1081,6 +1136,7 @@ function makeStdinHandler(bump, quit) {
       if (ch === '\x7f' || ch === '\b') {
         if (inStats && S.focus === 'jd') S.jd = S.jd.slice(0, -1);
         if (inStats && S.focus === 'url') S.url = S.url.slice(0, -1);
+        if (onProceed()) declineItem();
         i++;
         continue;
       }
@@ -1129,14 +1185,75 @@ const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', 
 const GOLD = ['#b8860b', '#d4af37', '#ffd700', '#ffe766', '#fff2a8', '#ffe766', '#ffd700', '#d4af37'];
 // 1-1.9 deep red · 2-2.9 orange · 3-3.9 yellow · 4-4.9 green · 5.0 gold (below, via ScoreText)
 const scoreColor = s => s < 2 ? '#d70000' : s < 3 ? '#ff8700' : s < 4 ? 'yellow' : 'green';
-function ScoreText({ score }) {
+function ScoreText({ score, pad = '  ' }) {
   const t = score.toFixed(1);
-  if (score < 5) return h(Text, { color: scoreColor(score) }, `  ${t}`);
+  if (score < 5) return h(Text, { color: scoreColor(score) }, `${pad}${t}`);
   S.hasGold = true; // keeps the animation timer ticking while a 5.0 is on screen
-  return h(Text, { bold: true }, '  ',
+  return h(Text, { bold: true }, pad,
     ...[...t].map((c, i) => h(Text, { key: i, color: GOLD[(S.frame + i) % GOLD.length] }, c)));
 }
 const osc8 = (text, url) => `\u001B]8;;${url}\u0007${text}\u001B]8;;\u0007`;
+
+// The footer is one line and the window is routinely a quarter of a screen, so
+// it names what the *current* focus does and nothing else — the full list lives
+// behind ?. A hint that has to be truncated to fit is not a hint.
+const ROW_HINT = {
+  proceed: 'y evaluate anyway · n dismiss',
+  link: 'Enter opens the posting',
+  error: 'Enter opens the error',
+  retry: 'Enter re-runs all 3 phases',
+  debug: 'Enter opens the phase input',
+};
+function hintFor() {
+  if (S.tab === 'activity') return S.gridSel ? '←→↑↓ cell · ‹› period' : '↓ grid · y/m/d view';
+  if (S.tab === 'followups') return S.fuIn ? 'Enter nudged · r p u · o report' : '↓ list · ←→ tabs';
+  switch (S.focus) {
+    case 'jd': case 'url': return 'Enter next · Esc clear';
+    case 'add': return 'Enter queues it';
+    case 'play': return 'Enter runs the queue';
+    case 'list': return ROW_HINT[S.rowFocus] || '→ actions · o result · a/x mark';
+    default: return '↓ queue · ←→ tabs';
+  }
+}
+
+// Ordered most-used first: a short terminal clips the tail, and losing the
+// Activity keys costs less than losing the queue's.
+const HELP_ROWS = [
+  ['Anywhere', ''],
+  ['←→ 1 2 3', 'switch tabs'],
+  ['↑↓', 'move · ↓ dives in, ↑ steps out'],
+  ['Tab', 'input ⇄ ▶ ⇄ list'],
+  ['Esc', 'clear field / step out'],
+  ['q', 'quit'],
+  ['Queue', ''],
+  ['Enter', 'jd → url → add → queue'],
+  ['/', 'slash command (/scan)'],
+  ['→ ←', "walk a row's actions"],
+  ['Enter', 'fire the focused action'],
+  ['o', 'open the result folder'],
+  ['a  x', 'mark applied > · skip -'],
+  ['P1-gated row', ''],
+  ['y  Enter', 'evaluate it anyway'],
+  ['n  ⌫  Del', 'dismiss the gate'],
+  ['Follow-ups', ''],
+  ['Enter  r  p', 'nudged · rejected · proceeded'],
+  ['u  o', 'undo · open report'],
+  ['Activity', ''],
+  ['y m d', 'year / month / day'],
+  ['‹ ›  j k', 'step period · scans ⇄ apps'],
+];
+const HELP_COL = Math.max(...HELP_ROWS.map(([k]) => k.length)) + 2;
+
+function HelpPanel() {
+  return h(Box, { borderStyle: 'round', flexDirection: 'column', paddingX: 1, flexGrow: 1, overflow: 'hidden' },
+    h(Box, { justifyContent: 'space-between' },
+      h(Text, { bold: true, underline: true }, 'Keys'),
+      h(Text, { dimColor: true }, 'any key closes')),
+    ...HELP_ROWS.map(([k, desc], i) => h(Box, { key: i, height: 1, overflow: 'hidden' },
+      desc
+        ? h(Text, null, h(Text, { color: 'yellow' }, k.padEnd(HELP_COL)), h(Text, { dimColor: true }, desc))
+        : h(Text, { bold: true }, k))));
+}
 
 function StatRow({ label, value, indent, color }) {
   return h(Box, { justifyContent: 'space-between' },
@@ -1216,7 +1333,14 @@ function QueueRow({ id, selected, width }) {
   // "see error" is already a link, so a second one competes with it. The URL is
   // still one keystroke away — ← back to the row, then o, or the tracker.
   const url = info.kind === 'failed' ? null : S.snap.urls.get(id); // result folder stays on the o hotkey
-  const scoreLen = info.score != null ? 5 : 0; // '  X.X'
+  // A gated row has no eval score, so the slot carries the Phase 1 pre-score
+  // instead — labelled, and through ScoreText so it reads in the same colour
+  // bands as every other number in the list.
+  const scoreEl = info.score != null ? h(ScoreText, { score: info.score })
+    : info.p1 != null ? h(React.Fragment, null,
+        h(Text, { dimColor: true }, '  P1'), h(ScoreText, { score: info.p1, pad: ' ' }))
+      : null;
+  const scoreLen = info.score != null ? 5 : info.p1 != null ? 8 : 0; // '  X.X' / '  P1 X.X'
   // A hyperlinked entry carries its visible text third — its escape bytes occupy
   // no columns, so measuring t.length would blow the reserved width apart.
   const suffixLen = scoreLen + suffix.reduce((a, [t, , vis]) => a + (vis ?? t).length, 0)
@@ -1227,7 +1351,7 @@ function QueueRow({ id, selected, width }) {
     icon,
     mark,
     h(Text, { inverse: sel }, ` ${label}`),
-    info.score != null ? h(ScoreText, { score: info.score }) : null,
+    scoreEl,
     ...suffix.map(([t, p], i) => h(Text, { key: i, ...p }, t)),
     // spaces outside the underlined span — underline starts at "link"
     info.kind === 'failed' ? null
@@ -1595,19 +1719,11 @@ function App() {
           h(ActivityTab, { width: Math.max(40, size.cols - 8) }))
       : h(Box, { borderStyle: 'round', flexDirection: 'row', paddingX: 1, flexGrow: 1 },
           h(FollowupsTab));
-  const hints = S.tab === 'stats'
-    ? '←→ tabs/row actions · ↑↓ navigate · Enter next/queue/run/retry/debug/link · o result · a applied · x skip · q quit'
-    : S.tab === 'followups'
-      ? '←→ tabs · ↑↓ navigate · Enter nudged · r rejected · p proceeded · u undo · o report · q quit'
-      : S.gridSel
-        ? (S.actView === 'day' ? '←→ hour · ↑/Esc leave · ‹› period · j/k type · q quit'
-          : '←→ week · ↑↓ day · ↑top/Esc leave · ‹› period · j/k type · q quit')
-        : '←→ tabs · ↓ or Tab grid · y/m/d view · ‹› period · j/k type · q quit';
   return h(Box, { flexDirection: 'column', width: size.cols, height: size.rows },
     h(TabBar),
-    body,
+    S.help ? h(HelpPanel) : body,
     h(Box, { paddingX: 2, justifyContent: 'space-between' },
-      h(Text, { dimColor: true, wrap: 'truncate' }, hints),
+      h(Text, { dimColor: true, wrap: 'truncate' }, `${hintFor()} · ? keys`),
       h(Text, { color: S.msgIsError ? 'red' : 'yellow', wrap: 'truncate' }, S.msg)));
 }
 
