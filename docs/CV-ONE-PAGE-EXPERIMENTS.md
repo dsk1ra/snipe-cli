@@ -110,9 +110,45 @@ Per CLAUDE.md, take the **wider** floor when measurements disagree:
 | `summary_cv_fit` | ±0.004 |
 | `summary_jd_fit` | ±0.016 |
 
-`differentiator_coverage` **has no published A/A floor.** Establish one before the
-first claim — two runs of the same label, 32 offers. Every delta below is
-provisional until that number exists.
+`differentiator_coverage` had no published A/A floor. **It does now: 0.000.**
+
+Ran 2026-08-08. Two arms, `aa1` and `aa2`, byte-identical config — `sample32.tsv`,
+`--writer verbatim`, `--temperature 0`, `SNIPE_PROJECT_BULLETS=4`, and **no
+`SNIPE_SELECT_CACHE`**, so selection ran fresh in both. 39.2 and 37.5 minutes.
+
+| metric | aa1 | aa2 | delta | CI95 | w-l |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.643 | 0.643 | 0.000 | [0.000, 0.000] | 0-0 |
+| every other metric | — | — | 0.000 | [0.000, 0.000] | 0-0 |
+
+A zero-width CI is rule 6's signature, so it was checked rather than believed:
+
+- **All 32 `cv-content.json` are byte-identical** between the arms.
+- Neither `meta.json` records a select cache; only `SNIPE_PROJECT_BULLETS=4`.
+- `judgeGrades` has no disk cache — it calls the 30B every time.
+- The timing logs show **191 real model calls** across the two arms, 3 per offer
+  (judge, summary, main JSON).
+
+So the arms were independent and Phase 3 is genuinely deterministic. **Any nonzero
+delta from here is signal.** The `≥ +0.05` bar below is now a judgement about
+whether a change is worth its complexity, not about whether it can be detected.
+
+**Why this differs from the floors in CLAUDE.md rule 2.** Those were measured
+under `--writer model`. Deleting the 7B tailor call deleted the nondeterminism
+with it: the calls that remain emit a short summary and a schema-constrained list
+of small integers, which have far less room to diverge than a page of rewritten
+bullets. The old floors still apply to `--writer model`, which survives only as
+the benchmark control.
+
+**The caveat.** Measured back-to-back on an idle machine with the models already
+warm, so GPU batch and split conditions were identical. This is not a promise that
+a run competing for the GPU decodes the same. Re-check the floor if a result ever
+rests on a delta under 0.01 measured under different load.
+
+**One loose end.** `alloc32` scored 0.649 with a frozen select cache; `aa1` scored
+0.643 with fresh selection. Against a 0.000 floor that 0.006 is real, but the two
+runs differ in more than the cache, so it is an observation rather than a finding.
+Worth a paired check before any E2 arm reuses a cache.
 
 ---
 

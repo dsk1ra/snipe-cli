@@ -343,11 +343,23 @@ has grades.
    Greedy decoding is byte-identical for **Phase 2**: verified across 4 offers × 2
    runs, evals *and* report prose. At temp 0.1 that floor was 0.091 and individual
    offers swung up to 2.1 points between identical runs.
-   **Phase 3's 7B tailor call is not byte-identical at temp 0** and never was in
-   that check — GPU batch/split variation flips a token regardless of temperature.
+   **Phase 3 under `--writer verbatim` — the production default — has a floor of
+   exactly 0.000.** 32-offer A/A run 2026-08-08 (`aa1`/`aa2`, fresh selection in
+   both, no `SNIPE_SELECT_CACHE`): all 32 `cv-content.json` byte-identical, every
+   metric 0.000 with CI [0.000, 0.000], across 191 real model calls. Verified
+   against rule 6 rather than assumed — see `docs/CV-ONE-PAGE-EXPERIMENTS.md` §1.
+   Any nonzero delta is signal. Caveat: measured back-to-back on an idle machine
+   with warm models, so re-check if a result rests on <0.01 under GPU contention.
+
+   **The floors below are for `--writer model` only.** Deleting the 7B tailor call
+   deleted the nondeterminism with it — what remains is a short summary and a
+   schema-constrained list of small integers, with far less room to diverge than a
+   page of rewritten bullets. `--writer model` survives as the benchmark control,
+   and there the 7B tailor call **is not byte-identical at temp 0** — GPU
+   batch/split variation flips a token regardless of temperature.
    `PHASE3-EXPERIMENT-LEDGER.md` measured this directly (24-offer A/A: 12.5% of
    offers vary; `grounding` ±0.020, `example_copy_pct` ±0.042, `mean_bullets`
-   ±0.120) and **is the authority** — this rule used to contradict it. A later
+   ±0.120) and **is the authority** for that arm. A later
    12-offer A/A adds floors for the metrics the ledger never floored:
 
    | metric | floor | from |
