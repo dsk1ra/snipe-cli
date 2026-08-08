@@ -102,6 +102,13 @@
     text-decoration: none;
   }
 
+  /* Phone and email are clickable (tel: / mailto:) but stay in the muted body
+     colour. Accent is the CV's signal for "this goes somewhere on the web";
+     colouring a phone number like a profile link says nothing and adds noise. */
+  .contact-row a.contact-plain {
+    color: var(--muted);
+  }
+
   .contact-row .separator {
     color: var(--hairline);
   }
@@ -249,6 +256,14 @@
     margin-top: 3px;
   }
 
+  /* The repo link inherits the tech line's colour rather than taking the browser
+     default, which would put three blue URLs in an otherwise grey row. The text
+     is already a URL, so it reads as a link without being painted like one. */
+  .project-tech a {
+    color: inherit;
+    text-decoration: none;
+  }
+
   /* === EDUCATION === */
   .edu-item {
     margin-bottom: 4px;
@@ -371,9 +386,9 @@
     {{TARGET_ROLE}}
     <div class="header-gradient"></div>
     <div class="contact-row">
-      <span>{{PHONE}}</span>
+      <a href="tel:{{PHONE_TEL}}" class="contact-plain">{{PHONE}}</a>
       <span class="separator">|</span>
-      <span>{{EMAIL}}</span>
+      <a href="mailto:{{EMAIL}}" class="contact-plain">{{EMAIL}}</a>
       <span class="separator">|</span>
       <a href="{{LINKEDIN_URL}}">{{LINKEDIN_DISPLAY}}</a>
       <span class="separator">|</span>
