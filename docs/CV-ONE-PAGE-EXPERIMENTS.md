@@ -417,3 +417,46 @@ the last three Phase 3 experiments lost; that record is why the numbers in this 
 are trustworthy.
 
 Nothing here is measured yet. Every number above is a target or a prediction.
+
+---
+
+## E5 — spend the page instead of framing it
+
+Two changes together, measured against `e4skills` (24/3 vs 21/4). Real run,
+fresh selection, no select cache — `maxProjects` changes what cv-select ranks,
+so a derivation would have been invalid.
+
+| metric | 21/4 | 24/3 | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.409 | **0.524** | **+0.116** | [0.051, 0.176] | 21-5 | 0.002 |
+| `noise_rate` | 0.240 | 0.177 | −0.063 | [−0.096, −0.029] | 3-21 | <0.001 |
+| `grade_yield` | 0.691 | 0.762 | +0.071 | [0.049, 0.095] | 26-2 | <0.001 |
+| `mean_grade` | 1.820 | 2.002 | +0.182 | [0.117, 0.247] | 23-5 | <0.001 |
+| `mean_bullets` | 2.688 | 3.438 | +0.750 | [0.438, 1.063] | 18-2 | <0.001 |
+| `skill_coverage` | 1.000 | 1.000 | 0.000 | — | 0-0 | 1.000 |
+| `ats_coverage` | 0.594 | 0.609 | +0.016 | [0.002, 0.031] | 15-7 | 0.134 |
+| grounding, all fabrication | 1.000 / 0 | 1.000 / 0 | 0.000 | — | 0-0 | 1.000 |
+
+Ladder outcome: **29 of 32 at step 0, 3 at step 2, none ever failing to fit.**
+
+**`differentiator_coverage` clears 0.45**, so the decision table's trigger to
+reopen the one-page question no longer fires. 0.524 against a 0.55 target, from
+0.311 before any of this work.
+
+### The bug this arm found, twice
+
+`selectSkills` keeps a category past the sixth exactly when the posting named
+something in it. Two downstream slices did not know that and cut it anyway:
+
+- **`clampContent`** sliced skills to 6 before rendering. It exists to contain a
+  model that ignores its schema; under `--writer verbatim` there is no model.
+  Now applies only to `--writer model`.
+- **LADDER steps 1–2** capped skills at 6 on any overrun. Now they leave skills
+  intact and spend a project bullet instead.
+
+Both deleted MCP from an EPAM CV whose posting says MCP four times. The first
+also means the `e4skills` control **overstated production**: derived content
+never passed through `clampContent`, so its 1.000 was the selector's number, not
+the page's. The corrected arm re-derives only the skills array from `e5`, and
+that derivation was validated byte-identical against a real single-offer re-run
+before being trusted.

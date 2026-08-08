@@ -389,10 +389,17 @@ function validateContent(c, company) {
 }
 
 // Hard clamps applied before rendering (defends the layout regardless of model).
-function clampContent(c) {
+//
+// `clampSkills` is false on the verbatim path. These clamps exist to contain a
+// model that ignores its schema, and cv-writers is not a model: it drops every
+// category the posting has no use for and deliberately keeps one past the sixth
+// when the posting named something inside it. Slicing to 6 here silently undid
+// exactly that, and it is how MCP left an EPAM CV that asks for MCP four times.
+// Layout is the ladder's job, and the ladder still caps skills from step 1 down.
+function clampContent(c, { clampSkills = true } = {}) {
   if (Array.isArray(c.competencies) && c.competencies.length > 9) c.competencies = c.competencies.slice(0, 9);
   if (Array.isArray(c.projects)     && c.projects.length > 4)     c.projects     = c.projects.slice(0, 4);
-  if (Array.isArray(c.skills)       && c.skills.length > 6)       c.skills       = c.skills.slice(0, 6);
+  if (clampSkills && Array.isArray(c.skills) && c.skills.length > 6) c.skills     = c.skills.slice(0, 6);
   if (Array.isArray(c.education_modules) && c.education_modules.length > 6) {
     c.education_modules = c.education_modules.slice(0, 6);
   }
@@ -594,14 +601,22 @@ if (!cached) try {
   // the three count knobs exist so the E2 control — naive count-cutting tuned
   // until it fits one page — is runnable as an arm. Defaults are the shipped
   // values, so an unset environment is the shipped selector.
+  // 24 lines over 3 projects, not 21 over 4. Four projects spent ~38px each on a
+  // title, a badge and a tech line to deliver one bullet apiece: 43% of the
+  // largest section on the page was chrome, and three of the four projects said
+  // one thing and stopped. Dropping a project and spending its chrome — plus the
+  // 69px the page was simply not using — on bullets is worth +0.116
+  // differentiator coverage (21-5, p=0.002), −0.063 noise and +0.071 grade yield,
+  // with mean bullets 2.69 → 3.44. `projectBulletBudget` is dead on this path;
+  // `allocateLines` spends `lineBudget` and never reads it (cv-select.mjs:579).
   const num = (k, d) => parseInt(process.env[k] ?? String(d), 10) || d;
-  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '21', 10) || null;
+  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '24', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget,
       maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
       projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
-      maxProjects:         num('SNIPE_MAX_PROJECTS', 4) });
+      maxProjects:         num('SNIPE_MAX_PROJECTS', 3) });
   storeSelection(cvForPrompt);
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
@@ -667,7 +682,7 @@ if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${last
 if (args.writer === 'model' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
-cvContent = clampContent(cvContent);
+cvContent = clampContent(cvContent, { clampSkills: args.writer === 'model' });
 
 // Normalize legacy field names → new schema so trimming + fill stay consistent.
 if (!cvContent.projects && Array.isArray(cvContent.selected_projects)) {
@@ -949,10 +964,16 @@ const jdTokens = new Set(tokenize(jdText));
 // cv-select bounds itself by, and its skills cap is null because cv-writers has
 // already cut the block to what the posting can use. It renders the selection
 // untouched; only a step below it is allowed to take evidence away.
+// Skills survive the first three steps intact. Capping them at 6 is a blunt
+// slice off the end of a list cv-writers ordered by cv.md, so it cannot tell a
+// category the posting named from one it did not — it took MCP off an EPAM CV
+// that asks for MCP four times, which is the same defect `clampContent` had and
+// the same one the category rule exists to prevent. A project bullet is the
+// cheaper thing to spend first.
 const LADDER = [
   { skills: null, bullets: 4, projects: 4, projBullets: 4 }, // as selected
-  { skills: 6, bullets: 4, projects: 4, projBullets: 3 },
-  { skills: 6, bullets: 3, projects: 4, projBullets: 2 },
+  { skills: null, bullets: 4, projects: 4, projBullets: 3 },
+  { skills: null, bullets: 3, projects: 4, projBullets: 2 },
   { skills: 5, bullets: 3, projects: 3, projBullets: 2 },
   { skills: 5, bullets: 2, projects: 3, projBullets: 1 },
   { skills: 4, bullets: 2, projects: 2, projBullets: 1 }, // tightest

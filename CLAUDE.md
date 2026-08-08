@@ -187,6 +187,31 @@ already spent the budget. The same is true of the density ladder's step 0 in
 `local-pdf-offer.mjs`; every tighter step still drops project bullets before
 experience bullets. All 32 bench offers render at 2 pages on step 0.
 
+**The budget is 24 lines over 3 projects** (`SNIPE_LINE_BUDGET`,
+`SNIPE_MAX_PROJECTS`), not 21 over 4. Four projects spent ~38px each on a title,
+a badge and a tech line to deliver one bullet apiece — 43% of the largest section
+on the page was chrome, and three of the four said one thing and stopped. Trading
+a project's chrome, plus the 69px the page was simply not using, for bullets is
+worth **+0.116 differentiator coverage** (n=32, 21-5, CI [0.051, 0.176], p=0.002)
+with `noise_rate` −0.063, `grade_yield` +0.071, `mean_grade` +0.182 and
+`mean_bullets` 2.69 → 3.44, against a 0.000 A/A floor. `skill_coverage` holds at
+1.000, `ats_coverage` +0.016, grounding and every fabrication metric unmoved.
+One page still holds for all 32, with the ladder firing on 3 and none past step 2.
+**`projectBulletBudget` is dead on this path** — `allocateLines` spends
+`lineBudget` and never reads it (`cv-select.mjs:579`), so setting
+`SNIPE_PROJ_BUDGET` changes nothing unless `SNIPE_LINE_BUDGET=0`.
+
+**Nothing may slice the skills block down to a fixed count.** `selectSkills`
+keeps a category past the sixth precisely when the posting named something inside
+it, so a blunt `slice(0, 6)` anywhere downstream cannot tell that category from
+filler and silently deletes a claimed skill. Two places did: `clampContent`,
+whose skill clamp now applies only to `--writer model` (it exists to contain a
+model that ignores its schema, and cv-writers is not a model), and LADDER steps 1
+and 2, which now leave skills untouched and pay for the overrun in project
+bullets instead. Both took MCP off an EPAM CV that asks for MCP four times.
+Because no offer needs a step past 2, `skill_coverage` is 1.000 **as shipped**,
+not merely as selected.
+
 **`trim()`'s metric-bullet guarantee overrides the ranker at keep=1**, which the
 allocation now reaches: all 57 single-slot project bullets across the 32 offers
 carry a digit against a 72% base rate, and the swap fires on 42% of them. It cost
