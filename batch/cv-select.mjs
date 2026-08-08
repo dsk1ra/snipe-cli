@@ -408,6 +408,16 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     // range is chrome-bound, so it moves whenever the layout does: dropping the
     // certifications line was worth exactly one line of it.
     lineBudget = null,
+    // Projects that survive the `maxProjects` cut whatever the posting scores
+    // them, matched case-insensitively as a substring of the `### ` title.
+    //
+    // Relevance ranking is the right default and the wrong answer for a small
+    // number of entries whose value is not what they are about: an Honours
+    // dissertation is the thing a reader of a graduate CV looks for, and it lost
+    // the cut on postings that had no particular use for its subject. This is a
+    // deliberate override of the ranker, so it is a user-layer decision
+    // (`cv.pinned_projects` in config/profile.yml) rather than a default.
+    pinnedProjects = [],
     // Weight on corpus-relative specificity. 6 is the measured optimum and the
     // curve is broad (4 -> +0.075, 6 -> +0.084, 8 -> +0.079), so it is a plateau,
     // not a knife edge. 0 disables it and restores plain cosine ranking.
@@ -573,6 +583,25 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   if (projParsed) {
     for (const e of projParsed.entries) trim(e, maxBulletsPerProject);
     projParsed.entries.sort((a, b) => b.score - a.score);
+    if (pinnedProjects.length) {
+      const title = (e) => String(e.head?.[0] || '').replace(/^###\s+/, '').toLowerCase();
+      const pins = pinnedProjects.map(p => String(p).toLowerCase()).filter(Boolean);
+      const isPinned = (e) => pins.some(p => title(e).includes(p));
+      // A pin that matches nothing is a typo, and silently ranking as usual is
+      // the one outcome that looks like it worked. cv.md is the user's file and
+      // a project can be renamed there without the profile knowing.
+      for (const p of pins) {
+        if (!projParsed.entries.some(e => title(e).includes(p))) {
+          process.stderr.write(`cv-select: pinned project "${p}" matches no ### title in cv.md — ignoring\n`);
+        }
+      }
+      // Already score-sorted, so filtering preserves relevance order inside each
+      // group: pins first by their own score, then the rest compete for what is
+      // left. Pinning more than `maxProjects` still cannot overflow the page —
+      // the truncation below is the same one, applied to a reordered list.
+      projParsed.entries = [...projParsed.entries.filter(isPinned),
+                            ...projParsed.entries.filter(e => !isPinned(e))];
+    }
     projParsed.entries.length = Math.min(projParsed.entries.length, maxProjects);
   }
 
@@ -1303,6 +1332,29 @@ Text.
   assert(!out.includes('Mentored two juniors'), 'weakest experience bullet cut at keep=2');
   assert(out.includes('## Skills') && out.includes('## Summary'), 'untouched sections preserved');
   assert(out.indexOf('Implemented AES-256-GCM') !== -1, 'top project bullet kept');
+
+  // Pinned projects: "Java Batch" scores 0 against a Rust/encryption posting and
+  // is the first thing dropped, which is exactly the case the flag exists for.
+  {
+    const pinned = await selectCvForJd(fakeCv, reqs, '', {
+      maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2,
+      pinnedProjects: ['Java Batch'], _embed: stub });
+    assert(pinned.includes('### Java Batch'), 'a pinned project survives a cut it would lose');
+    assert(pinned.includes('### Crypto Tool'), 'and the highest-scoring project still ships');
+    assert(!pinned.includes('### Web App'), 'the pin costs a slot rather than widening the page');
+    // Substring, case-insensitive — the profile should not have to repeat a
+    // title exactly for the pin to hold.
+    const loose = await selectCvForJd(fakeCv, reqs, '', {
+      maxProjects: 1, maxBulletsPerRole: 2, maxBulletsPerProject: 2,
+      pinnedProjects: ['java batch'], _embed: stub });
+    assert(loose.includes('### Java Batch') && !loose.includes('### Crypto Tool'),
+      'pin matches case-insensitively and outranks the top-scoring project at maxProjects=1');
+    // A pin that matches nothing must leave ranking exactly as it was.
+    const typo = await selectCvForJd(fakeCv, reqs, '', {
+      maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2,
+      pinnedProjects: ['Re:Link'], _embed: stub });
+    assert(typo === out, 'an unmatched pin changes nothing');
+  }
 
   // Reranker: a stub judge that grades one otherwise-weak bullet 3 must pull it
   // above a bullet cosine ranked higher, and a judge failure must change nothing.

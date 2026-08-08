@@ -548,6 +548,19 @@ if (args.evalScore !== null && args.evalScore < args.threshold) {
 const profileText     = readSafe(resolve(PROJECT, 'config/profile.yml'));
 const profileNarrative = extractProfileNarrative(profileText);
 
+// `cv.pinned_projects` — projects that ship whatever the posting scores them.
+// Parsed defensively: a malformed profile must not take the whole run down over
+// an optional list, and an absent key is the normal case.
+let pinnedProjects = [];
+try {
+  const { default: yaml } = await import('js-yaml');
+  const parsed = yaml.load(profileText) || {};
+  const pins = parsed?.cv?.pinned_projects;
+  if (Array.isArray(pins)) pinnedProjects = pins.filter(p => typeof p === 'string' && p.trim());
+} catch (err) {
+  process.stderr.write(`config/profile.yml unreadable (${err.message}) — no pinned projects\n`);
+}
+
 // Pre-select CV content: rank every experience/project bullet against the JD's
 // requirements (Block B of the report) with the embedding model, keep top-N per
 // entry and the top projects. The 7B then only rewrites — it no longer decides
@@ -613,7 +626,7 @@ if (!cached) try {
   const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '24', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
-    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget,
+    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
       maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
       projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
       maxProjects:         num('SNIPE_MAX_PROJECTS', 3) });
