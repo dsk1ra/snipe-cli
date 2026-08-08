@@ -366,7 +366,7 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
     // cv.md carries a repo URL per project and it was parsed but never rendered,
     // so every tailored CV silently dropped the one link a reviewer can click to
     // check the claim. It rides the tech line, which already exists.
-    const techLine = [cv.tech, cv.period, cv.url].filter(Boolean).join(' | ');
+    const techLine = [cv.tech, cv.period, shortRepo(cv.url)].filter(Boolean).join(' | ');
     // Bullets when the writer supplies them, one paragraph otherwise.
     //
     // The paragraph was the only shape for a long time, and it is where the
@@ -400,6 +400,25 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
 // When the LLM supplies `education_modules` (a JD-relevant subset), rewrite the
 // "Key Modules:" line to those modules only; other extra lines (Achievement,
 // etc.) are kept as-is. Without the field, the CV's modules pass through verbatim.
+// `github.com/Drakon4ik-Coder/okta-dashboard-back` is the longest string on the
+// page and wrapped so late that "back" landed alone on the next line, costing a
+// whole row to say nothing. The host is redundant — the header already carries
+// the GitHub profile — so a github.com URL renders as `owner/repo`. Any other
+// host keeps its name, because there the domain is the information.
+function shortRepo(url) {
+  const s = String(url || '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+  const m = s.match(/^github\.com\/(.+)$/i);
+  return m ? m[1].replace(/\/$/, '') : s;
+}
+
+// "Achievement: 2nd place out of 24 teams" — bold up to the colon so the label
+// reads as a heading for its row. Bounded at 20 chars so a line that merely
+// contains a colon mid-sentence is not carved up at it.
+function labelled(line) {
+  const m = String(line).match(/^([^:]{1,20}):\s*([\s\S]*)$/);
+  return m ? `<span class="edu-label">${esc(m[1])}:</span> ${esc(m[2])}` : esc(line);
+}
+
 function buildEducationHtml(eduEntries, selectedModules, certs = []) {
   const sel = Array.isArray(selectedModules) && selectedModules.length > 0 ? selectedModules : null;
   // Certifications ride the last education entry as one more desc line. Its own
@@ -418,14 +437,18 @@ function buildEducationHtml(eduEntries, selectedModules, certs = []) {
     const extra = sel
       ? e.extra.map(line => (/^key modules\s*:/i.test(line) ? `Key Modules: ${sel.join(', ')}` : line))
       : e.extra;
-    const extraText = extra.filter(x => x.trim()).join(' • ');
+    // One row per line, not all of them joined with " • ". A CTF placing that
+    // trails five module names behind a bullet separator reads as a footnote to
+    // the module list; on its own row with its label in bold it reads as a
+    // result. The rows already wrapped to two lines, so this costs 1px of margin.
+    const extraLines = extra.filter(x => x.trim());
     return `
     <div class="edu-item">
       <div class="edu-header">
         <span><span class="edu-title">${esc(degreeMain)}</span> <span class="edu-org">${esc(e.school)}</span></span>
         <span class="edu-year">${esc(e.period)}</span>
       </div>
-      ${extraText ? `<div class="edu-desc">${esc(extraText)}</div>` : ''}
+      ${extraLines.map(line => `<div class="edu-desc">${labelled(line)}</div>`).join('\n      ')}
       ${i === eduEntries.length - 1 && certLine ? `<div class="edu-desc">${esc(certLine)}</div>` : ''}
     </div>`;
   }).join('\n');
