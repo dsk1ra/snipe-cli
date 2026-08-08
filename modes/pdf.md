@@ -18,7 +18,7 @@
 12. Generate full HTML from template + personalized content
 13. Read `name` from `config/profile.yml` and derive two forms: `{candidate}` = kebab-case lowercase for slugs (e.g. "John Doe" → "john-doe"); `{CandidateName}` = Title-Case hyphenated for the PDF filename (e.g. "John-Doe"). Also derive `{company}` and `{role}` as kebab-case slugs.
 14. **One folder per application — keep the PDF and its source together.** Let `APP_DIR = output/{YYYY-MM-DD}_{company}_{role}`. Write the filled HTML to `{APP_DIR}/source.html` (persisted, NOT /tmp — it is the editable source of the PDF).
-15. Execute: `mkdir -p "{APP_DIR}" && node generate-pdf.mjs "{APP_DIR}/source.html" "{APP_DIR}/{CandidateName}-CV.pdf" --format={letter|a4}`
+15. Execute: `mkdir -p "{APP_DIR}" && node generate-pdf.mjs "{APP_DIR}/source.html" "{APP_DIR}/{CandidateName}-CV.pdf"` (always A4)
 16. Report: the folder path, the PDF path (`{CandidateName}-CV.pdf` — attach as-is), number of pages, keyword coverage %. Note that `source.html` in the same folder is editable for manual tweaks + re-render.
 
 ## ATS Rules (clean parsing)
@@ -77,20 +77,20 @@ Use the template in `cv-template.html`. Replace the `{{...}}` placeholders with 
 | `{{PORTFOLIO_URL}}` | [from profile.yml] (or /es depending on language) |
 | `{{PORTFOLIO_DISPLAY}}` | [from profile.yml] (or /es depending on language) |
 | `{{LOCATION}}` | [from profile.yml] |
+| `{{TARGET_ROLE}}` | The role being applied for, under the name (omitted when absent) |
 | `{{SECTION_SUMMARY}}` | Professional Summary |
 | `{{SUMMARY_TEXT}}` | Personalized summary with keywords |
-| `{{SECTION_COMPETENCIES}}` | Core Competencies |
-| `{{COMPETENCIES}}` | `<span class="competency-tag">keyword</span>` × 6-8 |
+| `{{SECTION_SKILLS}}` | Technical Skills — renders directly under the summary |
+| `{{SKILLS}}` | Skills HTML |
 | `{{SECTION_EXPERIENCE}}` | Work Experience |
 | `{{EXPERIENCE}}` | HTML for each job with reordered bullets |
 | `{{SECTION_PROJECTS}}` | Projects |
 | `{{PROJECTS}}` | HTML for top 3-4 projects |
-| `{{SECTION_EDUCATION}}` | Education |
-| `{{EDUCATION}}` | Education HTML |
-| `{{SECTION_CERTIFICATIONS}}` | Certifications |
-| `{{CERTIFICATIONS}}` | Certifications HTML |
-| `{{SECTION_SKILLS}}` | Skills |
-| `{{SKILLS}}` | Skills HTML |
+| `{{SECTION_EDUCATION}}` | Education &amp; Certifications |
+| `{{EDUCATION}}` | Education HTML, with certifications as a trailing line |
+
+Core Competencies is gone: every tag it printed also appeared in Skills, and it
+cost 45px to say so twice. Certifications no longer has its own section.
 
 ## Canva CV Generation (optional)
 

@@ -196,7 +196,7 @@ Usage:
   try {
     const html = buildHtml(payload);
     const outputPath = resolve(payload.output_path);
-    await renderHtmlToPdf(html, outputPath, { format: "a4" });
+    await renderHtmlToPdf(html, outputPath);
     console.log(`\nCover letter PDF: ${payload.output_path}`);
   } catch (err) {
     console.error("ERROR generating cover letter PDF:");
