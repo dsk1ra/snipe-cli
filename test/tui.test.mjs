@@ -96,7 +96,7 @@ async function driveRaw(...keys) {
   const path = [...(driveRaw.extraPath ? [driveRaw.extraPath] : []), BIN, process.env.PATH].join(':');
   const res = await runNodeAsync(['test/tui-driver.mjs', out, ...keys], {
     timeout: 60_000,
-    env: { ...ENV, TUI_COLS: '160', TUI_ROWS: '40', PATH: path, SNIPE_TEST_OPENED: OPENED },
+    env: { ...ENV, TUI_COLS: driveRaw.cols, TUI_ROWS: '40', PATH: path, SNIPE_TEST_OPENED: OPENED },
   });
   if (!existsSync(out)) {
     fail(`TUI driver produced no frames (exit ${res.code}): ${res.err.slice(0, 200)}`);
@@ -105,6 +105,7 @@ async function driveRaw(...keys) {
   return JSON.parse(readFileSync(out, 'utf8'));
 }
 driveRaw.extraPath = null;
+driveRaw.cols = '160'; // the footer assertions drop this to a realistic quarter-screen
 
 /** Drive the TUI and return the last complete frame as plain text. */
 async function drive(...keys) {
@@ -188,7 +189,7 @@ async function drive(...keys) {
     // The gate is overrulable, so the row advertises it — unselected, like the
     // failed rows' actions.
     const gatedRow = rowFor(IDS.gated);
-    if (/P1-gated \| proceed\?/.test(gatedRow)) pass('a P1-gated row is labelled "P1-gated | proceed?"');
+    if (/P1 1\.9 \| proceed\?/.test(gatedRow)) pass('a P1-gated row shows its pre-score: "P1 1.9 | proceed?"');
     else fail(`P1-gated row rendered: ${gatedRow.trim().slice(0, 100) || '(not found)'}`);
     if (/\blink\b/.test(gatedRow)) pass('a gated row keeps its job link after proceed?');
     else fail('the gated row dropped its job link');
@@ -212,6 +213,39 @@ async function drive(...keys) {
       pass('an unavailable row offers debug but not retry');
     } else fail(`unavailable row rendered: ${goneRow.trim().slice(0, 120) || '(row not found)'}`);
 
+    // ── The footer and the ? overlay ─────────────────────────────────────────
+
+    // Key paths to the two rows the assertions below keep returning to: from the
+    // list, ↑ five times reaches the only row with an eval payload, four the
+    // P1-gated one just below it.
+    const TO_DONE = ['TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'UP', 'UP'];
+    const TO_GATED = TO_DONE.slice(0, -1);
+
+    // The window is routinely a quarter of a screen, so the hint line names only
+    // what the focused element does. Asserted at 48 columns: a hint that only
+    // fits at 160 is a hint the user never reads.
+    const hintOf = frame => (frame.split('\n').find(l => /\? keys/.test(l)) || '').trim();
+    driveRaw.cols = '48';
+    const idleHint = hintOf(await drive());
+    if (idleHint && idleHint.length <= 46) pass(`the footer hint fits a 48-column window: "${idleHint}"`);
+    else fail(`footer hint at 48 cols: "${idleHint}" (${idleHint.length} cols)`);
+
+    const gateHint = hintOf(await drive(...TO_GATED, 'RIGHT'));
+    if (/y evaluate anyway · n dismiss/.test(gateHint)) pass('focusing proceed? swaps the hint for its own two answers');
+    else fail(`hint on a focused proceed?: "${gateHint}"`);
+    driveRaw.cols = '160';
+
+    const helped = await drive('?');
+    if (/Keys/.test(helped) && /dismiss the gate/.test(helped) && /nudged · rejected/.test(helped)) {
+      pass('? opens a key reference covering the queue, the gate and the follow-ups');
+    } else fail('? did not open the key reference');
+    if (!/Add to queue/.test(helped)) pass('the overlay replaces the body rather than stacking below it');
+    else fail('the ? overlay left the queue body on screen');
+
+    const closed = await drive('?', 'j');
+    if (/Add to queue/.test(closed) && !/any key closes/.test(closed)) pass('any key closes the overlay');
+    else fail('a keypress did not close the ? overlay');
+
     // ── Error sidecars ───────────────────────────────────────────────────────
 
     // poll() writes one file per failed row so "see error" always has a target.
@@ -226,12 +260,14 @@ async function drive(...keys) {
 
     // ── Navigation ───────────────────────────────────────────────────────────
 
+    // Anchored on each tab's own body — the footer used to spell every key out,
+    // so these read as tab switches while actually only proving the hint line.
     const activity = await drive('2');
-    if (/y\/m\/d|period|type/.test(activity)) pass('key "2" switches to the Activity tab');
+    if (/This month/.test(activity) && /Streak/.test(activity)) pass('key "2" switches to the Activity tab');
     else fail('key "2" did not reach the Activity tab');
 
     const followups = await drive('3');
-    if (/mark nudged|report/.test(followups)) pass('key "3" switches to the Follow-ups tab');
+    if (/data\/follow-ups\.md/.test(followups)) pass('key "3" switches to the Follow-ups tab');
     else fail('key "3" did not reach the Follow-ups tab');
 
     const back = await drive('2', '1');
@@ -277,10 +313,7 @@ async function drive(...keys) {
     if (inverseOn(walk2, 'debug')) pass('→ again focuses "debug" — the unavailable row has no retry stop between them');
     else fail('a second → did not reach "debug" on the unavailable row');
 
-    // Only an evaluated row can be marked, so walk up from the last row to the
-    // one with an eval payload — five rows above it.
-    const TO_DONE = ['TAB', 'TAB', 'TAB', 'UP', 'UP', 'UP', 'UP', 'UP'];
-
+    // Only an evaluated row can be marked, hence TO_DONE.
     // 'a' marks the selected row applied; the sidecar is the observable effect.
     await drive(...TO_DONE, 'a');
     const applied = join(HOME, 'batch/applied.tsv');
@@ -384,6 +417,53 @@ async function drive(...keys) {
     if (new RegExp(`bash .*local-runner\\.sh --only-id ${IDS.gated} --p1-threshold 0$`, 'm').test(opened())) {
       pass('proceed re-runs with the P1 gate off and no --retry-failed');
     } else fail(`proceed invoked: ${opened().trim() || '(nothing)'}`);
+
+    // "y" is the same answer as Enter, and only while proceed? is the focused
+    // stop — walking to the gated row and typing y without → must not run it.
+    rmSync(OPENED, { force: true });
+    driveRaw.extraPath = RUNNER_BIN;
+    await drive(...TO_GATED, 'RIGHT', 'y');
+    driveRaw.extraPath = null;
+    if (new RegExp(`--only-id ${IDS.gated} --p1-threshold 0$`, 'm').test(opened())) pass('"y" on a focused proceed? runs the same command as Enter');
+    else fail(`"y" invoked: ${opened().trim() || '(nothing)'}`);
+
+    rmSync(OPENED, { force: true });
+    driveRaw.extraPath = RUNNER_BIN;
+    await drive(...TO_GATED, 'y');
+    driveRaw.extraPath = null;
+    if (!opened().includes('local-runner')) pass('"y" on the row itself does not fire — the gate has to be focused');
+    else fail(`"y" off the proceed stop invoked: ${opened().trim()}`);
+
+    // ── Dismiss the P1 gate ──────────────────────────────────────────────────
+
+    // "n" retires the offer: no run, and the answer lands on disk because the row
+    // list is rebuilt from local-state.tsv every second and on every launch.
+    const DECLINED = join(HOME, 'batch/p1-declined.tsv');
+    for (const [key, label] of [['n', '"n"'], ['BS', 'Backspace'], ['DEL', 'Delete']]) {
+      rmSync(DECLINED, { force: true });
+      rmSync(OPENED, { force: true });
+      driveRaw.extraPath = RUNNER_BIN;
+      const declined = await drive(...TO_GATED, 'RIGHT', key);
+      driveRaw.extraPath = null;
+      const onDisk = existsSync(DECLINED) && readFileSync(DECLINED, 'utf8').startsWith(`${IDS.gated}\t`);
+      if (onDisk && /P1 gate dismissed/.test(declined) && !opened().includes('local-runner')) {
+        pass(`${label} on a focused proceed? dismisses the gate without running anything`);
+      } else fail(`${label} dismissed: onDisk=${onDisk} opened=${opened().trim() || '(nothing)'}`);
+    }
+
+    // The declined row keeps its score and its link and stops offering the action.
+    const afterDecline = await drive(...TO_GATED);
+    const declinedRow = afterDecline.split('\n').find(l => l.includes(`#${IDS.gated}`)) || '';
+    if (/P1 1\.9/.test(declinedRow) && !/proceed\?/.test(declinedRow) && /\blink\b/.test(declinedRow)) {
+      pass('a dismissed row renders as company — role, its P1 score and its link');
+    } else fail(`dismissed row rendered: ${declinedRow.trim().slice(0, 100) || '(not found)'}`);
+
+    // And → walks straight past it to the link, since the stop is gone.
+    rmSync(OPENED, { force: true });
+    await drive(...TO_GATED, 'RIGHT', 'ENTER');
+    if (/xdg-open https:\/\/example\.com\/jobs\/gated/.test(opened())) pass('→ on a dismissed row lands on the link, not a dead proceed stop');
+    else fail(`→ on a dismissed row opened: ${opened().trim() || '(nothing)'}`);
+    rmSync(DECLINED, { force: true }); // later drives see the gate offered again
 
     // ── The queue / drain button ─────────────────────────────────────────────
 
