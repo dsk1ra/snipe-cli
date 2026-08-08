@@ -257,6 +257,34 @@ try {
   eq(snapOnly, true,
     'a committed snapshot of the worked example exists, so the copy detector survives its deletion');
 
+  // ── skill_coverage: the metric ats_coverage was too blunt to be ──
+  // Scored as phrases against cv.md's own taxonomy, so it is bounded above by
+  // what the CV actually claims and cannot be gamed by inventing.
+  const skillCv = [
+    '## Skills', '',
+    '**Languages:** Rust, Java, C#',
+    '**Backend:** Message Queues (RabbitMQ, Kafka), Kubernetes (working knowledge, self-study)',
+  ].join('\n');
+  const sc = (jd, out) => h.skillCoverage(jd, skillCv, out);
+
+  eq(sc('We need Java and Kafka.', 'Built with Java and Kafka').coverage, 1,
+    'skillCoverage is 1.0 when every skill the posting named reached the page');
+  eq(sc('We need Java and Kafka.', 'Built with Java').coverage, 0.5,
+    'and drops when one the CV genuinely claims did not');
+  deepEq(sc('We need Java and Kafka.', 'Built with Java').missed, ['Kafka'],
+    'and names which, so a regression is actionable rather than just lower');
+  eq(sc('We need Go and Elixir.', 'Built with Java').coverage, null,
+    'a posting naming no skill the CV claims scores null, not 0 — nothing was missed');
+  eq(sc('We need Kotlin.', 'Kotlin Kotlin Kotlin').coverage, null,
+    'and cannot be gamed by output the CV never claimed');
+  // The 3-char token floor made these invisible to JD-overlap scoring, so they
+  // were dropped from postings that asked for them by name.
+  eq(sc('Strong C# required.', 'Shipped C# services').coverage, 1,
+    'a short skill name is matched as a phrase, not as tokens');
+  // Parenthesised names are the keywords, so the taxonomy has to contain them.
+  eq(sc('Experience with RabbitMQ.', 'Ran RabbitMQ in production').coverage, 1,
+    'names promoted out of a parenthesis count as claimed skills');
+
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
   deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),

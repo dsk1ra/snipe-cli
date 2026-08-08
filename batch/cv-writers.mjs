@@ -35,19 +35,102 @@ function tokenize(s) {
 }
 
 /**
+ * A skill item's parenthesis holds one of two very different things, and the
+ * old rule — drop every parenthesis before splitting — treated them alike:
+ *
+ *   Message Queues (RabbitMQ, Kafka)   → the keywords ARE the parenthesis
+ *   Kubernetes (working knowledge, …)  → a caveat about depth
+ *
+ * Dropping both shipped "Message Queues" to a posting that asked for Kafka, and
+ * the same for AES-256-GCM, EC2/Lambda/S3/IAM, Jest, Jenkins, Ollama and MCP —
+ * the CV's most searchable terms, deleted at parse time from every tailored PDF.
+ *
+ * Each comma-separated part is judged on its own, so a mixed parenthesis keeps
+ * what is a name and drops what is prose: "(AES-256-GCM, HMAC-SHA256, end-to-end
+ * encryption)" promotes the first two and leaves the third. A name starts with a
+ * capital or a digit, or carries a digit; prose ("working knowledge", "server
+ * administration", "daily driver") does neither.
+ *
+ * @param {string} raw one comma-separated skill item, parentheses intact
+ * @returns {string[]} the item without its parentheses, plus any promoted names
+ */
+function expandSkillItem(raw) {
+  const promoted = [];
+  const base = raw.replace(/\(([^)]*)\)/g, (_, inner) => {
+    for (const part of inner.split(',').map(s => s.trim()).filter(Boolean)) {
+      if (/^[A-Z0-9]/.test(part) || /\d/.test(part)) promoted.push(part);
+    }
+    return ' ';
+  }).replace(/\s{2,}/g, ' ').trim();
+  return [base, ...promoted].filter(Boolean);
+}
+
+/**
  * The CV's `**Category:** a, b, c` skill lines, as `{category, items[]}`.
  *
- * Parenthesised asides are dropped before the split, not after: several items
- * carry a comma inside them ("Kubernetes (working knowledge, self-study …)") and
- * splitting first ships "Kubernetes (Working Knowledge" as a skill.
+ * Split on top-level commas only: several items carry a comma inside their
+ * parenthesis ("Message Queues (RabbitMQ, Kafka)") and splitting naively ships
+ * "Message Queues (RabbitMQ" as a skill.
  * @param {string} cvText
  */
 export function parseSkillCategories(cvText) {
   const sec = (cvText || '').split(/^##\s+/m).find(s => /^Skills/i.test(s)) || '';
   return [...sec.matchAll(/^\*\*([^*]+):\*\*\s*(.+)$/gm)].map(m => ({
     category: m[1].trim(),
-    items: m[2].replace(/\([^)]*\)/g, '').split(',').map(s => s.trim()).filter(Boolean),
+    items: m[2].split(/,(?![^(]*\))/).map(s => s.trim()).filter(Boolean)
+      .flatMap(expandSkillItem),
   }));
+}
+
+/**
+ * A phrase, space-wrapped for whole-phrase containment tests.
+ *
+ * `.` survives the character class for `Next.js` and `node.js`, and that welds a
+ * sentence-final period onto the last word: a JD reading "…experience with
+ * Kafka." yields `kafka.`, which contains `kafka` nowhere as a phrase. Postings
+ * end sentences on technology names constantly, so this silently dropped real
+ * matches. `tokenize` above already documents and fixes the same trap; exported
+ * rather than copied so the harness scores what the selector selected.
+ * @param {string} s
+ */
+export const normPhrase = (s) => ` ${String(s || '').toLowerCase()
+  .replace(/[^a-z0-9+#.]+/g, ' ')
+  .replace(/\.(?=\s|$)/g, '')
+  .trim()} `;
+const norm = normPhrase;
+
+/**
+ * Which skill items the CV itself ties to the ones the posting named.
+ *
+ * A posting asking for Java is also asking, in every way that matters, about
+ * Spring Boot — but "Spring Boot" shares no token with it, so a pure JD-overlap
+ * filter drops it. The relatedness signal is already written down: cv.md says
+ * "(Java / Spring Boot / Kafka)" on one line, because that is what was actually
+ * built together. Two items on the same line are related **for this candidate**,
+ * which is a stronger claim than two items being related in general, and it costs
+ * no model call to read.
+ *
+ * The Skills section is excluded from the evidence, and that is the whole design
+ * rather than a detail: its lines list a category's items together by definition,
+ * so counting them would make every item related to every sibling and promote
+ * whole categories on one match. Relatedness has to be earned in the prose.
+ *
+ * @param {string} cvText
+ * @param {string[]} allItems every skill item across every category
+ * @param {(s: string) => number} hits JD overlap score
+ * @returns {Set<string>} items co-written with something the posting asked for
+ */
+function relatedToJd(cvText, allItems, hits) {
+  const present = allItems.filter(i => hits(i) > 0).map(norm);
+  if (!present.length) return new Set();
+  const evidence = String(cvText || '').split(/^##\s+/m).filter(s => !/^Skills/i.test(s)).join('\n');
+  const out = new Set();
+  for (const line of evidence.split('\n')) {
+    const n = norm(line);
+    if (!present.some(p => n.includes(p))) continue;
+    for (const item of allItems) if (hits(item) === 0 && n.includes(norm(item))) out.add(item);
+  }
+  return out;
 }
 
 /**
@@ -57,27 +140,72 @@ export function parseSkillCategories(cvText) {
  * cv.md — which is the whole point: `filterSkillItems` exists downstream purely to
  * throw away the ones the model invented, and it has nothing to do here.
  *
+ * Items are kept in three tiers, and everything below them is **dropped, not
+ * merely ranked last**. This function already computed the score that says so; it
+ * just used it to sort. On the 32-offer bench the block shipped 52 items of which
+ * 12.9 shared a term with the posting, so 75% of it bought nothing an ATS could
+ * read and cost 4.4 rendered lines — on a page whose entire evidence budget is 21.
+ *
+ *   1. the posting's own terms      — `hits > 0`
+ *   2. what cv.md ties to them      — `relatedToJd`, so Java brings Spring Boot
+ *   3. a floor in cv.md's order     — `minItems`, so nothing reads as pandering
+ *
+ * Tier 3 is the guard against optimising the metric into a lie. A block holding
+ * only what the posting asked for drops the distinctive evidence — Rust vanishing
+ * from a Java posting — which is the exact blindness
+ * docs/PHASE3-RETENTION-LEDGER.md §1 was written about.
+ *
  * @param {string} cvText
  * @param {string} jdText
  * @param {number} maxCats
  * @param {number} maxItems
+ * @param {number} minItems floor per category, in cv.md's own priority order
  * @returns {{category: string, items: string}[]}
  */
-export function selectSkills(cvText, jdText, maxCats = 6, maxItems = 12) {
+export function selectSkills(cvText, jdText, maxCats = 6, maxItems = 12, minItems = 3) {
   const jd = new Set(tokenize(jdText));
-  const hits = (s) => tokenize(s).filter(t => jd.has(t)).length;
-  return parseSkillCategories(cvText)
+  const jdNorm = norm(jdText);
+  // `tokenize` has a 3-character floor, so "C#" and "CI/CD" yield no tokens and
+  // score zero however loudly the posting asks for them. Ranking hid that — they
+  // still shipped, just last — and filtering exposed it: C# was dropped from five
+  // postings that named it. Whole-phrase presence is the honest test, and it is
+  // stricter than token overlap rather than looser.
+  const named = (s) => jdNorm.includes(norm(s));
+  const hits = (s) => tokenize(s).filter(t => jd.has(t)).length + (named(s) ? 1 : 0);
+  const cats = parseSkillCategories(cvText);
+  const related = relatedToJd(cvText, cats.flatMap(c => c.items), hits);
+  const scored = cats
     .map((c, idx) => {
-      const items = c.items
-        .map((item, i) => ({ item, i, score: hits(item) }))
-        .sort((a, b) => b.score - a.score || a.i - b.i)
+      // Tier as the primary key, so a related item outranks a floor item but
+      // never displaces one the posting actually named.
+      const ranked = c.items
+        .map((item, i) => ({ item, i, score: hits(item), tier: hits(item) > 0 ? 2 : related.has(item) ? 1 : 0 }))
+        .sort((a, b) => b.tier - a.tier || b.score - a.score || a.i - b.i);
+      const kept = ranked.filter(x => x.tier > 0);
+      const items = (kept.length >= minItems ? kept : ranked.slice(0, minItems))
         .slice(0, maxItems);
       // A category earns its slot on its items, not its name: "Security &
       // Cryptography" shares no token with a JD that asks for AES and OAuth.
-      return { category: c.category, items, idx, score: items.reduce((a, b) => a + b.score, 0) };
+      return {
+        category: c.category, items, idx,
+        score: items.reduce((a, b) => a + b.score, 0),
+        // Whether the posting named anything in here at all. Summed score alone
+        // let a category the posting asked for lose its slot to one scoring
+        // higher on many weak matches: "Databases & Caching" placed seventh of
+        // six on the Spotify and J.P. Morgan postings, which is why PostgreSQL
+        // and MySQL went missing from two CVs that claim both.
+        named: items.some(x => x.tier === 2),
+      };
     })
-    .sort((a, b) => b.score - a.score || a.idx - b.idx)
-    .slice(0, maxCats)
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+  // `maxCats` is a budget for the categories the posting did NOT name. One it did
+  // is never cut: dropping it silently deletes a skill the CV genuinely claims and
+  // the posting explicitly asked for, which no saved space is worth. On this
+  // corpus it buys a seventh row on 2 of 32 offers.
+  const askedFor = scored.filter(c => c.named);
+  const filler = scored.filter(c => !c.named).slice(0, Math.max(0, maxCats - askedFor.length));
+  return [...askedFor, ...filler]
     // Back to CV order once the cut is made — the categories read as a list, and
     // reordering them by posting relevance makes the same CV look different to a
     // human reading two of them side by side for no gain.
@@ -191,6 +319,55 @@ if (process.argv[1] && process.argv[1].endsWith('cv-writers.mjs')) {
   // Items inside a category are ranked, so a tight item cap keeps the matched one.
   const [oneItem] = selectSkills(cv, 'We need JWT.', 1, 1);
   assert.deepEqual(oneItem, { category: 'Security', items: 'JWT' }, 'items ranked within a category');
+
+  // Non-earning items are dropped once the floor is already met. Five languages,
+  // four of them named by the posting, so the fifth has nothing to buy.
+  const wide = cv.replace('**Languages:** Rust, Java, Python',
+    '**Languages:** Rust, Java, Python, Dart, Kotlin');
+  const [langs] = selectSkills(wide, 'We need Rust, Java, Python and Dart.', 1);
+  assert.deepEqual(langs, { category: 'Languages', items: 'Rust, Java, Python, Dart' },
+    'items the posting never mentions are dropped, not ranked last');
+
+  // ...but the floor holds when the posting matches almost nothing, so the block
+  // never shrinks to a mirror of the JD.
+  const [floored] = selectSkills(wide, 'We need Kotlin.', 1);
+  assert.equal(floored.items.split(', ').length, 3, 'floors at minItems in CV order');
+  assert.match(floored.items, /^Kotlin, /, 'the earner still leads');
+
+  // A parenthesis holding names is the keywords, not an aside: promote them to
+  // items so a posting asking for Kafka can match one.
+  const parens = [
+    '## Skills', '',
+    '**Backend:** Message Queues (RabbitMQ, Kafka), Kubernetes (working knowledge, self-study)',
+    '**Crypto:** Applied Cryptography (AES-256-GCM, HMAC-SHA256, end-to-end encryption)',
+  ].join('\n');
+  const [backend, crypto] = parseSkillCategories(parens);
+  assert.deepEqual(backend.items, ['Message Queues', 'RabbitMQ', 'Kafka', 'Kubernetes'],
+    'names promoted, prose aside dropped');
+  assert.deepEqual(crypto.items, ['Applied Cryptography', 'AES-256-GCM', 'HMAC-SHA256'],
+    'a mixed parenthesis keeps the names and drops the prose');
+
+  // Relatedness: the posting says Java and never says Spring Boot, but cv.md
+  // wrote them on one line, so Spring Boot ships too.
+  const rel = [
+    '# X', '', '## Experience', '',
+    '### Engineer', '**Acme** — London | Jan 2024 – Present', '',
+    '- Built the billing service in Java / Spring Boot / Kafka', '',
+    '## Skills', '',
+    '**Backend:** Java, Spring Boot, Kafka, Django, Flutter',
+  ].join('\n');
+  const [byRel] = selectSkills(rel, 'We need a Java engineer.', 1);
+  assert.deepEqual(byRel.items.split(', '), ['Java', 'Spring Boot', 'Kafka'],
+    'items the CV ties to the posting ship; unrelated ones do not');
+
+  // The tie must be earned in the prose. Same CV, same posting, but with the
+  // evidence bullet gone there is nothing linking Spring Boot to Java.
+  const noEvidence = rel.replace('- Built the billing service in Java / Spring Boot / Kafka', '- Built the billing service');
+  const [noRel] = selectSkills(noEvidence, 'We need a Java engineer.', 1);
+  assert.deepEqual(noRel.items.split(', '), ['Java', 'Spring Boot', 'Kafka'],
+    'floor still fills to minItems in CV order');
+  assert.equal(selectSkills(noEvidence, 'We need a Java engineer.', 1, 12, 1)[0].items, 'Java',
+    'with no floor and no prose tie, only the named item survives');
 
   console.log('cv-writers self-check OK');
 }
