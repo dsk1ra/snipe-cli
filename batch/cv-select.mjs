@@ -12,9 +12,14 @@
  */
 
 import { fileURLToPath } from 'url';
-import { embed, cosine } from './embeddings.mjs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { embed, cosine, modelFingerprint } from './embeddings.mjs';
 import { cleanJd } from './text-utils.mjs';
 import { logCall } from './timing.mjs';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
 
 // ── LLM rerank ────────────────────────────────────────────────────────────────
 
@@ -46,10 +51,38 @@ const JUDGE_SCHEMA = {
   required: ['grades'],
 };
 
-const judgeUser = (reqs, jd, list) =>
+// The distinctiveness variant asks a second, deliberately different question in
+// the same call. `grade` and cosine both measure relevance to the posting, which
+// is why blending them bought only +0.10 pair accuracy — the corpus-mean term
+// (see spikeBackground) beat both by asking about distinctiveness instead. This
+// tests whether the 30B can answer that question directly and better. One call,
+// so it costs nothing extra; benchmarked separately because adding a field can
+// move `grade` itself, which would invalidate the shipped +0.10 calibration.
+const JUDGE_DISTINCT_EXTRA = `
+
+Also rate EVERY item 0-3 on how much it SETS THIS CANDIDATE APART from a typical
+applicant who would be shortlisted for this posting:
+  3 - few other applicants for this role could claim it
+  2 - uncommon, would be noticed
+  1 - most shortlisted applicants could claim something similar
+  0 - every applicant has this
+
+Distinctiveness is NOT relevance. A required, expected skill is highly relevant
+and scores 0 here. A rare, hard-won piece of engineering that only glances at the
+posting is barely relevant and can still score 3.`;
+
+const distinctItem = {
+  type: 'object',
+  properties: { id: { type: 'integer' }, grade: { type: 'integer' }, distinct: { type: 'integer' } },
+  required: ['id', 'grade', 'distinct'],
+};
+
+const judgeUser = (reqs, jd, list, distinct = false) =>
   `## Requirements\n\n${reqs.map(r => `- ${r}`).join('\n')}`
   + (jd ? `\n\n## Posting (excerpt)\n\n${String(jd).slice(0, 2500)}` : '')
-  + `\n\n## Candidate CV items\n\n${list}\n\nGrade every item 0-3 for this posting.`;
+  + `\n\n## Candidate CV items\n\n${list}\n\n`
+  + (distinct ? 'Grade every item 0-3 for relevance and 0-3 for distinctiveness.'
+              : 'Grade every item 0-3 for this posting.');
 
 /**
  * Grade each bullet 0-3 with snipe-eval, few-shot from the gold set.
@@ -62,28 +95,58 @@ const judgeUser = (reqs, jd, list) =>
  * @returns {Promise<Map<string, number>|null>} bullet text -> grade, or null
  */
 export async function judgeGrades(items, reqs, jdText, opts = {}) {
+  const full = await judgeGradesFull(items, reqs, jdText, opts);
+  return full && new Map([...full].map(([t, v]) => [t, v.grade]));
+}
+
+/**
+ * The same call, keeping every field the judge returned.
+ *
+ * `withDistinct` adds a second 0-3 rating per item in the *same* call, asking
+ * how far the item sets the candidate apart rather than how relevant it is.
+ * Off by default: the shipped +0.10 blend was calibrated against the one-field
+ * schema, and adding a field can move `grade` itself.
+ *
+ * @returns {Promise<Map<string, {grade: number, distinct: number}>|null>}
+ */
+export async function judgeGradesFull(items, reqs, jdText, opts = {}) {
   const { ollamaUrl = 'http://localhost:11434', judgeModel = 'snipe-eval',
-          judgeTimeoutMs = 180_000, judgeShots = [], _fetch = fetch } = opts;
+          judgeTimeoutMs = 180_000, judgeShots = [], withDistinct = false, _fetch = fetch } = opts;
   // No exemplars means 0-shot, and 0-shot the judge scores 0.670 against plain
   // cosine's 0.756 — actively worse. Refuse rather than degrade.
   if (!judgeShots.length) return null;
   const shots = judgeShots;
 
+  const schema = withDistinct
+    ? { type: 'object', properties: { grades: { type: 'array', items: distinctItem } }, required: ['grades'] }
+    : JUDGE_SCHEMA;
   const list = items.map((it, i) => `${i + 1}. ${it.text}`).join('\n');
-  const messages = [{ role: 'system', content: JUDGE_SYSTEM }];
+  const messages = [{ role: 'system', content: JUDGE_SYSTEM + (withDistinct ? JUDGE_DISTINCT_EXTRA : '') }];
   for (const s of shots) {
-    messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list) });
+    messages.push({ role: 'user', content: judgeUser(s.reqs, s.jd, list, withDistinct) });
+    // The exemplar only knows which items the human kept, so under the distinct
+    // schema it teaches `grade` and mirrors it into `distinct` — the field is
+    // demonstrated as present and in range, not as a second labelled opinion.
     messages.push({ role: 'assistant', content: JSON.stringify({
-      grades: items.map((it, i) => ({ id: i + 1, grade: s.want.has(it.text) ? 3 : 0 })) }) });
+      grades: items.map((it, i) => {
+        // A graded exemplar states all four values per bullet. The binary
+        // fallback cannot: the gold sheet holds keep/drop ticks, and worse, its
+        // project ticks are project *titles* while every item here is a bullet,
+        // so under it all 24 project bullets demonstrate as 0 however the human
+        // ticked them. Demonstrations beat the system prompt, so that is what
+        // the judge learns.
+        const g = s.grades ? (s.grades.get(it.text) ?? 0) : (s.want.has(it.text) ? 3 : 0);
+        return withDistinct ? { id: i + 1, grade: g, distinct: g } : { id: i + 1, grade: g };
+      }) }) });
   }
-  messages.push({ role: 'user', content: judgeUser(reqs, jdText, list) });
+  messages.push({ role: 'user', content: judgeUser(reqs, jdText, list, withDistinct) });
 
   try {
     const res = await _fetch(`${ollamaUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: JUDGE_SCHEMA,
-                             options: { temperature: 0, num_ctx: 12288, num_predict: 1536 } }),
+      body: JSON.stringify({ model: judgeModel, messages, stream: false, format: schema,
+                             options: { temperature: 0, num_ctx: 12288, num_predict: withDistinct ? 2048 : 1536 } }),
       signal: AbortSignal.timeout(judgeTimeoutMs),
     });
     if (!res.ok) return null;
@@ -91,6 +154,7 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     logCall('p3-judge', judgeModel, judged, { extra: `items=${items.length}` });
     const parsed = JSON.parse(judged?.message?.content || '{}');
     const out = new Map();
+    const clamp = v => Math.max(0, Math.min(3, Number(v) || 0));
     // The per-item `id` looks redundant — the order is fixed by the prompt — and
     // dropping it for a bare positional array would save ~660 output tokens, some
     // 35 s of this call. Measured on goldset-2 it costs 0.052 pair accuracy
@@ -98,7 +162,7 @@ export async function judgeGrades(items, reqs, jdText, opts = {}) {
     // redundant to the model; it is what keeps it aligned and deliberate per item.
     for (const e of parsed.grades || []) {
       const it = items[Number(e.id) - 1];
-      if (it) out.set(it.text, Math.max(0, Math.min(3, Number(e.grade) || 0)));
+      if (it) out.set(it.text, { grade: clamp(e.grade), distinct: clamp(e.distinct) });
     }
     return out.size ? out : null;
   } catch {
@@ -187,6 +251,81 @@ function renderEntries(parsed) {
   return out;
 }
 
+// ── Corpus-relative specificity ("spike") ────────────────────────────────────
+
+const SPIKE_CACHE = resolve(__dir, 'cv-spike.json');
+// Below this the mean is a description of a handful of postings rather than of
+// the market, and subtracting it is noise. Returning null leaves plain cosine.
+const SPIKE_MIN_OFFERS = 20;
+
+/**
+ * Mean relevance of each CV bullet across *past* postings.
+ *
+ * Cosine answers "does this bullet match this posting", which every generic
+ * bullet also answers well — so ranking by it ships the fourth way of saying
+ * "CI/CD" and drops the lock-free frame ring. Subtracting each bullet's corpus
+ * mean turns the score into "does this posting like this bullet *more than
+ * postings usually do*", which is what differentiating means.
+ *
+ * Measured on the 128-offer label corpus: +0.084 differentiator coverage on the
+ * train split, +0.072 held out (CI95 [0.032, 0.112], 26-8, p=0.003) at weight 6,
+ * with grade_yield flat — the gain is not bought by shipping less relevant work.
+ * The background MUST come from requirement sets: using the full-JD vectors in
+ * `jd-index.json` instead is a different scale and measured *negative* (-0.025).
+ *
+ * @returns {Promise<number[]|null>} per-bullet corpus mean, aligned to `bullets`
+ */
+export async function spikeBackground(bullets, opts = {}) {
+  const { reportsDir = resolve(__dir, '..', 'reports'), _embed = embed } = opts;
+  if (!existsSync(reportsDir)) return null;
+  const reports = readdirSync(reportsDir).filter(f => f.endsWith('.md')).sort();
+  if (reports.length < SPIKE_MIN_OFFERS) return null;
+
+  // A stubbed embedder must neither read nor write the real cache: the
+  // self-check and any test passing `_embed` would otherwise fill it with fake
+  // vectors — one guard here beats a stub at every call site.
+  // The fingerprint is part of the key for the same reason cv-index.json uses
+  // it: `ollama create snipe-embed` on a new base leaves the tag unchanged, so
+  // a tag-keyed hash keeps stale means silently.
+  const caching = _embed === embed;
+  const hash = caching
+    ? createHash('sha1').update(JSON.stringify(bullets)).update('\n')
+        .update(reports.join(',')).update(await modelFingerprint(opts)).digest('hex')
+    : '';
+  if (caching && existsSync(SPIKE_CACHE)) {
+    try {
+      const c = JSON.parse(readFileSync(SPIKE_CACHE, 'utf8'));
+      if (c.hash === hash && c.mean?.length === bullets.length) return c.mean;
+    } catch { /* rebuild */ }
+  }
+
+  // One requirement set per past report; reports without a parseable Block B
+  // contribute nothing rather than a zero, which would drag every mean down.
+  const reqSets = [];
+  for (const f of reports) {
+    try {
+      const reqs = extractBlockBRequirements(readFileSync(resolve(reportsDir, f), 'utf8'));
+      if (reqs.length) reqSets.push(reqs);
+    } catch { /* skip */ }
+  }
+  if (reqSets.length < SPIKE_MIN_OFFERS) return null;
+
+  const flat = reqSets.flat();
+  const vecs = await _embed([...bullets, ...flat], opts);
+  const bv = vecs.slice(0, bullets.length);
+  const sums = new Array(bullets.length).fill(0);
+  let at = bullets.length;
+  for (const set of reqSets) {
+    const qv = vecs.slice(at, at + set.length);
+    at += set.length;
+    // Max over requirements, matching how selectCvForJd scores a live offer.
+    for (let i = 0; i < bullets.length; i++) sums[i] += Math.max(...qv.map(q => cosine(q, bv[i])));
+  }
+  const mean = sums.map(s => s / reqSets.length);
+  if (caching) try { writeFileSync(SPIKE_CACHE, JSON.stringify({ hash, offers: reqSets.length, mean }), 'utf8'); } catch { /* cache is optional */ }
+  return mean;
+}
+
 // ── Selection ─────────────────────────────────────────────────────────────────
 
 /**
@@ -196,8 +335,25 @@ function renderEntries(parsed) {
  */
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
-    maxProjects = 4, maxBulletsPerProject = 5, maxBulletsPerRole = 4,
-    _embed = embed,
+    maxProjects = 4, maxBulletsPerProject = 4, maxBulletsPerRole = 4,
+    // Project bullets are drawn from one shared budget rather than a flat cap
+    // per project: a posting that is mostly about what one project did should
+    // spend more of the page on that project. The budget is exactly what 4
+    // projects x 2 bullets already rendered, so this redistributes the page
+    // rather than buying more of it, and `maxBulletsPerProject` bounds how
+    // lopsided it can get (4/2/1/1 at worst; 6 was worth a further +0.006 and
+    // renders three projects as a bare title). Every kept project keeps one slot.
+    //
+    // Attributed as the only cause a ranker cannot touch — 21% of missed
+    // differentiators were a third flagged bullet inside a two-bullet project.
+    // Held out over 66 offers on top of the shipped ranker: differentiator
+    // coverage +0.077 CI95 [0.040, 0.115], 27-7, p=0.0008; grade_yield +0.031.
+    projectBulletBudget = maxProjects * 2,
+    // Weight on corpus-relative specificity. 6 is the measured optimum and the
+    // curve is broad (4 -> +0.075, 6 -> +0.084, 8 -> +0.079), so it is a plateau,
+    // not a knife edge. 0 disables it and restores plain cosine ranking.
+    spikeWeight = 6,
+    _embed = embed, _spikeBackground = spikeBackground,
   } = opts;
 
   const queries = (requirements && requirements.length)
@@ -238,6 +394,22 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     it.score = Math.max(...qv.map(q => cosine(q, v)));
   }
 
+  // Subtract each bullet's corpus mean, so the score reads "more than postings
+  // usually like this" rather than "matches this posting". Any failure — too few
+  // past reports, unreadable cache — leaves the plain cosine scores untouched.
+  if (spikeWeight) {
+    try {
+      const bg = await _spikeBackground(items.map(i => i.ctx), opts);
+      // The sweep scored `cos + w*(cos - mean)`. Dividing by (1+w) is a positive
+      // scale factor, so it ranks identically — but it keeps cosine on its
+      // original scale, which matters because the judge term below is a flat
+      // +0.10/grade benchmarked against unscaled cosine. Applied raw, w=6 would
+      // inflate the cosine part sevenfold and quietly delete the rerank.
+      const alpha = spikeWeight / (1 + spikeWeight);
+      if (bg) for (let i = 0; i < items.length; i++) items[i].score -= alpha * bg[i];
+    } catch { /* plain cosine */ }
+  }
+
   // Rerank with the 30B judge, if exemplars are available. Measured on the gold
   // set at +0.10 pair accuracy over cosine alone (CI [0.027, 0.190], 7 offers
   // better 0 worse), and the gain held when the exemplar pair was swapped, so
@@ -261,6 +433,29 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     entry.score = ranked[0]?.score ?? 0;
   }
 
+  /**
+   * How many bullets each kept project gets out of `budget`: one apiece, then
+   * the rest to the highest-scoring bullets anywhere, capped per project.
+   *
+   * Greedy over the pooled bullets rather than a proportional split of the
+   * scores, because the scores are cosines in a narrow band — a proportional
+   * rule off 0.58 vs 0.55 is noise, while "whose next bullet is best" is the
+   * question the page is actually asking.
+   */
+  function allocate(entries, budget, cap) {
+    const n = new Map(entries.map(e => [e, 1]));
+    let spent = entries.length;
+    const rest = entries.flatMap(e =>
+      [...e.scored].sort((a, b) => b.score - a.score).slice(1).map(b => ({ e, score: b.score })));
+    for (const b of rest.sort((x, y) => y.score - x.score)) {
+      if (spent >= budget) break;
+      if ((n.get(b.e) ?? 0) >= cap) continue;
+      n.set(b.e, (n.get(b.e) ?? 0) + 1);
+      spent++;
+    }
+    return n;
+  }
+
   if (expParsed) {
     // UK CV convention: reverse-chronological, never reordered by relevance.
     for (const e of expParsed.entries) trim(e, maxBulletsPerRole);
@@ -272,6 +467,9 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     for (const e of projParsed.entries) trim(e, maxBulletsPerProject);
     projParsed.entries.sort((a, b) => b.score - a.score);
     projParsed.entries.length = Math.min(projParsed.entries.length, maxProjects);
+    // Only now, over the projects that survived, is the bullet budget worth
+    // splitting — spending it on a project that gets dropped wastes it.
+    for (const [e, k] of allocate(projParsed.entries, projectBulletBudget, maxBulletsPerProject)) trim(e, k);
     projParsed.entries.sort((a, b) => entryEndDate(b) - entryEndDate(a));
     proj.lines = renderEntries(projParsed);
   }
@@ -327,9 +525,125 @@ export function remapProjectNames(projects, cvText, minProjects = 3) {
     if (out.length >= minProjects) break;
     if (used.has(r.name)) continue;
     used.add(r.name);
-    out.push({ name: r.name, description: r.bullets.slice(0, 2).join(' ') });
+    // One bullet, not two space-joined: `.join(' ')` welded two sentences into
+    // "…with zero cloud LLM calls Cut fabricated job requirements ~9x…", a
+    // run-on with no separator. padProjectDescriptions extends this to the
+    // length floor afterwards, with real punctuation between clauses.
+    out.push({ name: r.name, description: r.bullets[0] || '' });
   }
   return out;
+}
+
+/**
+ * Split a CV bullet at sentence/clause boundaries, ignoring the ones inside
+ * brackets. A plain `/(?<=[.;])\s+/` split shipped
+ * "Built a Rust microservice testbed (API gateway, hashing, and manifest-signing
+ * services." — the semicolon it broke on was inside the parenthetical, so the
+ * clause ended mid-aside with the bracket never closed. No harness metric parses
+ * sentences, so this was only ever going to be caught by reading the output.
+ * @param {string} s
+ * @returns {string[]}
+ */
+function splitClauses(s) {
+  const out = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+    // Whitespace must follow, so "0.4 ms" and "e.g." are not boundaries.
+    else if ((ch === '.' || ch === ';') && depth === 0 && /\s/.test(s[i + 1] ?? ' ')) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
+}
+
+/**
+ * Pad a short project description from that project's own CV bullets.
+ *
+ * The prompt asks for two sentences and 35-55 words. Measured over twelve
+ * consecutive runs it got a median of 17 and **0 of 36 descriptions inside the
+ * band** — so this is not a wording problem, it is the missing floor again:
+ * nothing downstream ever checked, so nothing ever changed. Spending the repair
+ * retry on an instruction the model has ignored 36 times out of 36 buys a second
+ * 7B call and probably the same answer; the CV text is already here, already
+ * true, and free.
+ *
+ * Padding is clause-by-clause and stops the moment the floor is met, so a
+ * description lands near the bottom of the band instead of inheriting a whole
+ * 50-word bullet. A clause the description already covers is skipped — the model
+ * usually rewrites the leading bullet, and repeating it reads worse than being
+ * short.
+ *
+ * @param {any[]} projects `{name, description}`, names already remapped to the CV's
+ * @param {string} cvText the CV handed to the model (bullets relevance-ordered)
+ * @param {number} minWords
+ */
+export function padProjectDescriptions(projects, cvText, minWords = 35, maxWords = 55) {
+  const sec = parseCvSections(cvText).find(s => s.name === 'Projects');
+  if (!sec || !Array.isArray(projects)) return projects;
+  const real = parseEntries(sec.lines).entries.map(e => ({
+    name: e.head[0].replace(/^###\s+/, '').trim(),
+    bullets: e.bullets,
+  }));
+  const words = s => String(s || '').trim().split(/\s+/).filter(Boolean).length;
+
+  return projects.map(p => {
+    let desc = String(p.description || '').trim();
+    // "Built a high-performance." — the model sometimes stops mid-clause. Padding
+    // such a description only welds good CV prose onto a broken opening, which
+    // reads worse than not tailoring at all, so discard it and build from the CV.
+    if (words(splitClauses(desc)[0] || '') < 6) desc = '';
+    if (desc && words(desc) >= minWords) return p;
+    const pn = String(p.name || '').toLowerCase();
+    const src = real.find(r => r.name.toLowerCase() === pn)
+             || real.find(r => pn && (r.name.toLowerCase().includes(pn) || pn.includes(r.name.toLowerCase())));
+    if (!src) return p;
+    // A CV bullet is often one long semicolon-joined sentence; splitting on
+    // clause boundaries is what keeps the pad from overshooting the band.
+    const dt = toks(desc);
+    const covered = c => {
+      const ct = toks(c);
+      if (!ct.size) return 1;
+      let shared = 0;
+      for (const t of ct) if (dt.has(t)) shared++;
+      return shared / ct.size;
+    };
+    // Least-covered first, so the clause the model already rewrote is the last
+    // one reached and usually never is. A stable sort leaves the untouched
+    // clauses — nearly all of them, scoring 0 — in cv-select's relevance order,
+    // so this costs nothing but the redundancy it removes. Ranking beats a
+    // skip-threshold here: there is no ratio that separates "already said" from
+    // "shares two tokens with what was said".
+    const chunks = src.bullets
+      .flatMap(splitClauses)
+      .map(s => s.replace(/^[;\s]+|[.;\s]+$/g, '').trim())
+      .filter(Boolean)
+      .map((c, i) => ({ c, i, cov: covered(c) }))
+      .sort((a, b) => a.cov - b.cov || a.i - b.i);
+    const add = c => {
+      const s = `${c.charAt(0).toUpperCase()}${c.slice(1)}`.replace(/[.\s]+$/, '');
+      desc = desc ? `${desc.replace(/[.\s]+$/, '')}. ${s}.` : `${s}.`;
+    };
+    const spare = [];
+    for (const { c, cov } of chunks) {
+      if (words(desc) >= minWords) break;
+      if (cov > 0.6) continue; // a near-verbatim repeat is worse than being short
+      // Respect the ceiling while there is any other clause to try. Overshooting
+      // is not free: a 75-word blurb costs four lines, and the page-fit ladder
+      // pays for it by dropping a whole project — which is exactly the floor this
+      // was added to defend.
+      if (words(desc) + words(c) > maxWords) { spare.push(c); continue; }
+      add(c);
+    }
+    // Nothing short enough was left. A project below the floor reads as an
+    // afterthought, so the floor outranks the ceiling on the last clause.
+    if (words(desc) < minWords && spare.length) add(spare[0]);
+    return { ...p, description: desc };
+  });
 }
 
 /**
@@ -344,13 +658,55 @@ export function remapProjectNames(projects, cvText, minProjects = 3) {
  * company names it, otherwise one whose bullets overlap its CV bullets. An
  * employer that claims nothing is backfilled from the CV itself — those bullets
  * are already relevance-ranked and trimmed by selectCvForJd, so a backfilled
- * role is untailored but true, which beats absent. Unclaimed model entries are
- * dropped: they are the duplicates and the projects.
+ * role is untailored but true, which beats absent. An employer that claims an
+ * entry with fewer bullets than the CV gave it is topped back up the same way
+ * (`topUpBullets`). Unclaimed model entries are dropped: they are the duplicates
+ * and the projects.
  *
  * @param {any[]} items model experience entries
  * @param {string} selectedCv the CV text handed to the model
  * @returns {any[]} one entry per real employer, in CV order
  */
+/**
+ * Top a role's bullets back up to the count `selectCvForJd` handed the model.
+ *
+ * Every content guard in Phase 3 is a ceiling — the schema caps counts,
+ * `clampContent` slices, the density ladder trims — so a model that returned one
+ * bullet for a four-bullet role shipped a one-line job and nothing objected
+ * (observed across twelve consecutive CVs, several with 1 bullet per employer).
+ * The whole-entry backfill below already makes this trade for a role the model
+ * dropped entirely; a role it half-dropped deserves the same. These bullets are
+ * relevance-ranked and already trimmed, so an appended one is untailored but
+ * true.
+ *
+ * A rewrite is traced to its source by the same token-overlap argmax the number
+ * guard uses; the sources nothing was rewritten from are what gets appended, in
+ * CV (relevance) order. A rewrite that merged two CV bullets only claims one of
+ * them, so its sibling can reappear — a near-duplicate is a cheaper failure than
+ * a missing bullet, and the alternative is an embedding call per role.
+ *
+ * @param {string[]} modelBullets
+ * @param {string[]} cvBullets the role's bullets from the CV the model was given
+ * @returns {string[]}
+ */
+function topUpBullets(modelBullets, cvBullets) {
+  const kept = (modelBullets || []).filter(b => String(b || '').trim());
+  if (!kept.length || !cvBullets?.length || kept.length >= cvBullets.length) return kept;
+  const used = new Set();
+  for (const b of kept) {
+    const bt = toks(b);
+    let best = -1, bestN = -1;
+    for (let i = 0; i < cvBullets.length; i++) {
+      let n = 0;
+      for (const t of toks(cvBullets[i])) if (bt.has(t)) n++;
+      if (n > bestN) { bestN = n; best = i; }
+    }
+    if (best >= 0) used.add(best);
+  }
+  const spare = cvBullets.filter((_, i) => !used.has(i));
+  return [...new Set([...kept, ...spare.slice(0, cvBullets.length - kept.length)])];
+}
+
 export function reconcileExperience(items, selectedCv) {
   const sec = parseCvSections(selectedCv).find(s => s.name === 'Experience');
   if (!sec || !Array.isArray(items)) return items;
@@ -399,7 +755,8 @@ export function reconcileExperience(items, selectedCv) {
     // it would relabel one role's bullets with another's name.
     if (best >= 0 && bestScore >= 0.35) {
       claimed.add(best);
-      out.push({ ...items[best], company: r.company });
+      out.push({ ...items[best], company: r.company,
+                 bullets: topUpBullets(items[best]?.bullets, r.bullets) });
     } else {
       out.push({ company: r.company, bullets: r.bullets });
     }
@@ -434,7 +791,11 @@ export function cvCompanies(cvText) {
 }
 
 /** Numbers worth attributing to the CV. Single digits are too noisy to track. */
-const NUMERIC = /\d[\d,.]*\+?%?/g;
+// Not preceded by a letter: "L40 Engineer" (Monzo's internal job level) and
+// "v4"/"H100"-style identifiers are names, not claims, and flagging the 40 in
+// one made a job title read as an invented figure. Separators still count, so
+// "AES-256" and "sub-500ms" are unaffected.
+const NUMERIC = /(?<![A-Za-z])\d[\d,.]*\+?%?/g;
 const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
   .map(x => x.replace(/[.,]$/, '')).filter(x => x.length > 1));
 
@@ -465,7 +826,18 @@ const numbersIn = s => new Set((String(s).match(NUMERIC) || [])
 // The word forms matter as much as the digits. A tailored summary produced
 // "over a decade of experience" against a CV claiming no duration at all — no
 // digit anywhere, so the numeric branches could not see it.
-const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\bwith\s+\d[\d.,]*\+?\s*years?\b|\b(?:over|nearly|almost|more\s+than)?\s*(?:a|one|two|three|several|many)?\s*decades?(?:\s+of)?(?:\s+[a-z-]+)?\s+experience\b|\b(?:over|more\s+than)\s+(?:a|one)\s+decade\b/gi;
+// A tenure span ("3+", "1-3", "2 to 4") and up to three qualifier words before
+// "experience". The original pattern allowed a single value and a single
+// qualifier, so "1-3 years of real production experience" — a range lifted from
+// the posting, which cv.md states nowhere — matched nothing and shipped.
+const TEN_N = String.raw`\d[\d.,]*\+?(?:\s*(?:[-–—]|to)\s*\d[\d.,]*\+?)?`;
+const TEN_Q = String.raw`(?:\s+[a-z-]+){0,3}`;
+const TENURE = new RegExp([
+  String.raw`\b(?:with\s+)?${TEN_N}\s*years?(?:\s+of)?${TEN_Q}\s+experience\b`,
+  String.raw`\bwith\s+${TEN_N}\s*years?\b`,
+  String.raw`\b(?:over|nearly|almost|more\s+than)?\s*(?:a|one|two|three|several|many)?\s*decades?(?:\s+of)?${TEN_Q}\s+experience\b`,
+  String.raw`\b(?:over|more\s+than)\s+(?:a|one)\s+decade\b`,
+].join('|'), 'gi');
 
 /**
  * Strip a years-of-experience claim the CV does not make.
@@ -482,6 +854,44 @@ const TENURE = /\b(?:with\s+)?\d[\d.,]*\+?\s*years?(?:\s+of)?(?:\s+[a-z-]+)?\s+e
  * @param {string} cvText the full CV — a tenure it does state is left alone
  * @returns {string}
  */
+/**
+ * Strip a summary clause asserting a figure `cv.md` does not state.
+ *
+ * The experience bullets have `verifyBulletFigures` and the project blurbs have
+ * `verifyProjectFigures`. The summary — the first block anyone reads — had
+ * neither, and shipped "a live subscription platform serving 150+ users" against
+ * a CV that says 170 paying members. `verifyBulletNumbers`' own docstring already
+ * lists `150+` among the invented figures measured across 24 offers, so this was
+ * a known fabrication pattern reaching the one surface nothing guarded.
+ *
+ * Clause surgery rather than reversion, for the reason products get it: a summary
+ * has no single source line to revert to, and a shorter true summary beats a
+ * longer false one.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {string}
+ */
+export function verifySummaryFigures(summary, cvText) {
+  if (typeof summary !== 'string' || !summary) return summary;
+  const cvNums = numbersIn(cvText);
+  // Deflate before cutting. "170+" is the CV's own 170 with an inflating "+"
+  // appended — the exact pattern verifyBulletNumbers measured on 3 of 24 offers.
+  // The claim around it is true and CV-specific ("a GDPR-compliant membership
+  // platform with 170+ paying users"), so deleting the clause threw away real
+  // evidence to remove one character. Correct the figure; only genuinely
+  // unsupported ones then reach the clause surgery.
+  const deflated = summary.replace(/(?<![A-Za-z])(\d[\d,.]*)\+/g,
+    (m, base) => (!cvNums.has(m) && cvNums.has(base) ? base : m));
+  // "800" against a CV that says "800+" is the same claim, weakened — and "over
+  // 800 students" is literally what "800+" means. Requiring the token to match
+  // exactly deleted a true sentence about teaching 800 students, and the
+  // 50-word pad then filled the hole with boilerplate. Only inflation is a
+  // fabrication; understatement is the candidate's own loss to take.
+  const supported = n => cvNums.has(n) || cvNums.has(`${n}+`);
+  return stripUnsupportedClauses(deflated, t => [...numbersIn(t)].some(n => !supported(n)));
+}
+
 export function stripUnsupportedTenure(summary, cvText) {
   if (typeof summary !== 'string' || !summary) return summary;
   const stated = new Set((String(cvText).match(TENURE) || []).map(m => m.toLowerCase().trim()));
@@ -562,7 +972,17 @@ export function stripUnsupportedClauses(text, isBad) {
     const clauses = sentence.split(/,\s*/);
     const clean = clauses.filter(c => !isBad(c));
     if (clean.length && clean.length < clauses.length) {
-      const rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
+      // ponytail: comma-splitting treats a comma-separated adjective list as two
+      // clauses, so dropping one can orphan the other ("building secure," when
+      // the clause carrying the noun goes). Deflating an inflated figure instead
+      // of cutting its clause removed every observed instance — 1 summary in 12
+      // now reaches this path at all, and none of the current corpus orphans.
+      // Upgrade path if that changes: drop the whole sentence when the survivor
+      // ends on a bare adjective, rather than splitting smarter.
+      let rebuilt = clean.join(', ').replace(/\s+and\s*$/i, '').replace(/,\s*$/, '').trim();
+      // Dropping the leading clause promotes a mid-sentence one to sentence start,
+      // which shipped "…across Python, React, and Next.js. strong fundamentals,…".
+      if (rebuilt) rebuilt = rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1);
       if (rebuilt && !isBad(rebuilt)) kept.push(/[.!?]$/.test(rebuilt) ? rebuilt : `${rebuilt}.`);
     }
   }
@@ -684,6 +1104,10 @@ const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.arg
 if (isMain) {
   const assert = (c, m) => { if (!c) { console.error(`✗ ${m}`); process.exit(1); } };
 
+  // Every check below runs a stub embedder against the developer's real
+  // reports/ — none of it may reach the real spike cache.
+  const spikeBefore = existsSync(SPIKE_CACHE) ? readFileSync(SPIKE_CACHE, 'utf8') : null;
+
   const fakeCv = `# Name
 
 ## Summary
@@ -754,6 +1178,23 @@ Text.
   // Reranker: a stub judge that grades one otherwise-weak bullet 3 must pull it
   // above a bullet cosine ranked higher, and a judge failure must change nothing.
   const shots = [{ reqs: ['r'], jd: 'j', want: new Set(['Built Rust encryption service']) }];
+  // A graded exemplar must reach the demonstration, and a binary one must still
+  // fall back — the project entries in a binary `want` are titles, so nothing
+  // cv-select grades ever matches them and all 24 project bullets demonstrate 0.
+  {
+    const seen = { binary: '', graded: '' };
+    const spy = (k) => async (_u, init) => {
+      seen[k] = JSON.parse(init.body).messages.filter(m => m.role === 'assistant')[0].content;
+      return { ok: true, json: async () => ({ message: { content: '{"grades":[]}' } }) };
+    };
+    const one = [{ text: 'Built Rust encryption service' }, { text: 'Wrote Java billing reports' }];
+    await judgeGradesFull(one, ['r'], '', { judgeShots: shots, _fetch: spy('binary') });
+    assert(/"grade":3/.test(seen.binary) && /"grade":0/.test(seen.binary), 'binary exemplar demonstrates 3 and 0');
+    await judgeGradesFull(one, ['r'], '', { _fetch: spy('graded'), judgeShots: [{
+      ...[...shots][0], grades: new Map([['Built Rust encryption service', 1], ['Wrote Java billing reports', 2]]) }] });
+    assert(/"grade":1/.test(seen.graded) && /"grade":2/.test(seen.graded),
+      `graded exemplar demonstrates the middle of the scale, got ${seen.graded}`);
+  }
   // Near-identical vectors, so cosines land in a narrow band the way real ones
   // do (0.4-0.7). Against the original stub's 1.00-vs-0.07 gap a 0.3 grade
   // boost correctly cannot win, which tests nothing about the blend.
@@ -783,6 +1224,54 @@ Text.
     _fetch: async () => { throw new Error('must not be called'); } });
   assert(!noShots.includes('Mentored two juniors'), 'no exemplars means no judge call at all');
 
+  // Allocation: the budget is spent where the posting points, not spread flat.
+  // Crypto Tool is the only project this stub scores, so it must take the spare
+  // bullet — and the total must not grow, which is the whole claim.
+  const projBullets = (cv) => {
+    const sec = parseCvSections(cv).find(s => s.name === 'Projects');
+    return parseEntries(sec.lines).entries.map(e => e.bullets.length);
+  };
+  const alloc = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 3,
+    projectBulletBudget: 3, _embed: stub });
+  const shape = projBullets(alloc);
+  assert(shape.reduce((a, b) => a + b, 0) === 3, `budget spent exactly: got ${shape.join('/')}`);
+  assert(shape.every(n => n >= 1), `no project left a bare title: ${shape.join('/')}`);
+  assert(/Added CLI with 3 subcommands/.test(alloc), 'the spare bullet went to the matching project');
+  // A budget of exactly one-per-project must reproduce the old flat allocation,
+  // or the generalisation moved the baseline it generalises.
+  const flat = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 3,
+    projectBulletBudget: 2, _embed: stub });
+  assert(projBullets(flat).every(n => n === 1), 'a budget of one each allocates one each');
+
+  // The distinctiveness variant must ask for the field and keep it — a schema
+  // the model answers but the parser drops would benchmark as a null result.
+  const sent = { schema: /** @type {any} */ (null), prompt: '' };
+  // Answers exactly what the schema asked for, so the "field absent" case is
+  // real rather than assumed.
+  const distinctFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    sent.schema = body.format;
+    sent.prompt = body.messages.map(m => m.content).join('\n');
+    const wants = body.format.properties.grades.items.required.includes('distinct');
+    return { ok: true, json: async () => ({ message: { content: JSON.stringify({
+      grades: [wants ? { id: 1, grade: 1, distinct: 3 } : { id: 1, grade: 1 }] }) } }) };
+  };
+  const full = await judgeGradesFull([{ text: 'a bullet' }], ['req'], '', {
+    judgeShots: shots, withDistinct: true, _fetch: distinctFetch });
+  assert(full.get('a bullet').distinct === 3, 'distinct field survives parsing');
+  assert(full.get('a bullet').grade === 1, 'grade is still read alongside it');
+  assert(sent.schema.properties.grades.items.required.includes('distinct'),
+    'schema demands the distinct field');
+  assert(/SETS THIS CANDIDATE APART/.test(sent.prompt), 'distinct prompt is actually sent');
+  const plain = await judgeGradesFull([{ text: 'a bullet' }], ['req'], '', {
+    judgeShots: shots, _fetch: distinctFetch });
+  assert(!sent.schema.properties.grades.items.required.includes('distinct'),
+    'default schema is unchanged, so the shipped calibration still applies');
+  assert(!/SETS THIS CANDIDATE APART/.test(sent.prompt), 'and the default prompt is unchanged too');
+  assert(plain.get('a bullet').distinct === 0, 'absent distinct reads as 0, not NaN');
+
   // Metric guarantee: force a no-digit top-2 by querying something both metric
   // bullets miss.
   const out2 = await selectCvForJd(fakeCv, ['mentoring and code review'], '', {
@@ -793,6 +1282,29 @@ Text.
   // No requirements + no JD → untouched
   const out3 = await selectCvForJd(fakeCv, [], '', { _embed: stub });
   assert(out3 === fakeCv, 'no queries → CV returned untouched');
+
+  // Spike: a bullet that every past posting likes equally is filler, and must
+  // lose to one this posting likes unusually much even at a lower raw cosine.
+  // 'generic' scores 0.9 here and 0.9 everywhere; 'niche' scores 0.8 here and
+  // 0.1 in the corpus, so plain cosine keeps 'generic' and spike must not.
+  const spikeCv = '## Experience\n\n### Dev — Co (2020-2024)\n\n- generic agile delivery work\n- niche lock-free ring buffer\n';
+  const dim = t => (/generic/.test(t) ? [0.9, 0] : /niche/.test(t) ? [0.8, 0] : [1, 0]);
+  const spikeEmbed = async texts => texts.map(dim);
+  const bg = { 'generic agile delivery work': 0.9, 'niche lock-free ring buffer': 0.1 };
+  const withSpike = await selectCvForJd(spikeCv, ['the requirement'], '', {
+    maxBulletsPerRole: 1, _embed: spikeEmbed,
+    _spikeBackground: async (bullets) => bullets.map(b => bg[b] ?? 0),
+  });
+  assert(/niche/.test(withSpike), 'spike keeps the bullet this posting likes unusually much');
+  const noSpike = await selectCvForJd(spikeCv, ['the requirement'], '', {
+    maxBulletsPerRole: 1, spikeWeight: 0, _embed: spikeEmbed,
+    _spikeBackground: async (bullets) => bullets.map(b => bg[b] ?? 0),
+  });
+  assert(/generic/.test(noSpike), 'spikeWeight 0 restores plain cosine ranking');
+
+  // Too few past reports must degrade to plain cosine, not to zeros.
+  assert(await spikeBackground(['a'], { reportsDir: resolve(__dir, 'no-such-dir') }) === null,
+    'missing reports dir → null, not a crash');
 
   // Project-name remap: fabricated name → real project by content overlap;
   // exact-ish names untouched; pure inventions dropped.
@@ -819,6 +1331,9 @@ Text.
   ], fakeCv, 3);
   assert(backfilled.length === 3, 'dropped projects backfilled from the CV');
   assert(backfilled.every(p => /Crypto Tool|Web App|Java Batch/.test(p.name)), 'backfill uses real CV projects');
+
+  assert((existsSync(SPIKE_CACHE) ? readFileSync(SPIKE_CACHE, 'utf8') : null) === spikeBefore,
+    'self-check must not write the real spike cache');
 
   console.log('✓ cv-select self-check passed');
 }

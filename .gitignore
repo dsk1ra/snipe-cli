@@ -35,6 +35,7 @@ coverage/
 .nyc_output/
 batch/cv-index.json
 batch/jd-index.json
+batch/cv-spike.json
 
 # Interview prep (accumulated STAR+R stories — user data)
 interview-prep/*

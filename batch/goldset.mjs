@@ -17,13 +17,21 @@ import { fileURLToPath } from 'url';
 import { eligible, buildSample } from './tailor-harness.mjs';
 import { parseCvSections, parseEntries, extractBlockBRequirements } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
+import { loadLabels } from './opus-metrics.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
 const SHEET = resolve(__dirname, 'bench/goldset.md');
 /** Exemplars for the Phase 3 reranker. In batch/, not batch/bench/, because
- *  production reads it and bench/ is gitignored scratch. */
-const SHOTS = resolve(__dirname, 'judge-shots.json');
+ *  production reads it and bench/ is gitignored scratch.
+ *
+ *  SNIPE_JUDGE_SHOTS points it elsewhere, which is what lets a candidate
+ *  exemplar file be benchmarked without production ever reading it — the file
+ *  is not tracked by git, so an overwrite is unrecoverable rather than a
+ *  checkout away. */
+const SHOTS = process.env.SNIPE_JUDGE_SHOTS
+  ? resolve(process.env.SNIPE_JUDGE_SHOTS)
+  : resolve(__dirname, 'judge-shots.json');
 
 export const cvHash = (cvText) => createHash('sha256').update(cvText).digest('hex').slice(0, 16);
 
@@ -36,26 +44,64 @@ export const cvHash = (cvText) => createHash('sha256').update(cvText).digest('he
  * wrong bullet. Text is matched back exactly at load time, and anything that
  * fails to match disables the exemplar rather than guessing.
  */
-function exportShots(ids) {
+function exportShots(ids, { graded = false, expand = false } = {}) {
   const cvText = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
   const atoms = cvAtoms(cvText);
   const byId = new Map(atoms.map(a => [a.id, a]));
   const picks = parseSheet(readFileSync(SHEET, 'utf8'));
   const offers = new Map(eligible().map(o => [o.id, o]));
+  // Graded exemplars come from the Opus label corpus, which grades every atom
+  // 0-3 for every offer. The gold sheet only holds keep/drop ticks, so a binary
+  // exemplar is the best it can express — and the judge copies its exemplars
+  // over its instructions, which is why it emits 30 mid-scale gradings in 4191.
+  const labels = graded ? loadOpusLabels() : null;
   const shots = [];
   for (const id of ids) {
     const want = picks.get(id);
     const o = offers.get(id);
     if (!want?.size || !o) throw new Error(`offer ${id} is not a ticked gold offer`);
-    shots.push({
+    const shot = {
       id, company: o.company, role: o.role,
       reqs: extractBlockBRequirements(readFileSync(resolve(PROJECT, o.report), 'utf8')),
       jd: readFileSync(resolve(PROJECT, o.jd), 'utf8').slice(0, 2500),
-      wantText: [...want].map(i => byId.get(i)?.text).filter(Boolean),
-    });
+      // A ticked project's `text` is its title, and no item cv-select grades is
+      // ever a title — so under the default it demonstrates as 0 along with
+      // every other project bullet. `expand` emits the project's own bullets
+      // instead, which is what the tick actually meant, in the space the
+      // consumer matches in. Experience atoms are already bullets either way.
+      wantText: [...want].flatMap(i => {
+        const a = byId.get(i);
+        if (!a) return [];
+        return expand && a.kind === 'project' ? a.parts : [a.text];
+      }),
+    };
+    if (labels) {
+      const l = labels.get(String(id));
+      if (!l) throw new Error(`offer ${id} has no Opus label — cannot grade it`);
+      // Keyed by the label's OWN atom text, never through cvAtoms. The two live
+      // in different spaces: cvAtoms makes a project one atom named by its title
+      // (14 atoms), while the labels and cv-select's items are per bullet (33).
+      // Mapping a label id through cvAtoms pairs unrelated atoms silently, and
+      // it is the same mismatch that makes `wantText`'s project entries dead —
+      // they are titles, and nothing cv-select grades is ever a title.
+      const textOf = new Map(l.atoms.map((a, i) => [i + 1, a.text]));
+      shot.gradeText = Object.fromEntries(l.grades
+        .map(g => [textOf.get(g.id), g.grade])
+        .filter(([t]) => t));
+      const h = [0, 0, 0, 0];
+      for (const g of Object.values(shot.gradeText)) h[g]++;
+      if (h.filter(Boolean).length < 3)
+        throw new Error(`offer ${id} grades ${h.join('/')} — too flat to teach the scale`);
+    }
+    shots.push(shot);
   }
-  writeFileSync(SHOTS, JSON.stringify({ cvHash: cvHash(cvText), shots }, null, 1));
-  console.log(`wrote ${shots.length} exemplars to ${SHOTS}`);
+  writeFileSync(SHOTS, JSON.stringify({ cvHash: cvHash(cvText), graded: !!labels, shots }, null, 1));
+  console.log(`wrote ${shots.length} ${graded ? 'graded' : 'binary'} exemplars to ${SHOTS}`);
+}
+
+/** The Opus corpus, keyed by offer id. Safe to import: it pulls in no cycle. */
+function loadOpusLabels() {
+  return new Map([...loadLabels().values()].map(l => [String(l.offer.id), l]));
 }
 
 /**
@@ -71,7 +117,12 @@ export function loadExemplars(cvText, shotsPath = SHOTS) {
   if (!existsSync(shotsPath)) return [];
   let d;
   try { d = JSON.parse(readFileSync(shotsPath, 'utf8')); } catch { return []; }
-  const known = new Set(cvAtoms(cvText).map(a => a.text));
+  // Both spaces: an atom's own text (a bullet, or a project title) and its
+  // `parts` (the bullets cv-select actually grades). The guard existed to catch
+  // a bullet reworded since labelling, and validating titles only meant an
+  // expanded exemplar — the one that names bullets, as the consumer does —
+  // would be dropped as unmatched while the broken title form passed.
+  const known = new Set(cvAtoms(cvText).flatMap(a => [a.text, ...(a.parts || [])]));
   const out = [];
   for (const s of d.shots || []) {
     const texts = s.wantText || [];
@@ -79,7 +130,10 @@ export function loadExemplars(cvText, shotsPath = SHOTS) {
     // the human picked. Drop it; a missing exemplar is recoverable, a wrong one
     // teaches the judge the opposite of the intended taste.
     if (!texts.length || texts.some(t => !known.has(t))) continue;
-    out.push({ ...s, want: new Set(texts) });
+    // `grades` is per bullet, in cv-select's own item space, so unlike `want` it
+    // needs no translation and covers projects. Absent on a binary exemplar file,
+    // and the consumer falls back to want.has()?3:0 when it is.
+    out.push({ ...s, want: new Set(texts), grades: s.gradeText ? new Map(Object.entries(s.gradeText)) : null });
   }
   return out;
 }
@@ -230,7 +284,8 @@ const arg = (f, d) => { const i = process.argv.indexOf(f); return i === -1 ? d :
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const cmd = isMain ? process.argv[2] : null;
 if (!isMain) { /* imported: expose helpers, run nothing */ }
-else if (cmd === 'export-shots') exportShots(String(arg('--ids', '5,50')).split(','));
+else if (cmd === 'export-shots') exportShots(String(arg('--ids', '5,50')).split(','),
+  { graded: process.argv.includes('--graded'), expand: process.argv.includes('--expand') });
 else if (cmd === 'sheet') writeSheet(Number(arg('--n', 12)), Number(arg('--min-score', 3.5)), process.argv.includes('--force'), String(arg('--out', SHEET)), arg('--exclude', null));
 else if (cmd === 'score') await scoreSheet(String(arg('--sheet', SHEET)));
 else if (cmd === 'selfcheck') {
@@ -257,4 +312,5 @@ else if (cmd === 'selfcheck') {
   assert(loadExemplars(cvT, tmp).length === 0, 'unmatched atom text drops the exemplar');
   assert(loadExemplars(cvT, resolve(PROJECT, 'batch/bench/.nope.json')).length === 0, 'missing file is empty, not fatal');
   console.log('goldset selfcheck ok');
-} else console.log('usage: sheet [--n 12] [--min-score 3.5] | score | export-shots [--ids 5,50] | selfcheck');
+} else console.log('usage: sheet [--n 12] [--min-score 3.5] | score |\n' +
+  '       export-shots [--ids 5,50] [--graded] [--expand] | selfcheck');
