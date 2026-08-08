@@ -4,7 +4,7 @@
  * generate-pdf.mjs — HTML → PDF via Playwright
  *
  * Usage:
- *   node generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4]
+ *   node generate-pdf.mjs <input.html> <output.pdf> [--max-pages=N] [--source-url=URL]
  *
  * Requires: @playwright/test (or playwright) installed.
  * Uses Chromium headless to render the HTML and produce a clean, ATS-parseable PDF.
@@ -150,13 +150,22 @@ function extractSourceSectionOrder(markdown) {
   return sections;
 }
 
+// Sections the template places itself, so cv.md's ordering does not bind them.
+// Skills renders directly under the summary wherever cv.md happens to put it:
+// that position is a measured layout decision, not a content one. It used to
+// render dead last, below Certifications on page 2 — the worst spot on the
+// document for the one section a keyword scan reads first. Everything else still
+// has to follow cv.md, which is what this check exists for.
+const TEMPLATE_ORDERED = new Set(['skills']);
+
 function validateCvSectionOrder(html, cvMarkdown) {
   const rendered = extractRenderedSectionOrder(html);
   const source = extractSourceSectionOrder(cvMarkdown);
   if (rendered.length < 2 || source.length < 2) return;
 
   const sourcePositions = new Map(source.map((section, index) => [section.key, index]));
-  const renderedComparable = rendered.filter(section => sourcePositions.has(section.key));
+  const renderedComparable = rendered.filter(
+    section => sourcePositions.has(section.key) && !TEMPLATE_ORDERED.has(section.key));
   if (renderedComparable.length < 2) return;
 
   for (let i = 1; i < renderedComparable.length; i++) {
@@ -177,12 +186,10 @@ async function generatePDF() {
   const args = process.argv.slice(2);
 
   // Parse arguments
-  let inputPath, outputPath, format = 'a4', maxPages = null, sourceUrl = null;
+  let inputPath, outputPath, maxPages = null, sourceUrl = null;
 
   for (const arg of args) {
-    if (arg.startsWith('--format=')) {
-      format = arg.split('=')[1].toLowerCase();
-    } else if (arg.startsWith('--max-pages=')) {
+    if (arg.startsWith('--max-pages=')) {
       maxPages = parseInt(arg.split('=')[1], 10);
     } else if (arg.startsWith('--source-url=')) {
       sourceUrl = arg.slice('--source-url='.length);
@@ -194,23 +201,15 @@ async function generatePDF() {
   }
 
   if (!inputPath || !outputPath) {
-    console.error('Usage: node generate-pdf.mjs <input.html> <output.pdf> [--format=letter|a4] [--max-pages=N] [--source-url=URL]');
+    console.error('Usage: node generate-pdf.mjs <input.html> <output.pdf> [--max-pages=N] [--source-url=URL]');
     process.exit(1);
   }
 
   inputPath = resolve(inputPath);
   outputPath = resolve(outputPath);
 
-  // Validate format
-  const validFormats = ['a4', 'letter'];
-  if (!validFormats.includes(format)) {
-    console.error(`Invalid format "${format}". Use: ${validFormats.join(', ')}`);
-    process.exit(1);
-  }
-
   console.log(`Input:  ${inputPath}`);
   console.log(`Output: ${outputPath}`);
-  console.log(`Format: ${format.toUpperCase()}`);
 
   let html = await readFile(inputPath, 'utf-8');
   let cvMarkdown = '';
@@ -230,7 +229,7 @@ async function generatePDF() {
     console.log(`ATS normalization: ${totalReplacements} replacements (${breakdown})`);
   }
 
-  const result = await renderHtmlToPdf(html, outputPath, { format, baseDir: dirname(inputPath) });
+  const result = await renderHtmlToPdf(html, outputPath, { baseDir: dirname(inputPath) });
 
   // Embed the job-posting URL into PDF metadata (Subject + Keywords) so the
   // source posting is visible in any PDF reader's document properties.
@@ -304,13 +303,18 @@ export async function inlineLocalFonts(html) {
  * Local url('./fonts/...') references are inlined as data: URLs first so
  * fonts render regardless of page origin (see inlineLocalFonts).
  *
+ * Always A4. US Letter used to be selectable, chosen by a regex over the JD that
+ * matched the pronoun in "join us" and so put UK postings on the wrong paper. The
+ * option was not worth keeping: Letter is 66px shorter, which costs about four
+ * bullet lines on a CV fighting to stay on one page, and no ATS or recruiter
+ * screens on a 6mm width difference.
+ *
  * @param {string} html - Full HTML document to render.
  * @param {string} outputPath - Absolute path to write the PDF to.
- * @param {{format?: 'a4'|'letter', baseDir?: string}} [opts]
+ * @param {{baseDir?: string}} [opts]
  * @returns {Promise<{outputPath: string, pageCount: number, size: number}>}
  */
 export async function renderHtmlToPdf(html, outputPath, opts = {}) {
-  const format = opts.format || 'a4';
   const baseDir = opts.baseDir || process.cwd();
 
   mkdirSync(dirname(outputPath), { recursive: true });
@@ -345,13 +349,18 @@ export async function renderHtmlToPdf(html, outputPath, opts = {}) {
 
     // Generate PDF
     const pdfBuffer = await page.pdf({
-      format: format,
+      format: 'a4',
       printBackground: true,
+      // 0.45in, not 0.6in. Measured on A4: the content box goes 679x1007 ->
+      // 708x1036 px, worth 29px of height and 29px of width — and the width
+      // matters as much, since a wider column wraps fewer bullets onto a third
+      // line. Well inside any printer's unprintable margin, and the PDF is read
+      // on screen anyway. Do not go below 0.4in; that starts to look cramped.
       margin: {
-        top: '0.6in',
-        right: '0.6in',
-        bottom: '0.6in',
-        left: '0.6in',
+        top: '0.45in',
+        right: '0.45in',
+        bottom: '0.45in',
+        left: '0.45in',
       },
       preferCSSPageSize: false,
     });

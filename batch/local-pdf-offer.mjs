@@ -124,12 +124,6 @@ function nextTrackerNum() {
   return max + 1;
 }
 
-function detectFormat(reportText, jdText) {
-  const combined = (reportText + jdText).toLowerCase();
-  if (/\b(united states|usa|\bus\b|canada|san francisco|new york|seattle|boston|austin)\b/.test(combined)) return 'letter';
-  return 'a4';
-}
-
 // ── Extract profile narrative ─────────────────────────────────────────────────
 
 function extractProfileNarrative(profileText) {
@@ -891,7 +885,6 @@ try {
 } catch {}
 
 const pdfFile   = resolve(appDir, `${candidateName}-CV.pdf`);
-const format    = detectFormat(reportText, jdText);
 const fillScript = resolve(__dirname, 'fill-cv-template.mjs');
 const generatePdf= resolve(PROJECT, 'generate-pdf.mjs');
 
@@ -900,9 +893,9 @@ function runFill(maxSkills, maxBullets, maxProjectBullets) {
     fillScript,
     '--content',    contentFile,
     '--output',     htmlFile,
-    '--format',     format,
     '--max-skills', String(maxSkills),
   ];
+  if (args.role) a.push('--role', args.role);
   if (maxBullets) a.push('--max-bullets', String(maxBullets));
   if (maxProjectBullets) a.push('--max-project-bullets', String(maxProjectBullets));
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
@@ -964,7 +957,6 @@ for (let step = 0; step < LADDER.length; step++) {
   try {
     execFileSync(process.execPath, [
       generatePdf, htmlFile, pdfFile,
-      `--format=${format}`,
       '--max-pages=2',
       `--source-url=${args.url}`,
     ], { stdio: 'inherit', cwd: PROJECT });

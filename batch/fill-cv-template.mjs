@@ -5,8 +5,7 @@
  * Usage:
  *   node batch/fill-cv-template.mjs \
  *     --content /tmp/cv-content-42.json \
- *     --output output/2026-01-01_company_042/source.html \
- *     --format a4|letter
+ *     --output output/2026-01-01_company_042/source.html
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
@@ -33,15 +32,15 @@ for (let i = 2; i < process.argv.length; i++) {
 
 const contentPath = args['content'];
 const outputPath  = args['output'];
-const format      = (args['format'] || 'a4').toLowerCase();
 const maxSkills   = args['max-skills'] ? parseInt(args['max-skills'], 10) : null; // null = all
+const targetRole  = (args['role'] || '').trim(); // printed under the name; omitted when absent
 const maxBullets  = args['max-bullets'] ? parseInt(args['max-bullets'], 10) : null; // null = all; caps bullets per role
 // Same idea for the project lists, so the density ladder can shorten a project
 // instead of only being able to delete one.
 const maxProjBullets = args['max-project-bullets'] ? parseInt(args['max-project-bullets'], 10) : null;
 
 if (!contentPath || !outputPath) {
-  console.error('Usage: fill-cv-template.mjs --content <json> --output <html> [--format a4|letter] [--max-skills N]');
+  console.error('Usage: fill-cv-template.mjs --content <json> --output <html> [--max-skills N] [--role "Title"]');
   process.exit(1);
 }
 
@@ -302,10 +301,6 @@ function parseSkills(lines) {
 
 // ── HTML builders ─────────────────────────────────────────────────────────────
 
-function buildCompetencies(list) {
-  return list.map(c => `<span class="competency-tag">${esc(c)}</span>`).join('\n      ');
-}
-
 // UK CV convention: ALL companies, reverse-chronological, never reordered or
 // silently dropped by the model — the CV itself is the source of truth for
 // the company list and order; the model only supplies (or fails to supply,
@@ -323,14 +318,15 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
     // so the page-fit ladder can reduce depth uniformly without gutting any one
     // role. Bullets are already ordered most-relevant-first.
     const bullets = maxBullets ? e.bullets.slice(0, maxBullets) : e.bullets;
+    // Company, location, title and dates share one line. Three stacked lines cost
+    // 51px a role and said nothing the single line does not.
+    const meta = [e.location, e.role].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
     return `
     <div class="job">
       <div class="job-header">
-        <span class="job-company">${esc(e.company)}</span>
+        <span><span class="job-company">${esc(e.company)}</span>${meta ? ` <span class="job-meta">${meta}</span>` : ''}</span>
         <span class="job-period">${esc(e.period)}</span>
       </div>
-      <div class="job-role">${esc(e.role)}</div>
-      <div class="job-location">${esc(e.location)}</div>
       <ul>
         ${bullets.map(b => `<li>${boldMetrics(esc(b))}</li>`).join('\n        ')}
       </ul>
@@ -367,7 +363,10 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
   }
 
   return chosen.map(({ cv, description, bullets }) => {
-    const techLine = [cv.tech, cv.period].filter(Boolean).join(' | ');
+    // cv.md carries a repo URL per project and it was parsed but never rendered,
+    // so every tailored CV silently dropped the one link a reviewer can click to
+    // check the claim. It rides the tech line, which already exists.
+    const techLine = [cv.tech, cv.period, cv.url].filter(Boolean).join(' | ');
     // Bullets when the writer supplies them, one paragraph otherwise.
     //
     // The paragraph was the only shape for a long time, and it is where the
@@ -401,9 +400,15 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
 // When the LLM supplies `education_modules` (a JD-relevant subset), rewrite the
 // "Key Modules:" line to those modules only; other extra lines (Achievement,
 // etc.) are kept as-is. Without the field, the CV's modules pass through verbatim.
-function buildEducationHtml(eduEntries, selectedModules) {
+function buildEducationHtml(eduEntries, selectedModules, certs = []) {
   const sel = Array.isArray(selectedModules) && selectedModules.length > 0 ? selectedModules : null;
-  return eduEntries.map(e => {
+  // Certifications ride the last education entry as one more desc line. Its own
+  // section cost 42px of heading, rule and margin to carry two lines of content.
+  // Name and year only — the awarding body repeats what the name already says.
+  const certLine = certs.length
+    ? `Certifications: ${certs.map(c => [c.name, c.year].filter(Boolean).join(', ')).join(' • ')}`
+    : '';
+  return eduEntries.map((e, i) => {
     // The degree line is "<Degree> — <Classification>"; splitting on the dash and
     // keeping [0] threw the classification away, so "First Class Honours (80+
     // average)" — the strongest single credential a recent graduate has — never
@@ -421,16 +426,9 @@ function buildEducationHtml(eduEntries, selectedModules) {
         <span class="edu-year">${esc(e.period)}</span>
       </div>
       ${extraText ? `<div class="edu-desc">${esc(extraText)}</div>` : ''}
+      ${i === eduEntries.length - 1 && certLine ? `<div class="edu-desc">${esc(certLine)}</div>` : ''}
     </div>`;
   }).join('\n');
-}
-
-function buildCertsHtml(certs) {
-  return certs.map(c => `
-    <div class="cert-item">
-      <div class="cert-title">${esc(c.name)}${c.org ? ` <span class="cert-org">— ${esc(c.org)}</span>` : ''}</div>
-      <div class="cert-year">${esc(c.year)}</div>
-    </div>`).join('\n');
 }
 
 // Resolve which skill rows to render. Accepts either the new `skills` field
@@ -513,11 +511,9 @@ const cand = profile.candidate || {};
 const linkedin = cand.linkedin || '';
 const github   = cand.github   || '';
 
-const pageWidth = format === 'letter' ? '816px' : '794px';
-
 const replacements = {
   '{{LANG}}':                  'en',
-  '{{PAGE_WIDTH}}':            pageWidth,
+  '{{PAGE_WIDTH}}':            '794px',   // A4 at 96dpi; the only paper we render
   '{{NAME}}':                  esc(cand.full_name || ''),
   '{{PHONE}}':                 esc(cand.phone || ''),
   '{{EMAIL}}':                 esc(cand.email || ''),
@@ -526,19 +522,16 @@ const replacements = {
   '{{PORTFOLIO_URL}}':         github.startsWith('http') ? github : `https://${github}`,
   '{{PORTFOLIO_DISPLAY}}':     esc(github),
   '{{LOCATION}}':              esc(cand.location || ''),
+  '{{TARGET_ROLE}}':           targetRole ? `<div class="target-role">${esc(targetRole)}</div>` : '',
   '{{SECTION_SUMMARY}}':       'Professional Summary',
   '{{SUMMARY_TEXT}}':          boldMetrics(esc(content.summary || '')),
-  '{{SECTION_COMPETENCIES}}':  'Core Competencies',
-  '{{COMPETENCIES}}':          buildCompetencies(content.competencies || []),
   '{{SECTION_EXPERIENCE}}':    'Work Experience',
   '{{EXPERIENCE}}':            buildExperienceHtml(cvExp, content.experience, maxBullets),
   '{{SECTION_PROJECTS}}':      'Projects',
   '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects, maxProjBullets),
-  '{{SECTION_EDUCATION}}':     'Education',
-  '{{EDUCATION}}':             buildEducationHtml(cvEdu, content.education_modules),
-  '{{SECTION_CERTIFICATIONS}}':'Certifications',
-  '{{CERTIFICATIONS}}':        buildCertsHtml(cvCerts),
-  '{{SECTION_SKILLS}}':        'Skills',
+  '{{SECTION_EDUCATION}}':     cvCerts.length ? 'Education &amp; Certifications' : 'Education',
+  '{{EDUCATION}}':             buildEducationHtml(cvEdu, content.education_modules, cvCerts),
+  '{{SECTION_SKILLS}}':        'Technical Skills',
   '{{SKILLS}}':                buildSkillsHtml(resolveSkills(cvSkills, content, maxSkills, cvText)),
 };
 
