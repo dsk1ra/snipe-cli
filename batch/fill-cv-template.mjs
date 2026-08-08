@@ -366,7 +366,14 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
     // cv.md carries a repo URL per project and it was parsed but never rendered,
     // so every tailored CV silently dropped the one link a reviewer can click to
     // check the claim. It rides the tech line, which already exists.
-    const techLine = [cv.tech, cv.period, shortRepo(cv.url)].filter(Boolean).join(' | ');
+    // The repo is a link, not text. A reviewer who wants to check a claim should
+    // not have to retype a URL off a PDF — and the tech line is the only place
+    // the CV offers one per project.
+    const techText = [cv.tech, cv.period].filter(Boolean).map(esc).join(' | ');
+    const repoHtml = cv.url
+      ? `<a href="${esc(absoluteUrl(cv.url))}">${esc(shortRepo(cv.url))}</a>`
+      : '';
+    const techLine = [techText, repoHtml].filter(Boolean).join(' | ');
     // Bullets when the writer supplies them, one paragraph otherwise.
     //
     // The paragraph was the only shape for a long time, and it is where the
@@ -392,7 +399,7 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
         <span class="project-title">${esc(cv.name)}</span>${cv.badge ? `\n        <span class="project-badge">${esc(cv.badge)}</span>` : ''}
       </div>
       ${body}
-      ${techLine ? `<div class="project-tech">${esc(techLine)}</div>` : ''}
+      ${techLine ? `<div class="project-tech">${techLine}</div>` : ''}
     </div>`;
   }).join('\n');
 }
@@ -405,6 +412,13 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
 // whole row to say nothing. The host is redundant — the header already carries
 // the GitHub profile — so a github.com URL renders as `owner/repo`. Any other
 // host keeps its name, because there the domain is the information.
+// cv.md writes repo URLs bare ("github.com/dsk1ra/snipe-cli"). An href without a
+// scheme resolves against the file:// page and points nowhere.
+function absoluteUrl(url) {
+  const s = String(url || '').trim();
+  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
+}
+
 function shortRepo(url) {
   const s = String(url || '').replace(/^https?:\/\//, '').replace(/^www\./, '');
   const m = s.match(/^github\.com\/(.+)$/i);
@@ -539,6 +553,8 @@ const replacements = {
   '{{PAGE_WIDTH}}':            '794px',   // A4 at 96dpi; the only paper we render
   '{{NAME}}':                  esc(cand.full_name || ''),
   '{{PHONE}}':                 esc(cand.phone || ''),
+  // tel: wants no spaces, brackets or dashes; the printed number keeps them.
+  '{{PHONE_TEL}}':             esc(String(cand.phone || '').replace(/[^\d+]/g, '')),
   '{{EMAIL}}':                 esc(cand.email || ''),
   '{{LINKEDIN_URL}}':          linkedin.startsWith('http') ? linkedin : `https://${linkedin}`,
   '{{LINKEDIN_DISPLAY}}':      esc(linkedin),
