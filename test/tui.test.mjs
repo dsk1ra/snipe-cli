@@ -385,6 +385,17 @@ async function drive(...keys) {
     if (/No result folder for this item/.test(noResult)) pass('"o" reports a missing output folder');
     else fail('"o" did not report the missing output folder');
 
+    // …and then stops saying so. The message is feedback on the last keypress,
+    // not a log line, so poll() sweeps it once MSG_TTL_MS has passed. The TTL is
+    // shrunk here for the same reason the rejection grace is: at the driver's
+    // 140 ms a key, a real 5 s wait would be the slowest test in the suite. The
+    // j/k filler burns a poll tick without touching the message itself.
+    ENV.SNIPE_MSG_TTL_MS = '300';
+    const faded = await drive(...TO_DONE, 'o', 'j', 'k', 'j', 'k', 'j', 'k', 'j', 'k');
+    delete ENV.SNIPE_MSG_TTL_MS;
+    if (!/No result folder/.test(faded)) pass('a footer message clears itself instead of hanging around');
+    else fail('the footer message was still on screen after its TTL');
+
     // ── Retry ────────────────────────────────────────────────────────────────
 
     // Third row up from the end is the Phase 1 failure: retryable, so its stops

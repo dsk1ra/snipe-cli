@@ -248,7 +248,7 @@ const S = {
   lastInput: 'jd', // where Tab re-enters the input group
   jd: '', url: '',
   help: false,       // ? overlay — the key reference the footer no longer carries
-  msg: '', msgIsError: false,
+  msg: '', msgIsError: false, msgAt: 0, // msgAt: set by setMsg, swept by poll — see MSG_TTL_MS
   busy: false,
   drainActive: false,
   scanActive: false,
@@ -279,6 +279,7 @@ function poll() {
   S.skipped = readMarkMap(SKIPPED_FILE);
   S.declined = readMarkMap(DECLINED_FILE);
   for (const [id, row] of rows) if (failedPhase(row)) writeErrorFile(id, row);
+  if (S.msg && Date.now() - S.msgAt >= MSG_TTL_MS) S.msg = ''; // poll ticks every 1 s, so it clears at 5–6 s
   if (S.tab === 'activity') S.act = activityBuckets();
 }
 
@@ -383,7 +384,14 @@ function itemInfo(id) {
   return { ...base, kind: 'pending' }; // popped but no active run (interrupted drain)
 }
 
-function setMsg(msg, isError = false) { S.msg = msg; S.msgIsError = isError; }
+// The footer message is feedback, not a log: it says what the last keypress did
+// and then gets out of the way. Expiry is stamped here and swept by poll() —
+// one clock the TUI already runs, rather than 54 call sites each owning a timer.
+// No countdown: a message ticking down draws more attention than it deserves.
+// Overridable for the same reason SNIPE_REJECT_GRACE_MS is: the driver's clock
+// is 140 ms a key, so a real 5 s wait would be the slowest test in the suite.
+const MSG_TTL_MS = Number(process.env.SNIPE_MSG_TTL_MS) || 5000;
+function setMsg(msg, isError = false) { S.msg = msg; S.msgIsError = isError; S.msgAt = Date.now(); }
 
 // Follow-ups change daily, not per second — refreshed on mount, every 10 min,
 // and after toggling applied. Async; panel shows '—' until first result.
