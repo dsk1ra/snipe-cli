@@ -590,9 +590,18 @@ if (!cached) try {
     const { loadExemplars } = await import('./goldset.mjs');
     judgeShots = loadExemplars(cvText);
   } catch { /* no exemplars: cosine-only selection, same as before */ }
+  // Selection budget. SNIPE_LINE_BUDGET=0 restores count-based selection, and
+  // the three count knobs exist so the E2 control — naive count-cutting tuned
+  // until it fits one page — is runnable as an arm. Defaults are the shipped
+  // values, so an unset environment is the shipped selector.
+  const num = (k, d) => parseInt(process.env[k] ?? String(d), 10) || d;
+  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '21', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
-    { ollamaUrl: args.ollamaUrl, judgeShots });
+    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget,
+      maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
+      projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
+      maxProjects:         num('SNIPE_MAX_PROJECTS', 4) });
   storeSelection(cvForPrompt);
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);

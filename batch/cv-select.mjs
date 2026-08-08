@@ -329,9 +329,32 @@ export async function spikeBackground(bullets, opts = {}) {
 // ── Selection ─────────────────────────────────────────────────────────────────
 
 /**
+ * Rendered lines a bullet will occupy on the tailored CV.
+ *
+ * 124 characters per line is measured, not assumed: rendered against the shipped
+ * template at the A4 content box, `ceil(len/124)` predicts the exact line count
+ * for 30 of 32 distinct bullets and — the property that matters — **never
+ * predicts fewer lines than render.** Underestimating overruns the page
+ * silently; overestimating only leaves a little of it unused. At 126 the
+ * underestimates start.
+ *
+ * It is tied to the column width, so a template change moves it. Recalibrate
+ * with the same sweep if `CONTENT_BOX`, the body font or `.job li` padding
+ * change; 95 was right for the 0.6in margins this used to render at, and was
+ * wrong by a third of a line per bullet the moment Phase A widened the column.
+ *
+ * @param {string} text
+ * @returns {number}
+ */
+export function bulletLines(text) {
+  return Math.max(1, Math.ceil(String(text || '').length / 124));
+}
+
+/**
  * Returns a trimmed cv.md string, or the original text untouched when there is
  * nothing to rank against (no requirements and no JD).
- * opts: { maxProjects, maxBulletsPerProject, maxBulletsPerRole, ollamaUrl, _embed }
+ * opts: { maxProjects, maxBulletsPerProject, maxBulletsPerRole, lineBudget,
+ *         ollamaUrl, _embed }
  */
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
@@ -349,6 +372,21 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     // Held out over 66 offers on top of the shipped ranker: differentiator
     // coverage +0.077 CI95 [0.040, 0.115], 27-7, p=0.0008; grade_yield +0.031.
     projectBulletBudget = maxProjects * 2,
+    // Total rendered bullet-lines the page can carry, across experience AND
+    // projects. null keeps the old count-based behaviour.
+    //
+    // The page is rationed in lines; this function used to ration bullets. A
+    // 4-line bullet and a 1-line bullet cost the same against a count budget and
+    // four times as much of the page, so the ranker had never seen the page at
+    // all. Measured on 32 offers in the post-Phase-A layout: 21-24 lines fit
+    // (median 22), and 35-40 ship (median 37).
+    //
+    // Production passes the MINIMUM of that range, not the median — a budget
+    // that fits the typical offer overruns the third of them carrying the
+    // heaviest chrome, and the gate is "32 of 32 fit", not "most fit". The
+    // range is chrome-bound, so it moves whenever the layout does: dropping the
+    // certifications line was worth exactly one line of it.
+    lineBudget = null,
     // Weight on corpus-relative specificity. 6 is the measured optimum and the
     // curve is broad (4 -> +0.075, 6 -> +0.084, 8 -> +0.079), so it is a plateau,
     // not a knife edge. 0 disables it and restores plain cosine ranking.
@@ -422,11 +460,20 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
 
   // Keep the top-N bullets per entry (relevance order — the tailor prompt asks
   // for most-relevant first anyway), guaranteeing at least one metric bullet.
-  function trim(entry, keep) {
+  //
+  // `budgeted` makes that guarantee pay for itself. The swap replaces the
+  // lowest-ranked kept bullet with the best digit-carrying one, which under a
+  // line budget can trade a 1-line bullet for a 4-line one and put the page
+  // three lines over with no ranker involved. It fires on 42% of single-slot
+  // project bullets, so it is not a corner case. Under a budget the swap only
+  // happens when the replacement is no longer than what it displaces.
+  function trim(entry, keep, budgeted = false) {
     const ranked = [...entry.scored].sort((a, b) => b.score - a.score);
     const kept = ranked.slice(0, keep);
     if (kept.length && !kept.some(b => /\d/.test(b.text))) {
-      const metric = ranked.find(b => /\d/.test(b.text));
+      const out = kept[kept.length - 1];
+      const metric = ranked.find(b => /\d/.test(b.text)
+        && (!budgeted || bulletLines(b.text) <= bulletLines(out.text)));
       if (metric) kept[kept.length - 1] = metric;
     }
     entry.bullets = kept.map(b => b.text);
@@ -456,20 +503,81 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     return n;
   }
 
+  /**
+   * The same allocation, spending rendered LINES instead of bullet slots, over
+   * every entry on the page at once rather than projects alone.
+   *
+   * Two changes from `allocate`, and they are the whole of E2:
+   *
+   * 1. A bullet costs what it occupies. Against a count budget a four-line
+   *    bullet and a one-line bullet are the same price and four times the page.
+   * 2. Experience and projects draw on one budget. Experience had none at all —
+   *    a flat `maxBulletsPerRole` — so two roles took whatever they took and
+   *    projects were trimmed around them.
+   *
+   * Ranking is by score per line, not score. That is the question a fixed page
+   * actually asks: not "which bullet is best" but "which bullet is the best use
+   * of the three lines it costs". A marginally weaker one-line bullet beats a
+   * marginally stronger three-line one, and beating it is the point.
+   *
+   * Every entry still keeps its top bullet before any of this, so a budget too
+   * small to go round starves nobody entirely — it just stops early, and the
+   * result is over budget rather than an entry rendered as a bare heading.
+   * `caps` bounds how lopsided one entry can get, as before.
+   */
+  function allocateLines(entries, budget, caps) {
+    const n = new Map(entries.map(e => [e, 1]));
+    let spent = entries.reduce((a, e) => {
+      const top = [...e.scored].sort((x, y) => y.score - x.score)[0];
+      return a + (top ? bulletLines(top.text) : 0);
+    }, 0);
+    const rest = entries.flatMap(e =>
+      [...e.scored].sort((a, b) => b.score - a.score).slice(1)
+        .map(b => ({ e, cost: bulletLines(b.text), score: b.score })));
+    // Sort once by value density. Re-sorting after each pick would be a true
+    // greedy knapsack, but the costs here are 1-4 and the scores are cosines in
+    // a narrow band, so the order does not change — and the sort is over every
+    // unpicked bullet on the page, which is not free.
+    for (const b of rest.sort((x, y) => (y.score / y.cost) - (x.score / x.cost))) {
+      if (spent + b.cost > budget) continue; // a cheaper bullet may still fit
+      if ((n.get(b.e) ?? 0) >= (caps.get(b.e) ?? Infinity)) continue;
+      n.set(b.e, (n.get(b.e) ?? 0) + 1);
+      spent += b.cost;
+    }
+    return n;
+  }
+
+  // Which projects make the cut is settled before any budget is spent, whichever
+  // budget it is — spending on a project that gets dropped wastes it.
+  if (projParsed) {
+    for (const e of projParsed.entries) trim(e, maxBulletsPerProject);
+    projParsed.entries.sort((a, b) => b.score - a.score);
+    projParsed.entries.length = Math.min(projParsed.entries.length, maxProjects);
+  }
+
+  if (lineBudget) {
+    // One budget over everything the page has to carry. Ordering is settled
+    // afterwards: relevance decides what survives, chronology decides how it
+    // reads, and the two must not be the same sort.
+    const caps = new Map([
+      ...(expParsed?.entries ?? []).map(e => /** @type {[any, number]} */ ([e, maxBulletsPerRole])),
+      ...(projParsed?.entries ?? []).map(e => /** @type {[any, number]} */ ([e, maxBulletsPerProject])),
+    ]);
+    const all = [...(expParsed?.entries ?? []), ...(projParsed?.entries ?? [])];
+    for (const [e, k] of allocateLines(all, lineBudget, caps)) trim(e, k, true);
+  } else {
+    if (expParsed) for (const e of expParsed.entries) trim(e, maxBulletsPerRole);
+    if (projParsed) {
+      for (const [e, k] of allocate(projParsed.entries, projectBulletBudget, maxBulletsPerProject)) trim(e, k);
+    }
+  }
+
   if (expParsed) {
     // UK CV convention: reverse-chronological, never reordered by relevance.
-    for (const e of expParsed.entries) trim(e, maxBulletsPerRole);
     expParsed.entries.sort((a, b) => entryEndDate(b) - entryEndDate(a));
     exp.lines = renderEntries(expParsed);
   }
   if (projParsed) {
-    // Relevance picks WHICH projects make the cut; date decides their order.
-    for (const e of projParsed.entries) trim(e, maxBulletsPerProject);
-    projParsed.entries.sort((a, b) => b.score - a.score);
-    projParsed.entries.length = Math.min(projParsed.entries.length, maxProjects);
-    // Only now, over the projects that survived, is the bullet budget worth
-    // splitting — spending it on a project that gets dropped wastes it.
-    for (const [e, k] of allocate(projParsed.entries, projectBulletBudget, maxBulletsPerProject)) trim(e, k);
     projParsed.entries.sort((a, b) => entryEndDate(b) - entryEndDate(a));
     proj.lines = renderEntries(projParsed);
   }
@@ -1331,6 +1439,35 @@ Text.
   ], fakeCv, 3);
   assert(backfilled.length === 3, 'dropped projects backfilled from the CV');
   assert(backfilled.every(p => /Crypto Tool|Web App|Java Batch/.test(p.name)), 'backfill uses real CV projects');
+
+  // ── line budget (E2) ────────────────────────────────────────────────────────
+  assert(bulletLines('x'.repeat(124)) === 1 && bulletLines('x'.repeat(125)) === 2,
+    'a bullet costs one line per 124 characters');
+  assert(bulletLines('') === 1 && bulletLines(null) === 1, 'an empty bullet still costs its line');
+
+  // A budget is spent in lines, so it must hold regardless of how the bullets
+  // divide up — the failure this replaces was 16 bullets of any length passing a
+  // count budget of 16 and rendering 37 lines onto a 21-line page.
+  const budgeted = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 3, maxBulletsPerRole: 4, maxBulletsPerProject: 4, lineBudget: 6, _embed: stub,
+  });
+  const spent = budgeted.split('\n').filter(l => l.startsWith('- '))
+    .reduce((a, l) => a + bulletLines(l.slice(2)), 0);
+  assert(spent <= 6, `line budget honoured (spent ${spent} of 6)`);
+  // Every entry keeps its top bullet even when the budget is too small to go
+  // round, so a tight page renders fewer bullets rather than bare headings.
+  const starved = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 3, maxBulletsPerRole: 4, maxBulletsPerProject: 4, lineBudget: 1, _embed: stub,
+  });
+  for (const heading of ['### Dev', '### Crypto Tool']) {
+    const after = starved.slice(starved.indexOf(heading));
+    assert(/^- /m.test(after.split('###')[1] ?? after), `${heading} keeps a bullet at an impossible budget`);
+  }
+  // lineBudget null is the old path, untouched.
+  const counted = await selectCvForJd(fakeCv, reqs, '', {
+    maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: stub,
+  });
+  assert(counted === out, 'lineBudget null reproduces count-based selection exactly');
 
   assert((existsSync(SPIKE_CACHE) ? readFileSync(SPIKE_CACHE, 'utf8') : null) === spikeBefore,
     'self-check must not write the real spike cache');
