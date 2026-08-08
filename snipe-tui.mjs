@@ -9,14 +9,16 @@
 //       → hops JD → ▶) · → on a selected list row walks its inline actions and
 //       Enter fires the focused one (← walks back, then switches tab): the link
 //       on a normal row, see error / retry / debug on a failed one (which ends
-//       at debug and shows no link) · see error is a file:// hyperlink to
-//       batch/errors/<id>.txt, retry re-runs all three phases, debug opens the
-//       JD that phase read so it can be edited before the retry · Tab/
+//       at debug and shows no link), proceed? on a P1-gated one · see error is a
+//       file:// hyperlink to batch/errors/<id>.txt, retry re-runs all three
+//       phases, debug opens the JD that phase read so it can be edited before
+//       the retry, proceed? re-runs with the P1 gate off · Tab/
 //       Shift-Tab still cycles input ↔ ▶ ↔ list · Enter loops JD → URL → Add
 //       to queue (enqueues) · o open result folder · a mark applied > ·
 //       x mark skip - (mutually exclusive) ·
 //       Esc clear field/step out · q quit (outside input fields)
-//       Follow-ups tab: ↓ enters list · Enter mark nudged · u undo · o report
+//       Follow-ups tab: ↓ enters list · Enter mark nudged · r rejected (5s
+//       grace) · p proceeded (next stage) · u undo · o report
 // Slash commands (typed in the JD box, or just press /): /scan runs the
 //       portal scanner and queues whatever it finds.
 //
@@ -348,8 +350,11 @@ function itemInfo(id) {
   }
   if (row && row.p3s === 'completed') return { ...base, kind: 'done', resultDir: resultDirFor(row.rnum) };
   if (row && row.p3s === 'skipped') {
-    const note = row.p2s === 'p1-gated' ? 'P1-gated (no Phase 2)' : 'below threshold';
-    return { ...base, kind: 'done', note };
+    // A P1-gated row is the one finished state with an action left: the gate is a
+    // cost heuristic applied to a 4B pre-screen score, not a verdict, so the row
+    // carries the override rather than making it a command-line re-run.
+    if (row.p2s === 'p1-gated') return { ...base, kind: 'done', note: 'P1-gated', gated: true };
+    return { ...base, kind: 'done', note: 'below threshold' };
   }
   if (S.snap.queueIds.includes(id)) return { ...base, kind: 'waiting' };
   if (S.drainActive || S.snap.runner) {
@@ -433,7 +438,30 @@ function startDrain(bump) {
   bump();
 }
 
-// ── retry / debug a failed row ────────────────────────────────────────────────
+// ── retry / debug a failed row · proceed past the P1 gate ────────────────────
+
+// One detached runner over a single id — the shape retry and "proceed?" share,
+// differing only in flags. Guarded like startDrain: two runners race over
+// local-state.tsv and the report-number allocator.
+function runOnly(id, args, msg, bump) {
+  if (S.drainActive || S.snap.runner) { setMsg('A run is active — try again when it finishes', true); return; }
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  const fd = fs.openSync(path.join(LOGS_DIR, 'snipe-tui-drain.log'), 'a');
+  const child = spawn('bash', [RUNNER, '--only-id', id, ...args],
+    { detached: true, stdio: ['ignore', fd, fd] });
+  fs.closeSync(fd);
+  child.on('exit', code => {
+    S.drainActive = false;
+    setMsg(code === 0 ? `${msg.done} finished` : `${msg.done} exited with code ${code}`, code !== 0);
+    poll();
+    notifyDrainDone([id], code);
+    bump();
+  });
+  child.unref(); // survives TUI quit; state stays on disk
+  S.drainActive = true;
+  setMsg(msg.start);
+  bump();
+}
 
 // What "debug" opens: the input that phase read, so it can be edited in place
 // before the retry reads it back. Phases 1-2 consume the fetched JD, Phase 3 the
@@ -475,25 +503,27 @@ function retryItem(bump) {
   const info = itemInfo(id);
   if (info.kind !== 'failed') { setMsg('Nothing to retry — this item did not fail', true); return; }
   if (!info.retryable) { setMsg('Posting is expired or blocked — retrying cannot recover it', true); return; }
-  // Same guard as startDrain: two runners race over local-state.tsv and the
-  // report-number allocator.
-  if (S.drainActive || S.snap.runner) { setMsg('A run is active — retry when it finishes', true); return; }
-  fs.mkdirSync(LOGS_DIR, { recursive: true });
-  const fd = fs.openSync(path.join(LOGS_DIR, 'snipe-tui-drain.log'), 'a');
-  const child = spawn('bash', [RUNNER, '--only-id', id, '--retry-failed'],
-    { detached: true, stdio: ['ignore', fd, fd] });
-  fs.closeSync(fd);
-  child.on('exit', code => {
-    S.drainActive = false;
-    setMsg(code === 0 ? `Retry of #${id} finished` : `Retry of #${id} exited with code ${code}`, code !== 0);
-    poll();
-    notifyDrainDone([id], code);
-    bump();
-  });
-  child.unref(); // survives TUI quit; state stays on disk
-  S.drainActive = true;
-  setMsg(`Retrying #${id} through all three phases…`);
-  bump();
+  runOnly(id, ['--retry-failed'], {
+    start: `Retrying #${id} through all three phases…`,
+    done: `Retry of #${id}`,
+  }, bump);
+}
+
+// "proceed?" overrules the Phase 1→2 gate for one offer. Nothing is re-scored:
+// local-runner.sh's offer list skips anything already `scored` (:918), so Phase 1
+// is a no-op, the cached score and JD are reused, and the run effectively starts
+// at Phase 2 — which is exactly the "reuse Phase 1's work" path, spelled as one
+// flag instead of a second code path. Phase 3 then follows on its own if the
+// eval clears --threshold. No --retry-failed: the row is `p1-gated`, not failed,
+// so Phase 2's own guard already lets it through.
+function proceedItem(bump) {
+  const id = S.sessionIds[S.listIdx];
+  if (!id) return;
+  if (!itemInfo(id).gated) { setMsg('Nothing to proceed with — this item was not P1-gated', true); return; }
+  runOnly(id, ['--p1-threshold', '0'], {
+    start: `Evaluating #${id} — P1 gate overridden…`,
+    done: `Proceed on #${id}`,
+  }, bump);
 }
 
 // The row's "see error" already carries a file:// hyperlink for terminals that
@@ -609,10 +639,13 @@ function openLink() {
   setMsg(`Opened ${url}`);
 }
 
-// Flip only the Status cell of the tracker row whose Report cell links [<num>](…),
-// and only if it currently reads `from` — so it never clobbers a later-stage
-// status (Interview/Offer/…).
-function syncTracker(rnum, from, to) {
+// Flip only the Status cell of one tracker row, and only if it currently reads
+// `from` — so it never clobbers a later-stage status (Interview/Offer/…).
+// Two different keys reach the same row, because the tracker's own # and the
+// report number diverge (report numbers are reserved separately, so #227 can
+// link report 176): the queue knows an offer's report_num and matches the
+// Report cell, the follow-up list knows the row # and matches column 1.
+function syncTracker(rnum, from, to, byRow = false) {
   if (!rnum || rnum === '-') return false;
   let txt;
   try { txt = fs.readFileSync(TRACKER_FILE, 'utf8'); } catch { return false; }
@@ -621,7 +654,8 @@ function syncTracker(rnum, from, to) {
   for (let i = 0; i < lines.length; i++) {
     const cells = lines[i].split('|');
     // | # | Date | Company | Role | Score | Status | PDF | Report | Notes |
-    if (cells.length < 10 || !numRe.test(cells[8])) continue;
+    if (cells.length < 10) continue;
+    if (!(byRow ? Number(cells[1]) === Number(rnum) : numRe.test(cells[8]))) continue;
     if (cells[6].trim() !== from) return false;
     cells[6] = ` ${to} `;
     lines[i] = cells.join('|');
@@ -708,6 +742,12 @@ function markNudged(bump) {
 function undoNudge(bump) {
   const e = S.followups?.entries?.[S.fuIdx];
   if (!e) { setMsg('Nothing selected', true); return; }
+  if (fuPending.has(e.num)) { // a rejection still inside its grace window outranks the nudge log
+    clearTimeout(fuPending.get(e.num));
+    fuPending.delete(e.num);
+    setMsg(`Rejection cancelled for ${e.company}`);
+    return;
+  }
   let txt = '';
   try { txt = fs.readFileSync(FOLLOWUPS_FILE, 'utf8'); } catch {}
   const lines = txt.split('\n');
@@ -727,13 +767,56 @@ function undoNudge(bump) {
   refreshFollowups(bump);
 }
 
+// r/p end the cadence instead of nudging it: both flip the tracker Status cell,
+// which is the only thing that decides whether an entry is a follow-up at all
+// (followup-cadence.mjs keeps applied/responded/interview and drops the rest).
+// Rejected is deferred by a grace window so a mis-keyed r is recoverable while
+// the row is still on screen — nothing is written until it elapses.
+const REJECT_GRACE_MS = Number(process.env.SNIPE_REJECT_GRACE_MS) || 5000;
+const fuPending = new Map(); // app num → pending-rejection timer
+const PROCEED = { applied: 'Responded', responded: 'Interview', interview: 'Offer' };
+const statusLabel = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+function markRejected(bump) {
+  const e = S.followups?.entries?.[S.fuIdx];
+  if (!e) { setMsg('Nothing selected', true); return; }
+  if (fuPending.has(e.num)) { setMsg(`${e.company} is already being rejected · u undo`, true); return; }
+  fuPending.set(e.num, setTimeout(() => {
+    fuPending.delete(e.num);
+    const synced = syncTracker(e.num, statusLabel(e.status), 'Rejected', true);
+    // the row leaving is the confirmation, so drop it here rather than waiting
+    // on the cadence re-read (which is a spawned node and can also disagree)
+    const list = S.followups?.entries || [];
+    const i = list.indexOf(e);
+    if (i >= 0) list.splice(i, 1);
+    S.fuIdx = Math.min(S.fuIdx, Math.max(0, list.length - 1));
+    setMsg(`${e.company} rejected ✗${synced ? '' : ' · tracker unchanged'}`, !synced);
+    bump();
+    refreshFollowups(bump);
+  }, REJECT_GRACE_MS));
+  setMsg(`${e.company} → Rejected in ${Math.round(REJECT_GRACE_MS / 1000)}s · u undo`);
+}
+
+function markProceeded(bump) {
+  const e = S.followups?.entries?.[S.fuIdx];
+  if (!e) { setMsg('Nothing selected', true); return; }
+  const to = PROCEED[e.status];
+  if (!to) { setMsg(`No next stage after ${e.status}`, true); return; }
+  const synced = syncTracker(e.num, statusLabel(e.status), to, true);
+  if (synced) e.status = to.toLowerCase(); // optimistic; the refresh recomputes urgency
+  setMsg(`${e.company} → ${to}${synced ? '' : ' · tracker unchanged'}`, !synced);
+  refreshFollowups(bump);
+}
+
 // Cadence's own reportPath mis-joins the tracker's ../reports/ links, so find
-// the report by its number prefix instead.
+// the report by its number prefix instead — the number in the Report cell, not
+// the row's own #, which is a different sequence.
 function openFuReport() {
   const e = S.followups?.entries?.[S.fuIdx];
   if (!e) return;
+  const rnum = Number(String(e.report || '').match(/\[0*(\d+)\]/)?.[1] ?? e.num);
   let f = null;
-  try { f = fs.readdirSync(path.join(HOME, 'reports')).find(x => x.startsWith(`${String(e.num).padStart(3, '0')}-`)); } catch {}
+  try { f = fs.readdirSync(path.join(HOME, 'reports')).find(x => x.startsWith(`${String(rnum).padStart(3, '0')}-`)); } catch {}
   if (f) {
     spawn('xdg-open', [path.join(HOME, 'reports', f)], { detached: true, stdio: 'ignore' }).unref();
     setMsg(`Opened ${f}`);
@@ -788,6 +871,7 @@ function makeStdinHandler(bump, quit) {
       if (S.rowFocus === 'link') openLink();
       else if (S.rowFocus === 'error') openError();
       else if (S.rowFocus === 'retry') retryItem(bump);
+      else if (S.rowFocus === 'proceed') proceedItem(bump);
       else if (S.rowFocus === 'debug') openDebug();
       else openResult();
     }
@@ -801,7 +885,9 @@ function makeStdinHandler(bump, quit) {
     if (info.kind === 'failed') {
       return ['row', 'error', ...(info.retryable ? ['retry'] : []), 'debug'];
     }
-    return S.snap.urls.get(id) ? ['row', 'link'] : ['row'];
+    // A gated row keeps its link — unlike a failed one, the posting is still
+    // worth reading before deciding to overrule the gate.
+    return [...(info.gated ? ['row', 'proceed'] : ['row']), ...(S.snap.urls.get(id) ? ['link'] : [])];
   };
 
   // False when ← runs off the left edge — the caller falls through to the tab
@@ -862,6 +948,8 @@ function makeStdinHandler(bump, quit) {
     if (ch === 'q') quit();
     else if (ch === 'o') openFuReport();
     else if (ch === 'u') undoNudge(bump);
+    else if (ch === 'r') markRejected(bump);
+    else if (ch === 'p') markProceeded(bump);
     else if (ch === 'j' || ch === 'k') moveFuSel(ch === 'j' ? 1 : -1);
   };
 
@@ -1101,6 +1189,11 @@ function QueueRow({ id, selected, width }) {
   if (info.kind === 'waiting') suffix.push(['  waiting', { dimColor: true }]);
   if (info.kind === 'pending') suffix.push(['  pending (press ▶)', { dimColor: true }]);
   if (info.note) suffix.push([`  ${info.note}`, { dimColor: true }]);
+  // Same yellow as retry/debug: an action the row is offering, not a status.
+  if (info.gated) {
+    suffix.push([' | ', { dimColor: true }]);
+    suffix.push(['proceed?', { color: 'yellow', inverse: sel && S.rowFocus === 'proceed' }]);
+  }
   // The error text lives in batch/errors/<id>.txt, reached through "see error" —
   // the row shows the handle, not a 60-char slice of a 200-char message that
   // truncated mid-word and ate the label's width.
@@ -1229,17 +1322,19 @@ function TabBar() {
 
 function FuRow({ e, selected, maxNudges }) {
   const due = e.urgency === 'urgent' || e.urgency === 'overdue';
+  const rejecting = fuPending.has(e.num);
   // Four rungs of one ladder (urgent > overdue > waiting > cold, see
   // tracker/followup-cadence.mjs:291), so the notation escalates rather than
   // switching shape per state — and stays distinct without colour. Padded to a
   // fixed 2 columns because '!!' is 2 wide and a ragged left edge otherwise
   // indents every non-urgent row by one.
-  const icon =
+  const icon = rejecting ? h(Text, { color: 'red' }, ' ✗') :
     e.urgency === 'urgent' ? h(Text, { color: 'red', bold: true }, '!!') :
     e.urgency === 'overdue' ? h(Text, { color: 'yellow' }, ' !') :
     e.urgency === 'cold' ? h(Text, { dimColor: true }, ' -') :
     h(Text, { dimColor: true }, ' ·');
-  const when = due ? `due now — applied ${e.daysSinceApplication}d ago`
+  const when = rejecting ? 'rejecting — u to undo'
+    : due ? `due now — applied ${e.daysSinceApplication}d ago`
     : e.urgency === 'cold' ? 'max nudges sent'
     : e.daysUntilNext != null ? `next in ${e.daysUntilNext}d` : '';
   return h(Box, { height: 1, overflow: 'hidden' },
@@ -1247,7 +1342,7 @@ function FuRow({ e, selected, maxNudges }) {
     h(Text, { inverse: selected, wrap: 'truncate' }, ` ${e.company} — ${e.role} `),
     h(Text, { dimColor: true, wrap: 'truncate' },
       ` ${e.status} · nudges ${e.followupCount}/${maxNudges}`),
-    h(Text, { color: due ? 'yellow' : undefined, dimColor: !due, wrap: 'truncate' }, ` · ${when}`));
+    h(Text, { color: rejecting ? 'red' : due ? 'yellow' : undefined, dimColor: !rejecting && !due, wrap: 'truncate' }, ` · ${when}`));
 }
 
 function FollowupsTab() {
@@ -1262,7 +1357,8 @@ function FollowupsTab() {
         : h(Box, { flexDirection: 'column', flexGrow: 1, overflow: 'hidden' },
             fu.entries.map((e, i) => h(FuRow, { key: e.num, e, selected: S.fuIn && i === S.fuIdx, maxNudges }))),
     h(Box, { height: 1 }),
-    h(Text, { dimColor: true }, 'Enter records a follow-up in data/follow-ups.md and resets its clock.'));
+    h(Text, { dimColor: true }, 'Enter records a follow-up in data/follow-ups.md and resets its clock.'),
+    h(Text, { dimColor: true }, `r ends it as Rejected (${Math.round(REJECT_GRACE_MS / 1000)}s to undo) · p advances the tracker status a stage.`));
 }
 
 // "▸ 16 Jul — 2 scans" for the grid cursor — right under the labels, next to the grid
@@ -1502,7 +1598,7 @@ function App() {
   const hints = S.tab === 'stats'
     ? '←→ tabs/row actions · ↑↓ navigate · Enter next/queue/run/retry/debug/link · o result · a applied · x skip · q quit'
     : S.tab === 'followups'
-      ? '←→ tabs · ↑↓ navigate · Enter mark nudged · u undo · o report · q quit'
+      ? '←→ tabs · ↑↓ navigate · Enter nudged · r rejected · p proceeded · u undo · o report · q quit'
       : S.gridSel
         ? (S.actView === 'day' ? '←→ hour · ↑/Esc leave · ‹› period · j/k type · q quit'
           : '←→ week · ↑↓ day · ↑top/Esc leave · ‹› period · j/k type · q quit')

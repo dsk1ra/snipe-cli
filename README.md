@@ -137,7 +137,10 @@ can be opened.
 
 **3 · FOLLOW-UPS** — applications that are due for a nudge, from the follow-up
 cadence tracker. Press **↓** to enter the list, **Enter** to mark one nudged,
-**u** to undo, **o** to open its report.
+**u** to undo, **o** to open its report. **r** ends it as *Rejected* and **p**
+advances it a stage (Applied → Responded → Interview → Offer) — both write the
+tracker's Status cell, which is what drops the entry off the list. **r** waits 5
+seconds first, so **u** takes it back while the row is still on screen.
 
 ### Adding and running jobs
 
@@ -169,6 +172,21 @@ A failed row carries its own actions — **→** focuses each, **Enter** fires i
 The usual loop is **see error → debug → edit → retry**. Expired and blocked
 postings show no **retry** at all, because re-running cannot recover them.
 
+### When the pre-screen said no
+
+Offers scoring below the Phase 1 gate never reach the 30B evaluator. That gate
+is a cost heuristic over a 4B pre-screen, not a verdict, so the row lets you
+overrule it:
+
+```
+  · Company — Role  P1-gated | proceed?  link
+```
+
+**proceed?** re-runs that one offer with the gate off. It costs nothing extra up
+front — the Phase 1 score and the fetched JD are already on disk and get reused,
+so the run picks up at Phase 2, and Phase 3 follows if the real evaluation
+clears the threshold.
+
 ### Slash commands
 
 Type a command in the JD box (or just press **/** anywhere on the tab):
@@ -183,12 +201,13 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 |-----|--------|
 | **←/→** or **1/2/3** | Switch tabs |
 | **↑/↓** | Walk every element top-to-bottom (tab → list → JD → URL → Add); ↑ past the top returns to the tab bar |
-| **→** | Hop from the JD box to **▶**; on a list row, walk its inline actions (the link, or **see error · retry · debug** on a failed row) |
+| **→** | Hop from the JD box to **▶**; on a list row, walk its inline actions (the link, **see error · retry · debug** on a failed row, **proceed?** on a P1-gated one) |
 | **Tab / Shift-Tab** | Cycle input ↔ ▶ ↔ list |
 | **Enter** | Advance the JD → URL → Add form (enqueues); on a focused row action, fire it |
 | **o** | Open the result folder / report |
 | **a** | Mark the selected row **applied `>`** |
 | **x** | Mark the selected row **skip `-`** (mutually exclusive with applied) |
+| **r** · **p** · **u** | Follow-ups tab only: end the entry as *Rejected* (5 s to change your mind), advance it a stage, or undo — the pending rejection first, then the last nudge |
 | **/** | Start a slash command |
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |
@@ -218,6 +237,7 @@ bash batch/local-runner.sh                # all phases
 bash batch/local-runner.sh --skip-phase3  # score + evaluate, no PDFs
 bash batch/local-runner.sh --dry-run      # preview what would run
 bash batch/local-runner.sh --only-id 42 --retry-failed      # retry failed job 42
+bash batch/local-runner.sh --only-id 42 --p1-threshold 0    # evaluate it anyway
 ```
 
 See [`batch/README.md`](batch/README.md) for every flag.
