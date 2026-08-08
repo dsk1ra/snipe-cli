@@ -281,6 +281,7 @@ function analyze() {
       status: normalized,
       score: app.score,
       notes: app.notes,
+      report: app.report, // raw cell: its [<n>] is the report number, which is not app.num
       reportPath,
       contacts,
       daysSinceApplication: daysSinceApp,
