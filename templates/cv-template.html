@@ -49,14 +49,18 @@
     padding: 2px 0;
   }
 
-  /* === HEADER === */
+  /* === HEADER ===
+     Centred as a block. The contact row goes with it: a centred name over a
+     left-aligned row of contact details reads as a layout bug rather than a
+     choice, and the row is one flex line either way. */
   .header {
     margin-bottom: 9px;
+    text-align: center;
   }
 
   .header h1 {
     font-family: Arial, Helvetica, "Helvetica Neue", sans-serif;
-    font-size: 22px;
+    font-size: 28px;
     font-weight: 700;
     color: var(--ink);
     letter-spacing: normal;
@@ -65,9 +69,11 @@
   }
 
   /* The role being applied for, under the name. A CV that names the posting it
-     is answering reads as written for it, and the line costs 16px. */
+     is answering reads as written for it. Scaled with the name rather than held
+     at 13px, so the two read as one header block; the pair costs 10px more than
+     the 22/13 it replaces, against a mean 78px of one-page headroom. */
   .target-role {
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--accent);
     margin-bottom: 5px;
@@ -84,6 +90,7 @@
   .contact-row {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 6px 12px;
     font-size: 11px;
     line-height: 1.4;
