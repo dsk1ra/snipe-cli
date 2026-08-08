@@ -61,6 +61,12 @@ act on next; `o` and the tracker still reach it:
 
 Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
 
+The footer **message** (right-hand side) is feedback on the last keypress, not a
+log: `setMsg` stamps `S.msgAt` and `poll()` sweeps it after `MSG_TTL_MS` (5 s,
+`SNIPE_MSG_TTL_MS` to shrink it for tests, as `SNIPE_REJECT_GRACE_MS` already
+does). No countdown — it just goes. The sweep rides poll's existing 1 s tick, so
+a message lives 5–6 s rather than exactly 5.
+
 The footer hint line names **only what the focused element does** (`hintFor()`),
 plus ` · ? keys`. The full reference is `HELP_ROWS`, shown by `?` as an overlay
 that replaces the body and is closed by the next keypress (Ctrl-C excepted — a
