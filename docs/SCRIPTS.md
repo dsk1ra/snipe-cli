@@ -100,9 +100,12 @@ Renders an HTML file to a print-quality, ATS-parseable PDF via headless Chromium
 
 ```bash
 npm run pdf -- input.html output.pdf
-npm run pdf -- input.html output.pdf --format=letter   # US letter
-npm run pdf -- input.html output.pdf --format=a4        # A4 (default)
+npm run pdf -- input.html output.pdf --max-pages=2 --source-url=https://…
 ```
+
+Always A4, at 0.45in margins. Paper used to be selectable, chosen off a regex over
+the JD that matched the pronoun in "join us" and so rendered UK postings on US
+Letter — 66px shorter, about four bullet lines off a CV that needs every one.
 
 **Exit codes:** `0` PDF generated, `1` missing arguments or generation failure.
 

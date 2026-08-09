@@ -167,6 +167,35 @@ if (tracked.length === 0) {
   fail(`cv-template.html has letter-spacing ${tracked.join(', ')} — ATS will read headers glyph-by-glyph`);
 }
 
+// Every contact detail and repo the CV prints must be clickable in the PDF.
+// Chromium turns <a href> into a PDF link annotation and plain text into
+// nothing, so a URL rendered as text is one a reviewer has to retype.
+const contactLinks = [
+  [/<a href="tel:\{\{PHONE_TEL\}\}"/, 'phone is a tel: link'],
+  [/<a href="mailto:\{\{EMAIL\}\}"/, 'email is a mailto: link'],
+  [/<a href="\{\{LINKEDIN_URL\}\}"/, 'LinkedIn is a link'],
+  [/<a href="\{\{PORTFOLIO_URL\}\}"/, 'GitHub profile is a link'],
+];
+for (const [re, what] of contactLinks) {
+  if (re.test(cvTemplate)) pass(`cv-template.html: ${what}`);
+  else fail(`cv-template.html: ${what} — renders as plain text, so the PDF carries no annotation`);
+}
+
+// The project repo is built in code, not the template. `esc()` around the whole
+// tech line would escape the anchor into visible markup, so this pins the shape
+// that broke when the link was added.
+const fillSrc = readFile('batch/fill-cv-template.mjs');
+if (/<div class="project-tech">\$\{techLine\}<\/div>/.test(fillSrc)) {
+  pass('fill-cv-template.mjs renders the tech line as HTML, so the repo anchor survives');
+} else {
+  fail('fill-cv-template.mjs escapes the tech line — the repo <a> would print as markup');
+}
+if (/`https:\/\/\$\{s\}`/.test(fillSrc)) {
+  pass('fill-cv-template.mjs makes bare repo URLs absolute');
+} else {
+  fail('fill-cv-template.mjs does not absolutise repo URLs — a bare href resolves against file://');
+}
+
 // ── 11. CLAUDE.md INTEGRITY ─────────────────────────────────────
 
 console.log('\n11. CLAUDE.md integrity');
