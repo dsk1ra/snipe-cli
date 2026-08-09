@@ -91,3 +91,6 @@ plan/
 cv.pdf
 batch/judge-shots.json
 batch/timings.tsv
+# Every cv.md bullet's source text, employers and dates — cv.md by another name.
+# Regenerate: node batch/bench-tools/gen-cv-bank.mjs
+batch/cv-bank.json
