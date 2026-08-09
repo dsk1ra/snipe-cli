@@ -49,31 +49,48 @@
     padding: 2px 0;
   }
 
-  /* === HEADER === */
+  /* === HEADER ===
+     Centred as a block. The contact row goes with it: a centred name over a
+     left-aligned row of contact details reads as a layout bug rather than a
+     choice, and the row is one flex line either way. */
   .header {
-    margin-bottom: 14px;
+    margin-bottom: 9px;
+    text-align: center;
   }
 
   .header h1 {
     font-family: Arial, Helvetica, "Helvetica Neue", sans-serif;
-    font-size: 26px;
+    font-size: 28px;
     font-weight: 700;
     color: var(--ink);
     letter-spacing: normal;
-    margin-bottom: 8px;
+    margin-bottom: 2px;
     line-height: 1.1;
+  }
+
+  /* The role being applied for, under the name. A CV that names the posting it
+     is answering reads as written for it. Scaled with the name rather than held
+     at 13px, so the two read as one header block; the pair costs 10px more than
+     the 22/13 it replaces, against a mean 78px of one-page headroom. */
+  .target-role {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 5px;
+    line-height: 1.2;
   }
 
   /* Thin accent rule under the name (kept class name for compatibility) */
   .header-gradient {
     height: 2px;
     background: var(--accent);
-    margin-bottom: 10px;
+    margin-bottom: 6px;
   }
 
   .contact-row {
     display: flex;
     flex-wrap: wrap;
+    justify-content: center;
     gap: 6px 12px;
     font-size: 11px;
     line-height: 1.4;
@@ -85,13 +102,24 @@
     text-decoration: none;
   }
 
+  /* Phone and email are clickable (tel: / mailto:) but stay in the muted body
+     colour. Accent is the CV's signal for "this goes somewhere on the web";
+     colouring a phone number like a profile link says nothing and adds noise. */
+  .contact-row a.contact-plain {
+    color: var(--muted);
+  }
+
   .contact-row .separator {
     color: var(--hairline);
   }
 
-  /* === SECTIONS === */
+  /* === SECTIONS ===
+     Spacing throughout this file is tuned against a measured one-page budget:
+     an A4 content box at 0.45in margins is 708 x 1036 px, of which section
+     chrome used to eat 728px before a word of content. Loosening any of these
+     numbers takes the space straight out of bullet lines. */
   .section {
-    margin-bottom: 14px;
+    margin-bottom: 9px;
   }
 
   .section-title {
@@ -105,8 +133,8 @@
     letter-spacing: normal;
     color: var(--accent);
     border-bottom: 1px solid var(--hairline);
-    padding-bottom: 5px;
-    margin-bottom: 8px;
+    padding-bottom: 3px;
+    margin-bottom: 5px;
     line-height: 1.2;
   }
 
@@ -122,26 +150,11 @@
     white-space: nowrap;
   }
 
-  /* === CORE COMPETENCIES (flat text, middot-separated, no boxes) === */
-  .competencies-grid {
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--ink);
-  }
-
-  .competency-tag {
-    white-space: nowrap;
-  }
-
-  .competency-tag:not(:last-child)::after {
-    content: "\00B7";
-    color: var(--accent);
-    margin: 0 9px;
-  }
-
-  /* === WORK EXPERIENCE === */
+  /* === WORK EXPERIENCE ===
+     Company, location, title and dates on ONE line. They used to occupy three
+     (company+dates, then role, then location) for 51px a role; this is 34px. */
   .job {
-    margin-bottom: 10px;
+    margin-bottom: 7px;
   }
 
   .job-header {
@@ -159,34 +172,28 @@
     color: var(--ink);
   }
 
+  /* Title and location, sharing the company's line. */
+  .job-meta {
+    font-size: 11px;
+    color: var(--ink-soft);
+  }
+
   .job-period {
     font-size: 11px;
     color: var(--muted);
     white-space: nowrap;
   }
 
-  .job-role {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink-soft);
-    margin-bottom: 5px;
-  }
-
-  .job-location {
-    font-size: 10px;
-    color: var(--muted);
-  }
-
   .job ul {
     padding-left: 16px;
-    margin-top: 5px;
+    margin-top: 2px;
   }
 
   .job li {
     font-size: 12px;
-    line-height: 1.35;
+    line-height: 1.3;
     color: var(--ink-soft);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
 
   .job li strong {
@@ -196,7 +203,7 @@
 
   /* === PROJECTS === */
   .project {
-    margin-bottom: 10px;
+    margin-bottom: 6px;
   }
 
   .project-title {
@@ -233,9 +240,9 @@
 
   .project-bullets li {
     font-size: 12px;
-    line-height: 1.35;
+    line-height: 1.3;
     color: var(--ink-soft);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
 
   .project-bullets li strong {
@@ -249,9 +256,17 @@
     margin-top: 3px;
   }
 
+  /* The repo link inherits the tech line's colour rather than taking the browser
+     default, which would put three blue URLs in an otherwise grey row. The text
+     is already a URL, so it reads as a link without being painted like one. */
+  .project-tech a {
+    color: inherit;
+    text-decoration: none;
+  }
+
   /* === EDUCATION === */
   .edu-item {
-    margin-bottom: 9px;
+    margin-bottom: 4px;
   }
 
   .edu-header {
@@ -281,55 +296,30 @@
   .edu-desc {
     font-size: 11px;
     color: var(--muted);
-    margin-top: 2px;
-    line-height: 1.35;
+    margin-top: 1px;
+    line-height: 1.3;
   }
 
-  /* === CERTIFICATIONS === */
-  .cert-table {
-    display: table;
-    width: 100%;
-  }
-
-  .cert-item {
-    display: table-row;
-  }
-
-  .cert-item > * {
-    display: table-cell;
-    vertical-align: baseline;
-    padding-bottom: 6px;
-  }
-
-  .cert-title {
-    font-size: 11px;
+  /* The "Key Modules:" / "Achievement:" lead-in. Same size as its row — this is
+     a label, not a heading, and scaling it up would compete with the degree. */
+  .edu-label {
     font-weight: 600;
     color: var(--ink);
   }
 
-  .cert-org {
-    color: var(--ink-soft);
-    white-space: nowrap;
-  }
-
-  .cert-year {
-    font-size: 10px;
-    color: var(--muted);
-    white-space: nowrap;
-    text-align: right;
-    width: 44px;
-  }
-
-  /* === SKILLS === */
+  /* === SKILLS ===
+     One category per line. The flex-wrap grid packed short categories two to a
+     row, which reads as a run-on when every row is "Category: a, b, c". */
   .skills-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
+    display: block;
   }
 
   .skill-item {
+    display: block;
     font-size: 11px;
+    line-height: 1.3;
     color: var(--ink-soft);
+    margin-bottom: 1px;
   }
 
   .skill-category {
@@ -354,8 +344,7 @@
   .avoid-break,
   .job,
   .project,
-  .edu-item,
-  .cert-item {
+  .edu-item {
     break-inside: avoid;
     page-break-inside: avoid;
   }
@@ -375,10 +364,6 @@
     font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
   }
 
-  html[lang="ar"] .competency-tag:not(:last-child)::after {
-    margin: 0 9px;
-  }
-
   html[lang="ar"] .job ul,
   html[lang="ar"] .project-bullets {
     padding-right: 16px;
@@ -390,13 +375,6 @@
     margin-left: 0;
   }
 
-  html[lang="ar"] .cert-year {
-    text-align: left;
-  }
-
-  html[lang="ar"] .cert-table {
-    direction: rtl;
-  }
 </style>
 </head>
 <body>
@@ -405,11 +383,12 @@
   <!-- HEADER -->
   <div class="header avoid-break">
     <h1>{{NAME}}</h1>
+    {{TARGET_ROLE}}
     <div class="header-gradient"></div>
     <div class="contact-row">
-      <span>{{PHONE}}</span>
+      <a href="tel:{{PHONE_TEL}}" class="contact-plain">{{PHONE}}</a>
       <span class="separator">|</span>
-      <span>{{EMAIL}}</span>
+      <a href="mailto:{{EMAIL}}" class="contact-plain">{{EMAIL}}</a>
       <span class="separator">|</span>
       <a href="{{LINKEDIN_URL}}">{{LINKEDIN_DISPLAY}}</a>
       <span class="separator">|</span>
@@ -425,12 +404,11 @@
     <div class="summary-text">{{SUMMARY_TEXT}}</div>
   </div>
 
-  <!-- CORE COMPETENCIES -->
-  <div class="section">
-    <div class="section-title">{{SECTION_COMPETENCIES}}</div>
-    <div class="competencies-grid">
-      {{COMPETENCIES}}
-    </div>
+  <!-- SKILLS — directly under the summary, where a reader and a keyword scan
+       both look first. It used to render last, below Certifications on page 2. -->
+  <div class="section avoid-break">
+    <div class="section-title">{{SECTION_SKILLS}}</div>
+    {{SKILLS}}
   </div>
 
   <!-- WORK EXPERIENCE -->
@@ -445,22 +423,11 @@
     {{PROJECTS}}
   </div>
 
-  <!-- EDUCATION -->
+  <!-- EDUCATION & CERTIFICATIONS — one section. Certifications had its own rule
+       and heading, 42px of chrome to carry two lines of content. -->
   <div class="section avoid-break">
     <div class="section-title">{{SECTION_EDUCATION}}</div>
     {{EDUCATION}}
-  </div>
-
-  <!-- CERTIFICATIONS -->
-  <div class="section avoid-break">
-    <div class="section-title">{{SECTION_CERTIFICATIONS}}</div>
-    <div class="cert-table">{{CERTIFICATIONS}}</div>
-  </div>
-
-  <!-- SKILLS -->
-  <div class="section avoid-break">
-    <div class="section-title">{{SECTION_SKILLS}}</div>
-    {{SKILLS}}
   </div>
 
 </div>

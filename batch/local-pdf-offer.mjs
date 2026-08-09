@@ -56,7 +56,7 @@ function parseArgs(argv) {
     // before PDF generation (the model's work is done once cv-content.json is
     // written); --temperature overrides the production 0.15 so a benchmark can
     // run greedy, where this stack is byte-identical and one run is a valid A/B.
-    benchDir: null, temperature: 0.15,
+    benchDir: null, temperature: 0.15, cvFile: null,
     // Which component writes the bullets. `verbatim` is the shipped path: render
     // the selection as cv.md already words it, no generation call at all. `model`
     // hands the selection to snipe-cv to rewrite — the old default, kept as the
@@ -84,6 +84,7 @@ function parseArgs(argv) {
       case '--bench-dir':    a.benchDir     = argv[++i]; break;
       case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
       case '--writer':       a.writer       = argv[++i]; break;
+      case '--cv-file':      a.cvFile       = argv[++i]; break;
     }
   }
   return a;
@@ -122,12 +123,6 @@ function nextTrackerNum() {
     if (m) max = Math.max(max, parseInt(m[1], 10));
   }
   return max + 1;
-}
-
-function detectFormat(reportText, jdText) {
-  const combined = (reportText + jdText).toLowerCase();
-  if (/\b(united states|usa|\bus\b|canada|san francisco|new york|seattle|boston|austin)\b/.test(combined)) return 'letter';
-  return 'a4';
 }
 
 // ── Extract profile narrative ─────────────────────────────────────────────────
@@ -395,10 +390,17 @@ function validateContent(c, company) {
 }
 
 // Hard clamps applied before rendering (defends the layout regardless of model).
-function clampContent(c) {
+//
+// `clampSkills` is false on the verbatim path. These clamps exist to contain a
+// model that ignores its schema, and cv-writers is not a model: it drops every
+// category the posting has no use for and deliberately keeps one past the sixth
+// when the posting named something inside it. Slicing to 6 here silently undid
+// exactly that, and it is how MCP left an EPAM CV that asks for MCP four times.
+// Layout is the ladder's job, and the ladder still caps skills from step 1 down.
+function clampContent(c, { clampSkills = true } = {}) {
   if (Array.isArray(c.competencies) && c.competencies.length > 9) c.competencies = c.competencies.slice(0, 9);
   if (Array.isArray(c.projects)     && c.projects.length > 4)     c.projects     = c.projects.slice(0, 4);
-  if (Array.isArray(c.skills)       && c.skills.length > 6)       c.skills       = c.skills.slice(0, 6);
+  if (clampSkills && Array.isArray(c.skills) && c.skills.length > 6) c.skills     = c.skills.slice(0, 6);
   if (Array.isArray(c.education_modules) && c.education_modules.length > 6) {
     c.education_modules = c.education_modules.slice(0, 6);
   }
@@ -519,7 +521,11 @@ const reportText = readSafe(args.reportPath);
 if (!reportText) fail(`Report not found: ${args.reportPath}`);
 
 const jdText   = readSafe(args.jdFile) || readSafe(`/tmp/batch-jd-${args.id}.txt`);
-const cvText   = readSafe(resolve(PROJECT, 'cv.md'));
+// --cv-file swaps the source CV. Every downstream guard (verifyBulletNumbers,
+// cvCompanies, remapProjectNames) validates against whatever is passed here, so
+// only ever point it at a SUBSET of cv.md — a hand-curated selection for one
+// offer. A superset would widen what counts as grounded.
+const cvText   = readSafe(args.cvFile || resolve(PROJECT, 'cv.md'));
 const prompt   = readSafe(PROMPT_TPL);
 
 if (!prompt) fail('local-tailor-prompt.md not found');
@@ -546,6 +552,19 @@ if (args.evalScore !== null && args.evalScore < args.threshold) {
 
 const profileText     = readSafe(resolve(PROJECT, 'config/profile.yml'));
 const profileNarrative = extractProfileNarrative(profileText);
+
+// `cv.pinned_projects` — projects that ship whatever the posting scores them.
+// Parsed defensively: a malformed profile must not take the whole run down over
+// an optional list, and an absent key is the normal case.
+let pinnedProjects = [];
+try {
+  const { default: yaml } = await import('js-yaml');
+  const parsed = yaml.load(profileText) || {};
+  const pins = parsed?.cv?.pinned_projects;
+  if (Array.isArray(pins)) pinnedProjects = pins.filter(p => typeof p === 'string' && p.trim());
+} catch (err) {
+  process.stderr.write(`config/profile.yml unreadable (${err.message}) — no pinned projects\n`);
+}
 
 // Pre-select CV content: rank every experience/project bullet against the JD's
 // requirements (Block B of the report) with the embedding model, keep top-N per
@@ -596,9 +615,26 @@ if (!cached) try {
     const { loadExemplars } = await import('./goldset.mjs');
     judgeShots = loadExemplars(cvText);
   } catch { /* no exemplars: cosine-only selection, same as before */ }
+  // Selection budget. SNIPE_LINE_BUDGET=0 restores count-based selection, and
+  // the three count knobs exist so the E2 control — naive count-cutting tuned
+  // until it fits one page — is runnable as an arm. Defaults are the shipped
+  // values, so an unset environment is the shipped selector.
+  // 24 lines over 3 projects, not 21 over 4. Four projects spent ~38px each on a
+  // title, a badge and a tech line to deliver one bullet apiece: 43% of the
+  // largest section on the page was chrome, and three of the four projects said
+  // one thing and stopped. Dropping a project and spending its chrome — plus the
+  // 69px the page was simply not using — on bullets is worth +0.116
+  // differentiator coverage (21-5, p=0.002), −0.063 noise and +0.071 grade yield,
+  // with mean bullets 2.69 → 3.44. `projectBulletBudget` is dead on this path;
+  // `allocateLines` spends `lineBudget` and never reads it (cv-select.mjs:579).
+  const num = (k, d) => parseInt(process.env[k] ?? String(d), 10) || d;
+  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '24', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
-    { ollamaUrl: args.ollamaUrl, judgeShots });
+    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
+      maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
+      projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
+      maxProjects:         num('SNIPE_MAX_PROJECTS', 3) });
   storeSelection(cvForPrompt);
 } catch (err) {
   process.stderr.write(`cv-select failed (${err.message}) — using full CV\n`);
@@ -664,7 +700,7 @@ if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${last
 if (args.writer === 'model' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
-cvContent = clampContent(cvContent);
+cvContent = clampContent(cvContent, { clampSkills: args.writer === 'model' });
 
 // Normalize legacy field names → new schema so trimming + fill stay consistent.
 if (!cvContent.projects && Array.isArray(cvContent.selected_projects)) {
@@ -891,7 +927,6 @@ try {
 } catch {}
 
 const pdfFile   = resolve(appDir, `${candidateName}-CV.pdf`);
-const format    = detectFormat(reportText, jdText);
 const fillScript = resolve(__dirname, 'fill-cv-template.mjs');
 const generatePdf= resolve(PROJECT, 'generate-pdf.mjs');
 
@@ -900,9 +935,13 @@ function runFill(maxSkills, maxBullets, maxProjectBullets) {
     fillScript,
     '--content',    contentFile,
     '--output',     htmlFile,
-    '--format',     format,
-    '--max-skills', String(maxSkills),
   ];
+  // null renders every category cv-writers selected. It already dropped the ones
+  // the posting had no use for, and it refuses to cut a category the posting
+  // named — so slicing here would silently delete a skill the CV claims and the
+  // JD asked for, which is the whole defect that work fixed.
+  if (maxSkills) a.push('--max-skills', String(maxSkills));
+  if (args.role) a.push('--role', args.role);
   if (maxBullets) a.push('--max-bullets', String(maxBullets));
   if (maxProjectBullets) a.push('--max-project-bullets', String(maxProjectBullets));
   execFileSync(process.execPath, a, { stdio: 'inherit', cwd: PROJECT });
@@ -922,58 +961,88 @@ function trimProjectsByRelevance(list, n, jdTok) {
 }
 const jdTokens = new Set(tokenize(jdText));
 
-// Tier 5 — relevance-preserving density ladder. The summary and competencies are
-// NEVER cut to fit the page; we only reduce experience-bullet depth (fill caps
-// per role, hitting the least-relevant backfilled roles too), skill breadth, and
-// the weakest (last-ranked) projects. Each step renders and re-checks the page
-// count; we stop at the first step that fits ≤ 2 pages.
-// `projBullets` trims the project lists, which the ladder could not reach at
-// all: it could drop a whole project but not shorten one, so a CV that overran
-// by two lines lost an entire project's worth of evidence. Project bullets carry
-// most of this CV's differentiators, so they are trimmed one at a time and only
-// after the cheaper cuts, and dropping a project stays the last resort it was.
-// Step 0's `projBullets` is 4 rather than 2 because cv-select already spent a
-// fixed total budget across the kept projects — the page still carries eight
-// project bullets, just not two apiece, and a cap of 2 here would flatten the
-// allocation back out at render time. Every tighter step is unchanged.
+// Tier 5 — relevance-preserving density ladder. The summary is NEVER cut to fit
+// the page; we only reduce experience-bullet depth (fill caps per role, hitting
+// the least-relevant backfilled roles too), skill breadth, and the weakest
+// (last-ranked) projects.
+//
+// The target is ONE page. It used to be two, which meant the ladder was
+// perfectly satisfied by the output that prompted this whole exercise — it
+// stopped at step 0 on every offer and never fired at all.
+//
+// Its role has changed with it. cv-select now spends a rendered-line budget, so
+// selection already fits the page on 31 of 32 offers and the ladder is a safety
+// net rather than the mechanism: it exists for the residual that selection
+// cannot predict, because chrome moves between runs (the summary is
+// model-written and varies by ~200 characters). Steps are therefore gentle at
+// the top — one project bullet at a time — where they used to jump straight
+// from 4 to 1 and throw away a project's worth of evidence to save two lines.
+//
+// Step 0 must not clip what the selectors allocated: its caps are the same 4/4
+// cv-select bounds itself by, and its skills cap is null because cv-writers has
+// already cut the block to what the posting can use. It renders the selection
+// untouched; only a step below it is allowed to take evidence away.
+// Skills survive the first three steps intact. Capping them at 6 is a blunt
+// slice off the end of a list cv-writers ordered by cv.md, so it cannot tell a
+// category the posting named from one it did not — it took MCP off an EPAM CV
+// that asks for MCP four times, which is the same defect `clampContent` had and
+// the same one the category rule exists to prevent. A project bullet is the
+// cheaper thing to spend first.
 const LADDER = [
-  { skills: 6, bullets: 4, projects: 4, projBullets: 4 }, // full
-  { skills: 6, bullets: 4, projects: 4, projBullets: 1 },
-  { skills: 6, bullets: 3, projects: 4, projBullets: 1 },
-  { skills: 5, bullets: 3, projects: 4, projBullets: 1 },
-  { skills: 5, bullets: 3, projects: 3, projBullets: 1 },
-  { skills: 4, bullets: 3, projects: 2, projBullets: 1 }, // tightest
+  { skills: null, bullets: 4, projects: 4, projBullets: 4 }, // as selected
+  { skills: null, bullets: 4, projects: 4, projBullets: 3 },
+  { skills: null, bullets: 3, projects: 4, projBullets: 2 },
+  { skills: 5, bullets: 3, projects: 3, projBullets: 2 },
+  { skills: 5, bullets: 2, projects: 3, projBullets: 1 },
+  { skills: 4, bullets: 2, projects: 2, projBullets: 1 }, // tightest
 ];
 
 let pdfPath = null;
 let pdfError = null;
+let ladderStep = null;
+let ladderPages = null;
 
-for (let step = 0; step < LADDER.length; step++) {
-  const { skills, bullets, projects, projBullets } = LADDER[step];
+// One page is the target; two is the ceiling, not the goal. Every density step
+// is tried at one page first, and only if none of them fits does the ladder
+// accept two — and then at the FULLEST step, because a CV that has to run to two
+// pages should carry the evidence it was going to carry rather than the
+// stripped-down version that failed to save it.
+outer:
+for (const maxPages of [1, 2]) {
+  // Every step is tried at one page. At the two-page ceiling only the fullest
+  // one is: a CV forced onto a second page should carry the evidence it was
+  // going to carry, not the stripped-down version that failed to save it.
+  const steps = maxPages === 1 ? LADDER.map((s, i) => [i, s]) : [[0, LADDER[0]]];
 
-  cvContent.projects = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
-  writeFileSync(contentFile, JSON.stringify(cvContent, null, 2), 'utf8');
+  for (const [step, { skills, bullets, projects, projBullets }] of steps) {
+    // Trimmed from the full project list every time, not cumulatively from the
+    // last step's output — the old loop reassigned cvContent.projects, so once a
+    // step had cut to 3 no later step could see the 4th again, and the two-page
+    // fallback could not restore what the one-page attempts had shed.
+    const kept = trimProjectsByRelevance(cvContent.projects, projects, jdTokens);
+    writeFileSync(contentFile, JSON.stringify({ ...cvContent, projects: kept }, null, 2), 'utf8');
 
-  try {
-    runFill(skills, bullets, projBullets);
-  } catch (err) {
-    if (step === 0) fail(`fill-cv-template.mjs failed: ${err.message}`);
-    continue; // a later, tighter step may still render
-  }
+    try {
+      runFill(skills, bullets, projBullets);
+    } catch (err) {
+      if (step === 0 && maxPages === 1) fail(`fill-cv-template.mjs failed: ${err.message}`);
+      continue; // a later, tighter step may still render
+    }
 
-  try {
-    execFileSync(process.execPath, [
-      generatePdf, htmlFile, pdfFile,
-      `--format=${format}`,
-      '--max-pages=2',
-      `--source-url=${args.url}`,
-    ], { stdio: 'inherit', cwd: PROJECT });
-    pdfPath = `output/${args.date}_${companySlug}_${args.reportNum}/${candidateName}-CV.pdf`;
-    break;
-  } catch {
-    if (step === LADDER.length - 1) pdfError = `PDF still >2 pages after ${LADDER.length} density steps`;
+    try {
+      execFileSync(process.execPath, [
+        generatePdf, htmlFile, pdfFile,
+        `--max-pages=${maxPages}`,
+        `--source-url=${args.url}`,
+      ], { stdio: 'inherit', cwd: PROJECT });
+      pdfPath = `output/${args.date}_${companySlug}_${args.reportNum}/${candidateName}-CV.pdf`;
+      ladderStep = step;
+      ladderPages = maxPages;
+      break outer;
+    } catch { /* try the next step, or the two-page ceiling */ }
   }
 }
+if (!pdfPath) pdfError = `PDF still >2 pages after ${LADDER.length} density steps`;
 
 // Update **PDF:** line in the report
 if (pdfPath && args.reportPath && existsSync(args.reportPath)) {
@@ -1012,4 +1081,10 @@ out({
   report:     args.reportPath,
   tracker:    `batch/tracker-additions/${args.id}.tsv`,
   error:      pdfError,
+  // Which density step the page actually needed, and how many pages it took.
+  // Step 0 at 1 page is the healthy case: selection fitted and the ladder never
+  // fired. Anything else is the ladder paying for evidence, and it is only
+  // visible if it is recorded — the old loop kept no trace of which step won.
+  ladder_step: ladderStep,
+  pages:       ladderPages,
 });

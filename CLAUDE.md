@@ -19,6 +19,16 @@ scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
 `config/profile.md` is a hard dependency — `batch/ollama-scorer.mjs` and
 `batch/staged-evaluator.mjs` read it at runtime.
 
+`cv.pinned_projects` in `config/profile.yml` forces a project past the
+`maxProjects` cut whatever the posting scores it, matched case-insensitively as a
+substring of the `### ` title. It is the escape hatch for an entry whose value is
+not its subject — an Honours dissertation loses the cut on any posting with no
+use for its topic, and is the first thing a reader of a graduate CV looks for.
+Each pin spends one of the three slots, so it is a project the ranker no longer
+chooses. **It also moves the benchmark**: the bench runs `local-pdf-offer.mjs`,
+which reads this file, so a pin changes selection for every arm. Note it when
+comparing against a run made before the pin existed.
+
 ## Entry points
 
 ```
@@ -61,9 +71,41 @@ act on next; `o` and the tracker still reach it:
 
 Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
 
-A P1-gated row renders as `· Company — Role  P1-gated | proceed?  link` — the
+The footer **message** (right-hand side) is feedback on the last keypress, not a
+log: `setMsg` stamps `S.msgAt` and `poll()` sweeps it after `MSG_TTL_MS` (5 s,
+`SNIPE_MSG_TTL_MS` to shrink it for tests, as `SNIPE_REJECT_GRACE_MS` already
+does). No countdown — it just goes. The sweep rides poll's existing 1 s tick, so
+a message lives 5–6 s rather than exactly 5.
+
+The footer hint line names **only what the focused element does** (`hintFor()`),
+plus ` · ? keys`. The full reference is `HELP_ROWS`, shown by `?` as an overlay
+that replaces the body and is closed by the next keypress (Ctrl-C excepted — a
+help screen must not trap a quit). One place, not two: the window is routinely a
+quarter of a screen wide, and a footer that spells every key out just truncates.
+`HELP_ROWS` is ordered most-used first, since a short terminal clips the tail.
+Two navigation tests used to assert on that footer string and so only proved the
+hint line; they now anchor on each tab's own body.
+
+A P1-gated row renders as `· Company — Role  P1 2.0 | proceed?  link` — the
 same yellow action, because the `--p1-threshold` gate is a cost heuristic over a
-4B pre-screen score, not a verdict.
+4B pre-screen score, not a verdict. The number is `p1_score` straight from
+`local-state.tsv`, drawn through the same `ScoreText` colour bands as an eval
+score, because "how close was it" is the only input to the decision the row is
+asking for. Rows whose `p1_score` is `-` fall back to the bare `P1-gated` label.
+
+`proceed?` is a **question**, so it takes an answer as well as Enter — but only
+while it is the focused stop, so no new global hotkeys and `q` still quits:
+
+- **y** / **Enter** — proceed (below).
+- **n** / **Backspace** / **Delete** — dismiss. Nothing on the pipeline changes;
+  the row was already finished. The offer retires and the row renders as
+  `· Company — Role  P1 2.0  link`. The answer is written to
+  `batch/p1-declined.tsv` (`readMarkMap`/`writeMarkMap`, same id→ISO shape as
+  `applied.tsv`/`skipped.tsv`) because the row list is rebuilt from disk every
+  second and from scratch on every launch — an in-memory "no" would come back.
+  Undo is deleting the line. Deliberately **not** the `x` skip mark: `toggleMark`
+  requires an eval and drives the tracker to SKIP, and a gated offer has neither
+  an eval nor a report number to `syncTracker` against.
 
 - **proceed?** — `local-runner.sh --only-id N --p1-threshold 0`. Nothing is
   re-scored: the Phase 1 offer list skips anything already `scored` (`:918`), so
@@ -132,6 +174,43 @@ fabrication lived. Scaling the writer does not fix it: a 9B and the 30B both buy
 `--writer model` survives as the benchmark control only. Full numbers and the
 two production bugs found on the way: `docs/PHASE3-RETENTION-LEDGER.md`.
 
+**Skills are selected, not dumped** (`selectSkills` in `cv-writers.mjs`). The
+block used to ship 52 items — near enough the whole taxonomy, merely reordered —
+of which 12.9 shared a term with the posting. The other 75% bought nothing an ATS
+could read and cost 4.4 rendered lines on a page whose entire evidence budget is
+21. Items now ship in three tiers and everything below them is dropped:
+
+1. **named** — the posting's own terms, matched as whole phrases
+2. **related** — what `cv.md` writes on the same line as a named item, so a Java
+   posting still gets Spring Boot. The Skills section is excluded from that
+   evidence: its lines list a category's items together by definition, so
+   counting them would promote whole categories on one match
+3. **floor** — `minItems` (3) in `cv.md`'s own order, so a block never shrinks to
+   a mirror of the posting. Without it the CV reads as pandering and loses the
+   distinctive evidence, which is `docs/PHASE3-RETENTION-LEDGER.md` §1 all over
+
+`maxCats` (6) budgets only the categories the posting did *not* name; one it did
+is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0
+now passes no `--max-skills` at all. **Worth `skill_coverage` 0.932 → 1.000**
+(+0.068, CI [0.032, 0.106], 9-0, p=0.004) and `ats_coverage` +0.014 (13-0,
+p<0.001) against a 0.000 A/A floor, with 52 → 30 items, 979 → 958 px, and every
+falsity metric and the one-page rate unmoved.
+
+Three bugs were in the way, each of which silently deleted a real skill:
+
+- **`parseSkillCategories` dropped every parenthesis**, so `Message Queues
+  (RabbitMQ, Kafka)` shipped as "Message Queues". Kafka, AES-256-GCM, EC2/Lambda/
+  S3/IAM, Jest, Jenkins, Ollama and MCP were deleted at parse time from every
+  tailored PDF ever generated. Parts are now judged individually, so a name is
+  promoted to an item and prose ("working knowledge") is still dropped.
+- **`tokenize` has a 3-character floor**, so `C#` and `CI/CD` produce no tokens
+  and scored 0 however loudly a posting asked. Ranking hid it — they shipped
+  last; filtering exposed it. Selection now also tests whole-phrase presence.
+- **A `.` survives phrase normalisation** for `Next.js`, which welded the period
+  in "…experience with Kafka." onto the term. `normPhrase` is exported from
+  `cv-writers.mjs` and used by the harness too, so the metric scores what the
+  selector selected rather than drifting from it.
+
 Project bullets are **allocated, not capped**. `cv-select.mjs` spends one total
 budget (`maxProjects × 2` = 8, exactly what a flat 2-per-project rendered) across
 the projects that survived the top-4 cut: one bullet each, then the rest to the
@@ -149,6 +228,31 @@ differentiator inside a two-bullet project.
 already spent the budget. The same is true of the density ladder's step 0 in
 `local-pdf-offer.mjs`; every tighter step still drops project bullets before
 experience bullets. All 32 bench offers render at 2 pages on step 0.
+
+**The budget is 24 lines over 3 projects** (`SNIPE_LINE_BUDGET`,
+`SNIPE_MAX_PROJECTS`), not 21 over 4. Four projects spent ~38px each on a title,
+a badge and a tech line to deliver one bullet apiece — 43% of the largest section
+on the page was chrome, and three of the four said one thing and stopped. Trading
+a project's chrome, plus the 69px the page was simply not using, for bullets is
+worth **+0.116 differentiator coverage** (n=32, 21-5, CI [0.051, 0.176], p=0.002)
+with `noise_rate` −0.063, `grade_yield` +0.071, `mean_grade` +0.182 and
+`mean_bullets` 2.69 → 3.44, against a 0.000 A/A floor. `skill_coverage` holds at
+1.000, `ats_coverage` +0.016, grounding and every fabrication metric unmoved.
+One page still holds for all 32, with the ladder firing on 3 and none past step 2.
+**`projectBulletBudget` is dead on this path** — `allocateLines` spends
+`lineBudget` and never reads it (`cv-select.mjs:579`), so setting
+`SNIPE_PROJ_BUDGET` changes nothing unless `SNIPE_LINE_BUDGET=0`.
+
+**Nothing may slice the skills block down to a fixed count.** `selectSkills`
+keeps a category past the sixth precisely when the posting named something inside
+it, so a blunt `slice(0, 6)` anywhere downstream cannot tell that category from
+filler and silently deletes a claimed skill. Two places did: `clampContent`,
+whose skill clamp now applies only to `--writer model` (it exists to contain a
+model that ignores its schema, and cv-writers is not a model), and LADDER steps 1
+and 2, which now leave skills untouched and pay for the overrun in project
+bullets instead. Both took MCP off an EPAM CV that asks for MCP four times.
+Because no offer needs a step past 2, `skill_coverage` is 1.000 **as shipped**,
+not merely as selected.
 
 **`trim()`'s metric-bullet guarantee overrides the ranker at keep=1**, which the
 allocation now reaches: all 57 single-slot project bullets across the 32 offers
@@ -284,6 +388,18 @@ comes free: `SNIPE_TIMING=path` makes every Ollama call append its own
 `load_duration` / `eval_count` (`batch/timing.mjs report`), which is how a model
 reload gets counted rather than guessed.
 
+**`ats_coverage` is a breadth signal, not a target.** It counts every ≥3-char
+token a JD and `cv.md` share, so most of what it calls a miss is generic English:
+of 202 distinct missed terms over 32 offers, the leaders are `complex`,
+`location`, `fast`, `where` and `never`, and only 17 are technologies. It cannot
+reach 1.0 by any honest means and rewards padding on the way up. **`skill_coverage`
+is the one to target** — of the skills a posting *names* and `cv.md` genuinely
+claims, the fraction reaching the page, matched as phrases against the CV's own
+taxonomy so there is no stoplist to tune and `NAT Traversal (STUN/TURN)` cannot
+contribute a spurious `turn`. It is bounded above by what the CV claims, so
+inventing cannot raise it, and it falls when a real skill is cut. It is `null`,
+never 0, for a posting that names no skill at all. It sits at **1.000**.
+
 Those eight metrics all punish **falsity**, and an empty CV scores perfectly on
 every one of them — so none of them can see a CV that dropped the thing that
 differentiates you. `batch/opus-metrics.mjs` closes that hole against a label
@@ -343,11 +459,23 @@ has grades.
    Greedy decoding is byte-identical for **Phase 2**: verified across 4 offers × 2
    runs, evals *and* report prose. At temp 0.1 that floor was 0.091 and individual
    offers swung up to 2.1 points between identical runs.
-   **Phase 3's 7B tailor call is not byte-identical at temp 0** and never was in
-   that check — GPU batch/split variation flips a token regardless of temperature.
+   **Phase 3 under `--writer verbatim` — the production default — has a floor of
+   exactly 0.000.** 32-offer A/A run 2026-08-08 (`aa1`/`aa2`, fresh selection in
+   both, no `SNIPE_SELECT_CACHE`): all 32 `cv-content.json` byte-identical, every
+   metric 0.000 with CI [0.000, 0.000], across 191 real model calls. Verified
+   against rule 6 rather than assumed — see `docs/CV-ONE-PAGE-EXPERIMENTS.md` §1.
+   Any nonzero delta is signal. Caveat: measured back-to-back on an idle machine
+   with warm models, so re-check if a result rests on <0.01 under GPU contention.
+
+   **The floors below are for `--writer model` only.** Deleting the 7B tailor call
+   deleted the nondeterminism with it — what remains is a short summary and a
+   schema-constrained list of small integers, with far less room to diverge than a
+   page of rewritten bullets. `--writer model` survives as the benchmark control,
+   and there the 7B tailor call **is not byte-identical at temp 0** — GPU
+   batch/split variation flips a token regardless of temperature.
    `PHASE3-EXPERIMENT-LEDGER.md` measured this directly (24-offer A/A: 12.5% of
    offers vary; `grounding` ±0.020, `example_copy_pct` ±0.042, `mean_bullets`
-   ±0.120) and **is the authority** — this rule used to contradict it. A later
+   ±0.120) and **is the authority** for that arm. A later
    12-offer A/A adds floors for the metrics the ledger never floored:
 
    | metric | floor | from |
@@ -408,6 +536,16 @@ has grades.
     bullets rather than a paragraph — was worth more than any model swap and cost
     nothing. Check what the template can physically print before blaming a model
     for not printing it.
+11. **The bench must render the document production renders, and score the
+    document it rendered.** Three ways that broke, all found in one sitting:
+    `withPageMetrics` passed `--max-skills 6` while LADDER step 0 had stopped
+    capping, so it measured a 6-row page against an 8-row PDF; `outputText` still
+    scored Core Competencies months after the template deleted it (+0.009); and it
+    never read project *bullets* at all (−0.008). The last two nearly cancelled,
+    which is why neither showed. Offsetting errors are luck — when the phantom
+    section finally went, nothing would have offset the omission. After any
+    template or ladder change, diff what the metric concatenates against what the
+    page prints.
 
 ## Tracker rules
 
