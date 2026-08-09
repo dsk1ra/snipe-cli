@@ -679,8 +679,8 @@ try {
     eq(summary.meta.label, 'A', "the run's meta.json is carried into the metrics");
     ok(typeof summary.grounding === 'number' && typeof summary.num_retention === 'number',
       'every headline metric comes back as a number');
-    ok(/1_acme\s+diff=\S+ noise=\S+ yield=\S+ roles=1 fab=/.test(metrics.out),
-      '--rows prints one line per offer, label metrics first');
+    ok(/1_acme\s+pg=\S+ diff=\S+ noise=\S+ yield=\S+ roles=1 fab=/.test(metrics.out),
+      '--rows prints one line per offer, pages first then the label metrics');
     // The fixture has no labels in batch/bench/opus/labels for these ids, so the
     // label columns must degrade to a dash rather than to a number that would
     // read as a real score.
@@ -698,6 +698,43 @@ try {
     ok(/^n\s+1\s+1\s+0\.000$/m.test(cmp.out), 'the paired table reports one offer on each side');
     ok(/^metric_fab\s+\S+/m.test(cmp.out) && /^selection_regret\s+/m.test(cmp.out),
       'and prints every headline metric, including the ones --no-embed left null');
+
+    // ---- the page metric (E0) ----------------------------------------------
+    // Every other metric here scores cv-content.json, which local-pdf-offer
+    // writes and then exits on in bench mode, so the whole suite was blind to
+    // how tall the CV actually renders. A one-page experiment run against a
+    // blind harness scores every arm identically and reads as a clean null.
+    //
+    // The check that the harness is NOT blind: an arm carrying a deliberately
+    // longer summary must measure taller. The summary is the right lever
+    // because it renders straight from the content JSON — experience and
+    // project bullets are matched back to cv.md first, so a fixture company
+    // that cv.md has never heard of would render the real CV's bullets in both
+    // arms and the two would come out identical.
+    writeRun('SHORT', '1_acme', content('Acme Corp', ['Built a Rust ingest service.']));
+    writeRun('LONG', '1_acme', content('Acme Corp', ['Built a Rust ingest service.'], {
+      summary: 'A backend engineer with Rust and Postgres experience. '.repeat(40),
+    }));
+    for (const l of ['SHORT', 'LONG']) {
+      writeFileSync(join(TAILOR, l, 'meta.json'), JSON.stringify({ label: l, temperature: 0 }), 'utf8');
+    }
+    const short = await runNodeAsync([TH, 'metrics', 'SHORT', '--no-embed'], { env });
+    const long  = await runNodeAsync([TH, 'metrics', 'LONG',  '--no-embed'], { env });
+    eq(short.code, 0, 'tailor-harness metrics renders the page for a run');
+    const sM = JSON.parse(short.out.slice(0, short.out.indexOf('}\n') + 1));
+    const lM = JSON.parse(long.out.slice(0, long.out.indexOf('}\n') + 1));
+    ok(typeof sM.pages === 'number' && typeof sM.page_px === 'number',
+      'metrics reports how many pages the CV renders to');
+    ok(typeof sM.one_page_rate === 'number' && typeof sM.one_page_n === 'number',
+      'and the one-page rate, which is the gate rather than the mean');
+    ok(lM.page_px > sM.page_px,
+      `a longer CV measures taller (${sM.page_px}px -> ${lM.page_px}px) — the harness can see the page`);
+    ok(lM.pages > sM.pages, 'and reports it as more pages, not just more pixels');
+
+    const noPages = await runNodeAsync([TH, 'metrics', 'SHORT', '--no-embed', '--no-pages'], { env });
+    eq(noPages.code, 0, '--no-pages runs without a browser');
+    ok(!/"pages"/.test(noPages.out.slice(0, noPages.out.indexOf('}\n') + 1)),
+      'and reports no page metric at all rather than a zero that would read as fitting');
 
     // A run whose offers all fail must still finish and record the arm it was.
     writeFileSync(join(TAILOR, 'sample.tsv'),

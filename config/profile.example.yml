@@ -78,6 +78,18 @@ location:
 
 cv:
   output_format: "html" # "html" (default) or "latex"
+  # (Optional) Projects that appear on every tailored CV whatever the posting
+  # scores them. Matched case-insensitively as a substring of the "### " title in
+  # cv.md, so a partial name is enough — but renaming the project there stops the
+  # match, which cv-select warns about on stderr rather than failing silently.
+  #
+  # Relevance ranking is the right default; this is the escape hatch for an entry
+  # whose value is not what it is about. An Honours dissertation is what a reader
+  # of a graduate CV looks for, and it loses the cut on any posting with no use
+  # for its subject. Each pin spends one of SNIPE_MAX_PROJECTS (3) slots, so it is
+  # a project the ranker no longer gets to choose — pin sparingly.
+  # pinned_projects:
+  #   - "Re:Link"
   # (Optional) Canva resume design ID for visual CV generation via /snipe pdf.
   # Find it in your Canva design URL: https://www.canva.com/design/DAxxxxxxx/...
   # The ID starts with "D" and is 11 characters long.

@@ -48,15 +48,17 @@
  * different offers measures the offers, not the change.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, mkdtempSync, rmSync } from 'fs';
 import { resolve, dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
          stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
 import { productFab, credentialFab } from './summary-stage.mjs';
+import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
@@ -161,7 +163,24 @@ export function readSample(samplePath = SAMPLE) {
 
 // ── running a variant ─────────────────────────────────────────────────────────
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE } = {}) {
+/**
+ * The commit the tree is on, or '' outside a repo.
+ *
+ * Recorded at the start of a run and re-checked at the end. A 32-offer run is
+ * 40 minutes of spawning `local-pdf-offer.mjs`, which re-imports its modules
+ * every time, so a checkout mid-run silently splits it: offers before the switch
+ * ran one version, offers after ran another, and the mean is of neither. That
+ * happened — a branch switch 34 minutes into an E2 arm — and nothing noticed
+ * until the numbers were being read. Benchmark rule 4, enforced rather than
+ * remembered.
+ */
+function headSha() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: PROJECT, encoding: 'utf8' }).trim();
+  } catch { return ''; }
+}
+
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
   // two limited runs stay paired. A limited run is only comparable to another
@@ -170,9 +189,24 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   const sample = limit ? readSample(samplePath).slice(0, limit) : readSample(samplePath);
   const dir = resolve(BENCH, label);
   mkdirSync(dir, { recursive: true });
+  const sha0 = headSha();
   const t0 = Date.now();
-  let ok = 0, failed = 0;
+  let ok = 0, failed = 0, skipped = 0;
   for (const [i, s] of sample.entries()) {
+    // --resume keeps offers that already produced parseable content and runs
+    // only the gaps, so a run interrupted at offer 28 costs four offers to
+    // finish rather than thirty-two. An unparseable or absent file is a gap.
+    // Matched on the id prefix rather than by rebuilding the slug: the naming
+    // rule lives in local-pdf-offer.mjs, and a second copy here would silently
+    // stop matching the first time either changed.
+    if (resume) {
+      let done = false;
+      try {
+        const d = readdirSync(dir).find(x => x.startsWith(`${s.id}_`));
+        done = !!(d && JSON.parse(readFileSync(resolve(dir, d, 'cv-content.json'), 'utf8')));
+      } catch { done = false; }
+      if (done) { skipped++; continue; }
+    }
     process.stderr.write(`[${i + 1}/${sample.length}] #${s.id} ${s.company} — ${s.role}\n`);
     try {
       execFileSync(process.execPath, [
@@ -194,10 +228,21 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   // flag is indistinguishable from one that had it. Record which arm this was.
   const flags = Object.fromEntries(Object.entries(process.env)
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
+  const sha1 = headSha();
+  const split = !!(sha0 && sha1 && sha0 !== sha1);
   const meta = { label, temperature, model, writer, sample: samplePath, n: sample.length,
-                 limit: limit || null, ok, failed,
+                 limit: limit || null, ok, failed, skipped: resume ? skipped : null,
+                 commit: sha0, commit_end: sha1,
+                 // Loud, and in the artifact rather than only on a terminal
+                 // nobody was watching: a split run's mean is of neither version.
+                 split_run: split || null,
                  flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+  if (split) {
+    process.stderr.write(`\n*** HEAD MOVED DURING THIS RUN: ${sha0.slice(0, 8)} -> ${sha1.slice(0, 8)}\n`
+      + `*** local-pdf-offer.mjs re-imports per offer, so offers before and after ran\n`
+      + `*** different code. This run is a mongrel — do not score it. (rule 4)\n\n`);
+  }
   return meta;
 }
 
@@ -334,6 +379,43 @@ export function atsCoverage(jdText, cvText, outputText) {
 }
 
 /**
+ * Of the skills this posting **names** and `cv.md` genuinely claims, the fraction
+ * that reach the page.
+ *
+ * `ats_coverage` is the blunt version of this question and answers a different
+ * one. It counts every ≥3-char token a JD and `cv.md` share, so on this corpus
+ * its 202 distinct misses are led by `complex`, `location`, `fast`, `where` and
+ * `never` — 185 of them generic English rather than anything a recruiter searches
+ * for. It cannot reach 1.0 by any legitimate means, and driving it up rewards
+ * padding. Keep it as a breadth signal; do not target it.
+ *
+ * This one is matched as **phrases against cv.md's own skill taxonomy**, so
+ * there is no stoplist to tune and "NAT Traversal (STUN/TURN)" cannot contribute
+ * a spurious `turn`. It is honest in both directions: bounded above by what the
+ * CV actually claims, so it cannot be gamed by inventing, and it goes down when a
+ * real skill is cut — which is exactly what the skills block used to do silently.
+ *
+ * Returns `null` coverage when a posting names no skill at all, rather than 0 —
+ * a posting with nothing to match is not a failure to match it.
+ *
+ * @param {string} jdText
+ * @param {string} cvText
+ * @param {string} outputText
+ */
+export function skillCoverage(jdText, cvText, outputText) {
+  const norm = normPhrase;
+  const items = [...new Set(parseSkillCategories(cvText).flatMap(c => c.items))];
+  const jd = norm(jdText), out = norm(outputText);
+  const asked = items.filter(s => jd.includes(norm(s)));
+  const missed = asked.filter(s => !out.includes(norm(s)));
+  return {
+    coverage: asked.length ? (asked.length - missed.length) / asked.length : null,
+    asked: asked.length,
+    missed,
+  };
+}
+
+/**
  * @param {string} label
  * @param {{benchRoot?: string, cvPath?: string, keep?: Set<string>|null}} [paths]
  *   injectable for tests; `keep` restricts to a set of run directories so two
@@ -352,6 +434,10 @@ function metricsFor(label, paths = {}) {
   // whole `<id>_<slug>` dir name so a change to the slug rule cannot silently
   // empty every requirement list and read as selection_regret improving.
   const reportById = new Map();
+  // The role each offer was tailored for. Needed only so the rendered page
+  // carries the same target-role line a real run would print — it is one line,
+  // but measuring a page without it measures a page nobody ships.
+  const roleById = new Map();
   // Which sample this run used, as recorded by runVariant. A run over a second
   // sample file scored against sample.tsv matches no offer, so every requirement
   // list comes back empty and selection_regret reads null — the same
@@ -359,7 +445,10 @@ function metricsFor(label, paths = {}) {
   let ranSample = SAMPLE;
   try { ranSample = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')).sample || SAMPLE; } catch {}
   try {
-    for (const s of readSample(ranSample)) reportById.set(String(s.id), resolve(PROJECT, s.report));
+    for (const s of readSample(ranSample)) {
+      reportById.set(String(s.id), resolve(PROJECT, s.report));
+      roleById.set(String(s.id), s.role || '');
+    }
   } catch { /* no sample (unit tests use a fixture tree) — reqs stay empty */ }
   const reportFor = (d) => reportById.get(d.split('_')[0]) || '';
 
@@ -412,13 +501,21 @@ function metricsFor(label, paths = {}) {
         }
       }
     }
-    // Everything the model actually wrote, as one blob. Competencies, modules
-    // and skills are code-derived (Tier 3), but they ship on the PDF, so a
-    // fabricated product there counts exactly as much as one in a bullet.
+    // Everything that reaches the PDF, as one blob. Modules and skills are
+    // code-derived (Tier 3), but they ship, so a fabricated product there counts
+    // exactly as much as one in a bullet.
+    //
+    // Two corrections, and they very nearly cancelled — which is why neither was
+    // visible. Core Competencies was deleted from the template during the
+    // one-page work but kept being scored, inflating every number by 0.009; and
+    // project *bullets*, the field CLAUDE.md calls the one that carries the
+    // differentiators, were never read at all, deflating them by 0.008. Offsetting
+    // errors are luck, not correctness: the phantom section is now gone for good,
+    // so the inflation would not have offset anything again.
     const outputText = [
       c.summary || '',
-      (c.competencies || []).join(' '),
-      (c.projects || []).map(p => `${p.name || ''} ${p.description || ''}`).join(' '),
+      (c.projects || []).map(p =>
+        `${p.name || ''} ${p.description || ''} ${(p.bullets || []).join(' ')} ${p.tech || ''} ${p.url || ''}`).join(' '),
       (c.education_modules || []).join(' '),
       (c.skills || []).map(s => `${s.category || ''} ${s.items || ''}`).join(' '),
       exp.map(e => (e.bullets || []).join(' ')).join(' '),
@@ -426,6 +523,7 @@ function metricsFor(label, paths = {}) {
     const jdText = readSafe(join(dir, d, 'job-description.txt'));
     const fabProducts = productFab(outputText, cvText);
     const ats = atsCoverage(jdText, cvText, outputText);
+    const skill = skillCoverage(jdText, cvText, outputText);
     // Block B is what cv-select ranked against, so selection_regret has to be
     // scored against the same requirements the selector actually saw. The bench
     // dir is named `<id>_<slug>`, which is enough to find the offer's report.
@@ -433,11 +531,15 @@ function metricsFor(label, paths = {}) {
 
     rows.push({
       dir: d,
+      role: roleById.get(d.split('_')[0]) || '',
       roles: exp.length,
       products: fabProducts,
       product_fab: fabProducts.length,
       ats_coverage: ats.coverage,
       ats_supportable: ats.supportable,
+      skill_coverage: skill.coverage,
+      skills_asked: skill.asked,
+      skills_missed: skill.missed,
       summary: c.summary || '',
       // Shipped vs as-written. `_summary_pre_guard` is only present on runs made
       // after it was added; older runs fall back to the shipped summary, which
@@ -473,6 +575,13 @@ function metricsFor(label, paths = {}) {
 
   const n = rows.length || 1;
   const mean = k => rows.reduce((a, r) => a + r[k], 0) / n;
+  // Skips the offers a metric could not score, rather than averaging their nulls
+  // in as zeros — a posting that names no skill has no coverage to report and
+  // must not drag the mean down as though it were a miss.
+  const meanOf = (k) => {
+    const got = rows.filter(r => typeof r[k] === 'number');
+    return got.length ? got.reduce((a, r) => a + r[k], 0) / got.length : null;
+  };
   let meta = {};
   try { meta = JSON.parse(readFileSync(resolve(dir, 'meta.json'), 'utf8')); } catch {}
   return {
@@ -498,6 +607,10 @@ function metricsFor(label, paths = {}) {
     // rather than letting a 0 read as good news.
     summary_fab_raw_n: rows.filter(r => r.has_pre_guard).length,
     ats_coverage: +mean('ats_coverage').toFixed(3),
+    // The one to target. See `skillCoverage` for why `ats_coverage` is not.
+    skill_coverage: meanOf('skill_coverage') === null ? null : +meanOf('skill_coverage').toFixed(3),
+    skill_coverage_n: rows.filter(r => typeof r.skill_coverage === 'number').length,
+    skills_asked: +mean('skills_asked').toFixed(1),
     mean_bullets: +mean('bullets').toFixed(2),
     rows,
   };
@@ -636,6 +749,79 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
 }
 
 /**
+ * Attach page geometry: how tall each offer's CV actually renders, and whether
+ * it fits on one page.
+ *
+ * Every other metric in this file scores `cv-content.json`, which
+ * `local-pdf-offer.mjs` writes and then exits on in bench mode — deliberately,
+ * so the density ladder cannot flatter a generation change. The consequence is
+ * that the whole suite was blind to the page: an arm that shipped twice as much
+ * content scored identically to one that fit, and a one-page experiment would
+ * have read as a clean null across every arm (benchmark rule 5 — ask what the
+ * metric reads if the change lands).
+ *
+ * Measured, not simulated. The content JSON goes through the real
+ * `fill-cv-template.mjs` and is laid out by the real browser at the real content
+ * box, so the number cannot drift from what `generate-pdf.mjs` would print. One
+ * browser for the whole run, not one per offer.
+ *
+ * `pages` is fractional on purpose. A boolean "fits" cannot tell an arm that
+ * overran by two lines from one that overran by a page, and the difference is
+ * the whole question during the one-page work.
+ */
+// `maxSkills` defaults to null to match LADDER step 0, the step production
+// renders at unless the page overruns. A 6 here measured a document the pipeline
+// does not produce: cv-writers keeps a category the posting named even past the
+// sixth, so the bench would have rendered 6 rows while the PDF carried 8.
+async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = null } = {}) {
+  if (!m.rows.length) return m;
+  let chromium;
+  try { ({ chromium } = await import('playwright')); }
+  catch { return { ...m, pages: null, page_note: 'playwright unavailable' }; }
+  const { CONTENT_BOX } = await import(pathToFileURL(resolve(PROJECT, 'generate-pdf.mjs')).href);
+
+  const tmp = mkdtempSync(join(tmpdir(), 'snipe-pages-'));
+  const fill = resolve(PROJECT, 'batch/fill-cv-template.mjs');
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: CONTENT_BOX.width, height: 1200 });
+    for (const r of m.rows) {
+      const src = join(benchRoot, label, r.dir, 'cv-content.json');
+      const html = join(tmp, `${r.dir}.html`);
+      try {
+        const a = [fill, '--content', src, '--output', html];
+        if (maxSkills) a.push('--max-skills', String(maxSkills));
+        if (r.role) a.push('--role', r.role);
+        execFileSync(process.execPath, a, { stdio: 'ignore', cwd: PROJECT });
+        await page.goto(pathToFileURL(html).href, { waitUntil: 'load' });
+        r.page_px = await page.evaluate(() =>
+          Math.round(document.querySelector('.page').getBoundingClientRect().height));
+        r.pages = +(r.page_px / CONTENT_BOX.height).toFixed(3);
+        r.fits_one_page = r.pages <= 1 ? 1 : 0;
+      } catch { r.page_px = null; r.pages = null; r.fits_one_page = null; }
+    }
+  } finally {
+    await browser.close();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+
+  const got = m.rows.filter(r => typeof r.pages === 'number');
+  if (!got.length) return { ...m, pages: null, page_note: 'no offer rendered' };
+  const avg = k => +(got.reduce((a, r) => a + r[k], 0) / got.length).toFixed(3);
+  return {
+    ...m,
+    pages: avg('pages'),
+    page_px: Math.round(got.reduce((a, r) => a + r.page_px, 0) / got.length),
+    // The gate for the one-page work. A mean page count says nothing on its own:
+    // 30 offers fitting and 2 overrunning is not "1.05 pages", it is a failure.
+    one_page_rate: +(got.filter(r => r.fits_one_page).length / got.length).toFixed(3),
+    one_page_n: got.filter(r => r.fits_one_page).length,
+    pages_n: got.length,
+  };
+}
+
+/**
  * Attach the label-scored metrics, for the offers that have a label.
  *
  * Kept separate from the label-free suite rather than merged into it: those
@@ -676,10 +862,21 @@ function withLabelMetrics(m) {
   };
 }
 
-/** All metrics. `--no-embed` keeps the text-only ones runnable with Ollama down. */
-async function allMetrics(label, noEmbed = false, keep = null) {
+/**
+ * All metrics. `--no-embed` keeps the text-only ones runnable with Ollama down;
+ * `--no-pages` skips the browser, which is the only part that needs one.
+ */
+async function allMetrics(label, noEmbed = false, keep = null, noPages = false) {
   const m = metricsFor(label, keep ? { keep } : {});
-  return withLabelMetrics(noEmbed ? m : await withEmbedMetrics(m));
+  // A split run is not a weak result, it is two runs averaged together. Refuse
+  // rather than report, because the number looks entirely normal.
+  if (m.meta?.split_run) {
+    throw new Error(`run "${label}" is a mongrel: HEAD moved from `
+      + `${String(m.meta.commit).slice(0, 8)} to ${String(m.meta.commit_end).slice(0, 8)} during it. `
+      + `Re-run the affected offers (run <label> --resume after deleting them) rather than scoring this.`);
+  }
+  const withPages = noPages ? m : await withPageMetrics(m, { label });
+  return withLabelMetrics(noEmbed ? withPages : await withEmbedMetrics(withPages));
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -724,9 +921,10 @@ if (!isMain) {
     // sheet because it had no --sheet flag and silently loaded the wrong one.
     // A second sample file gets a flag from the start.
     samplePath: resolve(BENCH, String(flag('sample', 'sample.tsv'))),
+    resume: rest.includes('--resume'),
   }), null, 2));
 } else if (cmd === 'metrics') {
-  const m = await allMetrics(positional[0], rest.includes('--no-embed'));
+  const m = await allMetrics(positional[0], rest.includes('--no-embed'), null, rest.includes('--no-pages'));
   const { rows, ...summary } = m;
   console.log(JSON.stringify(summary, null, 2));
   const pct = (x) => (typeof x === 'number' ? x.toFixed(2) : '-');
@@ -734,7 +932,10 @@ if (!isMain) {
   // went wrong rather than as a question that was never asked.
   const diffCol = (r) => (typeof r.differentiator_coverage === 'number'
     ? `${r.differentiator_coverage.toFixed(2)}(-${r.differentiators_lost})` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  // Pages first: during the one-page work it is the gate, and a row that does not
+  // fit is not improved by whatever its other columns say.
+  const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -745,8 +946,9 @@ if (!isMain) {
   // benchmarks answer "is this real" the same way.
   const [a, b] = positional;
   const { bootstrapCI, signTest } = await import('./stats.mjs');
-  let A = await allMetrics(a, rest.includes('--no-embed'));
-  let B = await allMetrics(b, rest.includes('--no-embed'));
+  const noPages = rest.includes('--no-pages');
+  let A = await allMetrics(a, rest.includes('--no-embed'), null, noPages);
+  let B = await allMetrics(b, rest.includes('--no-embed'), null, noPages);
   const common = A.rows.map(r => r.dir).filter(d => B.rows.some(r => r.dir === d));
   const byDir = (m) => new Map(m.rows.map(r => [r.dir, r]));
   const [ra, rb] = [byDir(A), byDir(B)];
@@ -759,6 +961,7 @@ if (!isMain) {
   const keys = [
     ['differentiator_coverage', 'differentiator_coverage'], ['noise_rate', 'noise_rate'],
     ['grade_yield', 'grade_yield'], ['mean_grade', 'mean_grade'],
+    ['skill_coverage', 'skill_coverage'],
     ['ats_coverage', 'ats_coverage'], ['grounding', 'grounding'],
     ['num_retention', 'num_retention'], ['num_lost', 'num_lost'],
     ['metric_fab', 'fab'], ['product_fab', 'product_fab'],
@@ -792,7 +995,8 @@ if (!isMain) {
 } else if (cmd === 'compare') {
   const [a, b] = positional;
   const noEmbed = rest.includes('--no-embed');
-  let A = await allMetrics(a, noEmbed), B = await allMetrics(b, noEmbed);
+  const noPages = rest.includes('--no-pages');
+  let A = await allMetrics(a, noEmbed, null, noPages), B = await allMetrics(b, noEmbed, null, noPages);
   // Compare only the offers BOTH runs produced. A --limit run holds a prefix of
   // the sample, so without this the means are taken over different offer sets
   // and the "delta" is mostly the difference between those sets, not the change.
@@ -800,12 +1004,12 @@ if (!isMain) {
   if (common.size !== A.rows.length || common.size !== B.rows.length) {
     console.log(`paired on ${common.size} offers common to both runs `
       + `(${a}: ${A.rows.length}, ${b}: ${B.rows.length})\n`);
-    A = await allMetrics(a, noEmbed, common);
-    B = await allMetrics(b, noEmbed, common);
+    A = await allMetrics(a, noEmbed, common, noPages);
+    B = await allMetrics(b, noEmbed, common, noPages);
   }
   const keys = ['n', 'role_retention', 'all_roles_pct', 'invented_roles', 'metric_fab', 'fab_offers_pct',
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
-                'product_fab', 'product_fab_pct', 'ats_coverage',
+                'product_fab', 'product_fab_pct', 'skill_coverage', 'skills_asked', 'ats_coverage',
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
                 'labelled_n', 'differentiator_coverage', 'differentiators_lost',
@@ -819,7 +1023,7 @@ if (!isMain) {
     console.log(`${pad(k, 18)}${pad(A[k], w)}${pad(B[k], w)}${d}`);
   }
 } else {
-  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] | metrics <label> [--rows] [--no-embed] | compare <a> <b> [--no-embed]');
+  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
 }
 
 export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles, withEmbedMetrics, allMetrics };
