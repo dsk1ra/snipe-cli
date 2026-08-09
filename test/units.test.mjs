@@ -2,7 +2,7 @@
 // scripts themselves. Everything here runs in-process with no model, browser or
 // network, so these are the assertions that pin exact numbers; the end-to-end
 // suites only check that the wiring holds.
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { pass, fail, ROOT, join, pathToFileURL } from './harness.mjs';
 
 const eq = (actual, expected, label) =>
@@ -245,8 +245,15 @@ try {
   // exampleShingles: reads the real prompt, so it breaks if the example moves
   const ex = h.exampleShingles();
   eq(ex.size > 0, true, 'exampleShingles finds bullets in the tailor prompt');
-  eq([...ex].some(s => s.includes('membership platform')), true,
-    'exampleShingles covers the worked-example experience bullets');
+  // Probe the snapshot the harness itself would pick rather than a phrase from
+  // one particular CV: the committed file is generic placeholder text, and a
+  // real run overrides it with example-bullets.local.json. Hardcoding either
+  // one's wording here would fail on whichever machine has the other.
+  const activeSnapshot = ['batch/bench/example-bullets.local.json', 'batch/bench/example-bullets.json']
+    .map(p => join(ROOT, p)).find(existsSync);
+  const snapBullets = JSON.parse(readFileSync(activeSnapshot, 'utf8'));
+  eq(snapBullets.every(b => [...h.shingles(b)].every(s => ex.has(s))), true,
+    'exampleShingles covers every bullet of the active worked-example snapshot');
   // The detector must not be definable purely by the live prompt: deleting the
   // worked example would then zero example_copy_pct by construction and score a
   // win the model never earned. The snapshot is what keeps the question honest.

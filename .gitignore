@@ -55,6 +55,9 @@ batch/*.local.md
 # and test/units.test.mjs both read example-bullets.json, and the metric reads 0 by
 # construction without it — the worked example it snapshots is gone from the prompt.
 # A directory exclusion cannot be negated per-file, hence the glob.
+# The committed copy is generic placeholder text. A personal worked example is
+# lifted from a real CV, so it belongs in example-bullets.local.json, which the
+# glob above already ignores and which snapshotShingles prefers when present.
 batch/bench/*
 !batch/bench/example-bullets.json
 batch/labels.tsv

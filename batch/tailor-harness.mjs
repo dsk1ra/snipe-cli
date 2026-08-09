@@ -307,11 +307,20 @@ export function activePromptPath() {
  * detector goes blind and the change scores a perfect win it did not earn.
  * Unioning a fixed snapshot in means the post-G2 number still answers the real
  * question: does the model still emit that text?
+ *
+ * The committed snapshot is generic, because the worked example in a personal
+ * `local-tailor-prompt.local.md` is lifted from a real CV and this file is the
+ * one thing under `batch/bench/` that ships. A `.local.json` beside it wins when
+ * present, the same override `local-pdf-offer.mjs:36` applies to the prompt
+ * itself — so the shipped repo carries placeholder text while a real run still
+ * measures copying against the example it actually shows the model.
  */
 function snapshotShingles() {
   const out = new Set();
+  const local = resolve(__dirname, 'bench/example-bullets.local.json');
+  const path  = existsSync(local) ? local : resolve(__dirname, 'bench/example-bullets.json');
   try {
-    for (const b of JSON.parse(readFileSync(resolve(__dirname, 'bench/example-bullets.json'), 'utf8'))) {
+    for (const b of JSON.parse(readFileSync(path, 'utf8'))) {
       for (const sh of shingles(b)) out.add(sh);
     }
   } catch { /* no snapshot — fall back to the live prompt alone */ }
