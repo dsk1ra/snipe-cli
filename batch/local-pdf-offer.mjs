@@ -56,7 +56,7 @@ function parseArgs(argv) {
     // before PDF generation (the model's work is done once cv-content.json is
     // written); --temperature overrides the production 0.15 so a benchmark can
     // run greedy, where this stack is byte-identical and one run is a valid A/B.
-    benchDir: null, temperature: 0.15,
+    benchDir: null, temperature: 0.15, cvFile: null,
     // Which component writes the bullets. `verbatim` is the shipped path: render
     // the selection as cv.md already words it, no generation call at all. `model`
     // hands the selection to snipe-cv to rewrite — the old default, kept as the
@@ -84,6 +84,7 @@ function parseArgs(argv) {
       case '--bench-dir':    a.benchDir     = argv[++i]; break;
       case '--temperature':  a.temperature  = parseFloat(argv[++i]); break;
       case '--writer':       a.writer       = argv[++i]; break;
+      case '--cv-file':      a.cvFile       = argv[++i]; break;
     }
   }
   return a;
@@ -519,7 +520,11 @@ const reportText = readSafe(args.reportPath);
 if (!reportText) fail(`Report not found: ${args.reportPath}`);
 
 const jdText   = readSafe(args.jdFile) || readSafe(`/tmp/batch-jd-${args.id}.txt`);
-const cvText   = readSafe(resolve(PROJECT, 'cv.md'));
+// --cv-file swaps the source CV. Every downstream guard (verifyBulletNumbers,
+// cvCompanies, remapProjectNames) validates against whatever is passed here, so
+// only ever point it at a SUBSET of cv.md — a hand-curated selection for one
+// offer. A superset would widen what counts as grounded.
+const cvText   = readSafe(args.cvFile || resolve(PROJECT, 'cv.md'));
 const prompt   = readSafe(PROMPT_TPL);
 
 if (!prompt) fail('local-tailor-prompt.md not found');
