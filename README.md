@@ -16,8 +16,8 @@ local AI job search · driven from your terminal
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
 
 Paste a job description. snipe scores it against your CV, writes a full fit
-report, and tailors a 2-page PDF for the roles worth your time. You drive all of
-it from the **snipe TUI**, a dashboard that lives in your terminal.
+report, and tailors a one-page PDF for the roles worth your time. You drive all
+of it from the **snipe TUI**, a dashboard that lives in your terminal.
 
 Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
 applications and your reports never leave the machine.
@@ -49,6 +49,15 @@ yours.
 `snipe-embed` (Qwen3 Embedding 0.6B) backs Phase 2's evidence matching and
 Phase 3's bullet selection. Scores are 0–5; snipe recommends against applying
 below 4.0.
+
+Phase 3 rewrites nothing. Bullets reach the page worded as `cv.md` words them,
+ranked by embedding against the posting's requirements and reranked by
+`snipe-eval`; `snipe-cv` writes the summary line and stops there. Deleting the
+rewrite call scored better than keeping it, and better than replacing it with a
+larger model. The skills block ships the categories the posting actually named
+rather than the whole taxonomy, and the PDF targets one page: a density ladder
+tightens the layout step by step, accepting a second page only when no step
+fits.
 
 ---
 
@@ -107,8 +116,8 @@ node snipe-tui.mjs        # or: npm run snipe-tui
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
 output. So you can start a run, watch it move, and keep adding jobs while it
 works. The TUI never edits pipeline state itself. The only files it writes are
-its own sidecars: `batch/applied.tsv`, `batch/skipped.tsv` and
-`batch/errors/<id>.txt`.
+its own sidecars: `batch/applied.tsv`, `batch/skipped.tsv`,
+`batch/p1-declined.tsv` and `batch/errors/<id>.txt`.
 
 ### The three tabs
 
@@ -179,13 +188,20 @@ is a cost heuristic over a 4B pre-screen, not a verdict, so the row lets you
 overrule it:
 
 ```
-  · Company — Role  P1-gated | proceed?  link
+  · Company — Role  P1 2.0 | proceed?  link
 ```
 
-**proceed?** re-runs that one offer with the gate off. It costs nothing extra up
-front — the Phase 1 score and the fetched JD are already on disk and get reused,
-so the run picks up at Phase 2, and Phase 3 follows if the real evaluation
-clears the threshold.
+The row shows the score that gated it, since how close it came is the whole
+input to the decision. **proceed?** is a question and takes either answer: **y**
+or **Enter** re-runs that one offer with the gate off, while **n** (or
+Backspace) dismisses it and leaves the row as it stands.
+
+Proceeding costs nothing extra up front. The Phase 1 score and the fetched JD
+are already on disk and get reused, so the run picks up at Phase 2, and Phase 3
+follows if the real evaluation clears the threshold. Dismissing changes nothing
+in the pipeline; the row had already finished, so the answer only retires the
+action. It is recorded in `batch/p1-declined.tsv`, and deleting that line brings
+the question back.
 
 ### Slash commands
 
@@ -208,6 +224,8 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 | **a** | Mark the selected row **applied `>`** |
 | **x** | Mark the selected row **skip `-`** (mutually exclusive with applied) |
 | **r** · **p** · **u** | Follow-ups tab only: end the entry as *Rejected* (5 s to change your mind), advance it a stage, or undo — the pending rejection first, then the last nudge |
+| **y** · **n** | On a focused **proceed?**: evaluate the gated offer anyway, or dismiss the gate |
+| **?** | The full key reference, as an overlay; the next keypress closes it |
 | **/** | Start a slash command |
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |
@@ -294,6 +312,9 @@ layer — scripts, modes, templates — is tracked:
 - **Working artifacts**, easy to overlook but just as personal: `batch/jds/`
   (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
   `batch/errors/`, `batch/logs/`, and `batch/local-state.tsv`
+- **Derived copies of your CV**, which are personal for the same reason `cv.md`
+  is: `batch/cv-bank.json` holds the source text of every bullet, and
+  `batch/cv-index.json` with `batch/cv-spike.json` hold its embeddings
 
 Outbound traffic is limited to the job boards and APIs you configure yourself.
 Every model call goes to Ollama on localhost.

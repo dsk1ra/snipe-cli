@@ -23,6 +23,7 @@ batch/snipe-queue.txt
 batch/batch-input.tsv
 batch/applied.tsv
 batch/skipped.tsv
+batch/p1-declined.tsv
 batch/tracker-additions/**/*.tsv
 !batch/tracker-additions/.gitkeep
 
