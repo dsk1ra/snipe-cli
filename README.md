@@ -50,11 +50,11 @@ yours.
 Phase 3's bullet selection. Scores are 0–5; snipe recommends against applying
 below 4.0.
 
-Phase 3 rewrites nothing. Bullets reach the page worded as `cv.md` words them,
+Phase 3 rewrites no bullets. They reach the page worded as `cv.md` words them,
 ranked by embedding against the posting's requirements and reranked by
-`snipe-eval`; `snipe-cv` writes the summary line and stops there. Deleting the
-rewrite call scored better than keeping it, and better than replacing it with a
-larger model. The skills block ships the categories the posting actually named
+`snipe-eval`. `snipe-cv` still runs on every offer, but only to write the summary
+line. Deleting the bullet-rewrite call scored better than keeping it, and better
+than replacing it with a larger model. The skills block ships the categories the posting actually named
 rather than the whole taxonomy, and the PDF targets one page: a density ladder
 tightens the layout step by step, accepting a second page only when no step
 fits.
