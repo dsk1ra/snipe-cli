@@ -98,3 +98,12 @@ batch/timings.tsv
 # Every cv.md bullet's source text, employers and dates — cv.md by another name.
 # Regenerate: node batch/bench-tools/gen-cv-bank.mjs
 batch/cv-bank.json
+
+# Demo assets. The README embeds demo/snipe-hero.gif and links the walkthrough as
+# demo/snipe-demo.mp4, negated here because *.mp4 is ignored repo-wide. The rest
+# is local build product: the recording sandbox, the full-length GIF (a megabyte
+# larger than the mp4 of the same session) and the hero's own mp4.
+demo/.sandbox/
+demo/snipe-demo.gif
+demo/snipe-hero.mp4
+!demo/snipe-demo.mp4
