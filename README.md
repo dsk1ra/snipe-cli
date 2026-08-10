@@ -25,9 +25,14 @@ applications and your reports never leave the machine.
 snipe drafts and fills applications. It never submits them; that part stays
 yours.
 
+![snipe TUI — paste a posting, run it, mark it applied](demo/snipe-hero.gif)
+
+<sub>Paste a posting → pre-score → full report → tailored CV → applied. Sample
+data throughout.</sub>
+
 ---
 
-## The pipeline in one picture
+## How it works
 
 ```
   paste JD ─┐
@@ -46,44 +51,41 @@ yours.
 | 2 · evaluate | `snipe-eval` (Qwen3 30B-A3B) | `reports/<NNN>-<slug>-<date>.md` |
 | 3 · tailor CV | `snipe-cv` (Qwen2.5 7B Coder) | `output/<date>_<slug>_<NNN>/` (PDF) |
 
-`snipe-embed` (Qwen3 Embedding 0.6B) backs Phase 2's evidence matching and
-Phase 3's bullet selection. Scores are 0–5; snipe recommends against applying
-below 4.0.
+`snipe-embed` (Qwen3 Embedding 0.6B) does the evidence matching in Phase 2 and
+the bullet selection in Phase 3. Scores run 0–5; below 4.0 snipe tells you not to
+bother applying.
 
-Phase 3 rewrites no bullets. They reach the page worded as `cv.md` words them,
-ranked by embedding against the posting's requirements and reranked by
-`snipe-eval`. `snipe-cv` still runs on every offer, but only to write the summary
-line. Deleting the bullet-rewrite call scored better than keeping it, and better
-than replacing it with a larger model. The skills block ships the categories the posting actually named
-rather than the whole taxonomy, and the PDF targets one page: a density ladder
-tightens the layout step by step, accepting a second page only when no step
-fits.
+Phase 3 writes no bullets of its own. They reach the page worded as `cv.md` words
+them, ranked by embedding against the posting's requirements and reranked by
+`snipe-eval`; deleting that rewrite call measured better than keeping it, and
+better than swapping in a larger model. The skills block ships the categories a
+posting actually named rather than the whole taxonomy, and a density ladder
+tightens the layout until the PDF fits one page.
 
 ---
 
-## Requirements
-
-- **Node.js ≥ 18** (≥ 22.5 for the optional SQLite tracker index)
-- **[Ollama](https://ollama.com)** running locally
-- **Playwright** Chromium (`npx playwright install chromium`) for PDF rendering
-- A GPU helps but isn't required — see [Hardware](#hardware)
-
 ## Setup
+
+Node ≥ 18 (≥ 22.5 for the optional SQLite tracker index) and a local
+[Ollama](https://ollama.com). Rendering the PDF needs Playwright's Chromium:
+`npx playwright install chromium`. A GPU helps but isn't required, see
+[Hardware](#hardware).
 
 ```bash
 npm install
-cp config/profile.example.yml config/profile.yml   # your comp/location/scoring policy
-cp config/profile.template.md  config/profile.md    # your archetypes + narrative
-cp templates/portals.example.yml portals.yml        # portals to scan (optional)
-cp .env.example .env                                # API keys (optional)
+cp config/profile.example.yml config/profile.yml   # comp, location, scoring policy
+cp config/profile.template.md  config/profile.md   # archetypes + narrative
+cp templates/portals.example.yml portals.yml       # portals to scan (optional)
+cp .env.example .env                               # API keys (optional)
 # add your cv.md at the project root (article-digest.md too, if you have one)
 ```
 
 `.env` only matters for portal scanning. `APIFY_API_KEY` unlocks the Apify-backed
-providers: LinkedIn, Indeed, Glassdoor. Without a key those three are skipped and
+providers (LinkedIn, Indeed, Glassdoor); without a key those sit out and
 everything else, the whole pipeline included, runs as normal.
 
-Build the four Ollama models once from the Modelfiles:
+Build the four models once, then start the server with a q8_0 KV cache or the
+30B's context will not fit:
 
 ```bash
 ollama pull qwen3:4b-instruct-2507-q8_0
@@ -95,11 +97,7 @@ ollama create snipe-screen -f batch/Modelfile.snipe-screen
 ollama create snipe-eval   -f batch/Modelfile.snipe-eval
 ollama create snipe-cv     -f batch/Modelfile.snipe-cv
 ollama create snipe-embed  -f batch/Modelfile.snipe-embed
-```
 
-Start the Ollama server with a q8_0 KV cache so the 30B model's context fits:
-
-```bash
 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 ```
 
@@ -107,111 +105,82 @@ OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 
 ## Using the TUI
 
-The TUI is the front door. Launch it with:
-
 ```bash
 node snipe-tui.mjs        # or: npm run snipe-tui
 ```
 
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
 output. So you can start a run, watch it move, and keep adding jobs while it
-works. The TUI never edits pipeline state itself. The only files it writes are
-its own sidecars: `batch/applied.tsv`, `batch/skipped.tsv`,
-`batch/p1-declined.tsv` and `batch/errors/<id>.txt`.
+works. It never edits pipeline state itself. The only files it writes are its own
+sidecars: `batch/applied.tsv`, `batch/skipped.tsv`, `batch/p1-declined.tsv` and
+`batch/errors/<id>.txt`.
 
-### The three tabs
+<table>
+<tr>
+<td width="50%"><a href="demo/screens/queue.png"><img src="demo/screens/queue.png" alt="The queue tab"></a><br>
+<b>Queue</b> — one line per offer: the score, where it stopped, and the actions
+that row still has. A gated offer asks <code>proceed?</code>; a failed one
+carries <code>see error · retry · debug</code>.</td>
+<td width="50%"><a href="demo/screens/running.png"><img src="demo/screens/running.png" alt="A run in flight"></a><br>
+<b>A run in flight</b> — rows move through <code>scoring… → evaluating… →
+tailoring CV…</code> while you keep queueing. The run is a detached process, so
+quitting the TUI does not stop it.</td>
+</tr>
+<tr>
+<td><a href="demo/screens/activity-year.png"><img src="demo/screens/activity-year.png" alt="The activity heatmap"></a><br>
+<b>Activity</b> — every scan you have run, one square a day, gold on your
+busiest. <code>y m d</code> zoom from the year to a single day by hour;
+<code>j</code> swaps the grid to applications sent.</td>
+<td><a href="demo/screens/followups.png"><img src="demo/screens/followups.png" alt="The follow-ups tab"></a><br>
+<b>Follow-ups</b> — who is owed a nudge, worked out from the tracker.
+<code>Enter</code> records one, <code>p</code> advances the status,
+<code>r</code> ends it with five seconds to undo.</td>
+</tr>
+</table>
 
-Switch tabs with **←/→** or the number keys **1 · 2 · 3**.
+<sub>Click any shot for full size. The whole session end to end, with captions:
+**[snipe-demo.mp4](demo/snipe-demo.mp4)** (2:47).</sub>
 
-```
-        1 QUEUE          2 ACTIVITY        3 FOLLOW-UPS (n)
-```
+**Adding a job.** Paste into the box (**/** jumps into it from anywhere on the
+tab), then **Enter** walks the mini-form: JD → URL → Add to queue. **→** from the
+box focuses **▶**, and Enter there runs the queue; results land in `reports/` and
+`output/` as the counters tick up. Start a run whenever you like — anything you
+add while one is active waits its turn and gets picked up at the end.
 
-**1 · QUEUE** — the home screen. A live dashboard (queue depth, active run,
-completed, CV count, average score, hit rate, P1-gated, follow-ups due) sits
-above the input area where you add jobs:
+`/scan` typed in the same box runs the zero-token portal scanner and queues
+whatever new roles it finds.
 
-```
-  ┌ Paste the Job Description — or type /scan ──────────┐ ┌─────┐
-  │ ▏                                                   │ │  ▶  │
-  └─────────────────────────────────────────────────────┘ └─────┘
-  URL (optional): ____________________________
-  Add to queue
-```
-
-**2 · ACTIVITY** — a grid of everything that's moved recently. Toggle the
-window with **y / m / d** (year / month / day view), step through periods with
-**‹ ›**, and cycle the row type with **j / k**. Rows with a report or PDF link
-can be opened.
-
-**3 · FOLLOW-UPS** — applications that are due for a nudge, from the follow-up
-cadence tracker. Press **↓** to enter the list, **Enter** to mark one nudged,
-**u** to undo, **o** to open its report. **r** ends it as *Rejected* and **p**
-advances it a stage (Applied → Responded → Interview → Offer) — both write the
-tracker's Status cell, which is what drops the entry off the list. **r** waits 5
-seconds first, so **u** takes it back while the row is still on screen.
-
-### Adding and running jobs
-
-1. On the **QUEUE** tab, paste a job description into the box (type **/** to jump
-   straight into it from anywhere on the tab).
-2. Press **Enter** to walk the mini-form: **JD → URL → Add to queue**. Each Enter
-   advances a step; "Add to queue" enqueues the job.
-3. Move focus to **▶** (with **→** from the JD box, or **Tab**) and press
-   **Enter** to run the queue. Jobs flow through all three phases, results land
-   in `reports/` and `output/`, and the dashboard counters tick up as they land.
-
-Queueing is automatic. If a run is already active, new jobs wait their turn and
-get picked up when it finishes. Nothing is lost.
-
-### When a job fails
-
-A failed row carries its own actions — **→** focuses each, **Enter** fires it:
+**When a job fails**, the row carries its own actions. **→** focuses each one and
+**Enter** fires it:
 
 ```
   ✗ Company — Role  see error  retry | debug
 ```
 
-| Action | Does |
-|--------|------|
-| **see error** | Opens `batch/errors/<id>.txt` — the full, untruncated failure text (also a clickable `file://` link in terminals that support them) |
-| **retry** | Re-runs the offer through all three phases, overwriting the last attempt |
-| **debug** | Opens the *input* that phase read (the fetched JD, or the Phase 2 report) so you can fix it before retrying |
+**see error** opens `batch/errors/<id>.txt`, the untruncated failure text.
+**debug** opens the input that phase actually read (the fetched JD, or the Phase
+2 report) so you can fix it in place. **retry** then re-runs all three phases over
+the top of the last attempt. Expired and blocked postings show no retry at all,
+since re-running cannot recover them.
 
-The usual loop is **see error → debug → edit → retry**. Expired and blocked
-postings show no **retry** at all, because re-running cannot recover them.
-
-### When the pre-screen said no
-
-Offers scoring below the Phase 1 gate never reach the 30B evaluator. That gate
-is a cost heuristic over a 4B pre-screen, not a verdict, so the row lets you
-overrule it:
+**When the pre-screen says no**, the offer never reaches the 30B evaluator. That
+gate is a cost heuristic over a 4B pre-score rather than a verdict, so the row
+lets you overrule it, and it shows the score that gated it because how close it
+came is the whole input to the decision:
 
 ```
   · Company — Role  P1 2.0 | proceed?  link
 ```
 
-The row shows the score that gated it, since how close it came is the whole
-input to the decision. **proceed?** is a question and takes either answer: **y**
-or **Enter** re-runs that one offer with the gate off, while **n** (or
-Backspace) dismisses it and leaves the row as it stands.
+**y** or **Enter** re-runs that one offer with the gate off. Nothing is
+re-scored: the pre-score and the fetched JD are already on disk, so the run picks
+up at Phase 2, and Phase 3 follows if the real evaluation clears the threshold.
+**n** or Backspace dismisses the question instead, which changes nothing in the
+pipeline (the row had already finished) and is recorded in
+`batch/p1-declined.tsv`. Deleting that line brings the question back.
 
-Proceeding costs nothing extra up front. The Phase 1 score and the fetched JD
-are already on disk and get reused, so the run picks up at Phase 2, and Phase 3
-follows if the real evaluation clears the threshold. Dismissing changes nothing
-in the pipeline; the row had already finished, so the answer only retires the
-action. It is recorded in `batch/p1-declined.tsv`, and deleting that line brings
-the question back.
-
-### Slash commands
-
-Type a command in the JD box (or just press **/** anywhere on the tab):
-
-| Command | Does |
-|---------|------|
-| `/scan` | Runs the zero-token portal scanner (`scan.mjs`) and queues whatever new roles it finds |
-
-### Keybindings
+<details>
+<summary><b>Every key</b> — the same reference <code>?</code> shows in the app</summary>
 
 | Key | Action |
 |-----|--------|
@@ -230,9 +199,7 @@ Type a command in the JD box (or just press **/** anywhere on the tab):
 | **Esc** | Clear the field / step out |
 | **q** | Quit (when not inside an input field) |
 
-`node snipe-tui.mjs --stats` prints the current pipeline stats as JSON and exits,
-no terminal required. Useful in scripts, or over an SSH connection that has no
-TTY to render into.
+</details>
 
 ---
 
@@ -246,11 +213,7 @@ You don't need the TUI. The `snipe` launcher and the runner work standalone:
 ./snipe --jd-q "<text>"                 # queue only — don't run yet
 ./snipe --drain                         # process everything queued
 node scan.mjs                           # scan configured portals for new roles
-```
 
-Run the pipeline directly for batches:
-
-```bash
 bash batch/local-runner.sh                # all phases
 bash batch/local-runner.sh --skip-phase3  # score + evaluate, no PDFs
 bash batch/local-runner.sh --dry-run      # preview what would run
@@ -258,7 +221,9 @@ bash batch/local-runner.sh --only-id 42 --retry-failed      # retry failed job 4
 bash batch/local-runner.sh --only-id 42 --p1-threshold 0    # evaluate it anyway
 ```
 
-See [`batch/README.md`](batch/README.md) for every flag.
+Every flag is in [`batch/README.md`](batch/README.md). `node snipe-tui.mjs --stats`
+prints the current pipeline stats as JSON and exits, no terminal required —
+useful in scripts, or over an SSH connection with no TTY to render into.
 
 ---
 
@@ -272,17 +237,15 @@ CPU-only setups work too — point the phases at lighter models with
 ## Tracker
 
 `data/applications.md` is the source of truth for everything you've evaluated,
-applied to, or skipped. Runs merge into it automatically; the FOLLOW-UPS tab
-reads its cadence from there.
+applied to, or skipped. Runs merge into it automatically, and the FOLLOW-UPS tab
+reads its cadence from there. Never hand-add rows: drop a TSV in
+`batch/tracker-additions/` and let `tracker/merge-tracker.mjs` merge it. Editing
+an existing row's status or note is fine. `tracker/tracker.mjs` keeps an optional
+SQLite index (Node ≥ 22.5) that is safe to delete; it regenerates on the next sync.
 
 ```bash
 node tracker/verify-pipeline.mjs    # health check — reports, links, statuses
 ```
-
-Never hand-add rows. Drop a TSV in `batch/tracker-additions/` and let
-`tracker/merge-tracker.mjs` merge it. Editing an existing row's status or note is
-fine. `tracker/tracker.mjs` keeps an optional SQLite index (Node ≥ 22.5) that is
-safe to delete; it regenerates on the next sync.
 
 ## Tests
 
@@ -292,13 +255,11 @@ npm run typecheck      # tsc over the JSDoc types, also in CI
 npm run coverage       # same suite under c8 → coverage/lcov.info
 ```
 
-Coverage counts every `.mjs` file, including the ones the suite never loads. No
-exclusions to flatter the number.
-
-None of it needs a GPU, a terminal or the network. The Ollama-driven phases run
-for real against a stand-in model server. The TUI is driven headlessly through a
-fake TTY. `scan.mjs` scans a sandboxed fixture portal, and the job-board
-providers get a stub transport instead of a socket.
+Coverage counts every `.mjs` file, including the ones the suite never loads, so
+no exclusion flatters the number. None of it needs a GPU, a terminal or the
+network: the Ollama-driven phases run for real against a stand-in model server,
+the TUI is driven headlessly through a fake TTY, and the portal scanner and job
+providers get a fixture and a stub transport.
 
 ## Data & privacy
 
@@ -308,13 +269,12 @@ layer — scripts, modes, templates — is tracked:
 - **What you wrote** — `cv.md`, `article-digest.md`, `config/profile.*`,
   `portals.yml`, `.env`
 - **What the pipeline produced** — `data/`, `reports/`, `output/`,
-  `interview-prep/`
-- **Working artifacts**, easy to overlook but just as personal: `batch/jds/`
-  (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
-  `batch/errors/`, `batch/logs/`, and `batch/local-state.tsv`
-- **Derived copies of your CV**, which are personal for the same reason `cv.md`
-  is: `batch/cv-bank.json` holds the source text of every bullet, and
-  `batch/cv-index.json` with `batch/cv-spike.json` hold its embeddings
+  `interview-prep/`, and the working artifacts that are easy to overlook:
+  `batch/jds/` (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
+  `batch/errors/`, `batch/logs/`, `batch/local-state.tsv`
+- **Derived copies of your CV**, personal for the same reason `cv.md` is:
+  `batch/cv-bank.json` holds the source text of every bullet, while
+  `batch/cv-index.json` and `batch/cv-spike.json` hold its embeddings
 
 Outbound traffic is limited to the job boards and APIs you configure yourself.
 Every model call goes to Ollama on localhost.
