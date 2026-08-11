@@ -10,8 +10,8 @@
 // checks; the value is that a broken self-check now fails CI instead of
 // waiting to be noticed.
 import {
-  pass, fail, runNodeAsync, ensureUserLayer,
-  ROOT, join, mkdtempSync, writeFileSync, rmSync, tmpdir,
+  pass, fail, warn, runNodeAsync, ensureUserLayer,
+  ROOT, join, existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync, tmpdir,
 } from './harness.mjs';
 
 const eq = (actual, expected, label) =>
@@ -30,8 +30,25 @@ async function selfCheck(script, args, expect, label) {
   }
 }
 
-// cv.md is user-layer and gitignored, so a fresh checkout has none; goldset's
-// atom extraction reads it directly.
+// goldset's self-check is the one that will not run on a fixture. It asserts
+// the CV yields more than ten atoms, and that writeSheet refuses to overwrite
+// an already-ticked batch/bench/goldset.md, so it needs the developer's own
+// cv.md and their own gold sheet. On a checkout with no ticked sheet that
+// second assertion does not merely fail: writeSheet has nothing to refuse, so
+// it writes an empty sheet over the path it was meant to be protecting.
+//
+// So it is gated rather than faked. A fixture CV big enough to satisfy the
+// atom count would only be asserting on the fixture, and seeding a ticked
+// sheet means writing into the real batch/bench/ — SHEET is resolved from
+// __dirname and, unlike retrieval-bench.mjs, does not honour SNIPE_BENCH_DIR.
+//
+// Checked before ensureUserLayer, which would otherwise make cv.md exist.
+const goldsetSheet = join(ROOT, 'batch/bench/goldset.md');
+const hasGoldsetData = existsSync(join(ROOT, 'cv.md')) && existsSync(goldsetSheet)
+  && /^- \[[xX]\]/m.test(readFileSync(goldsetSheet, 'utf8'));
+
+// cv.md is user-layer and gitignored, so a fresh checkout has none; several of
+// these read it directly.
 const restoreUserLayer = ensureUserLayer();
 
 try {
@@ -40,7 +57,11 @@ try {
   await selfCheck('batch/cv-writers.mjs', [], /cv-writers self-check OK/, 'cv-writers');
   await selfCheck('batch/fit-rules.mjs', [], /fit-rules self-check passed/, 'fit-rules');
   await selfCheck('batch/text-utils.mjs', [], /text-utils self-check passed/, 'text-utils');
-  await selfCheck('batch/goldset.mjs', ['selfcheck'], /goldset selfcheck ok/, 'goldset');
+  if (hasGoldsetData) {
+    await selfCheck('batch/goldset.mjs', ['selfcheck'], /goldset selfcheck ok/, 'goldset');
+  } else {
+    warn('goldset self-check skipped — needs a real cv.md and a ticked batch/bench/goldset.md');
+  }
 } finally {
   restoreUserLayer?.();
 }
