@@ -614,7 +614,12 @@ function runScan(bump) {
   if (S.scanActive) { setMsg('A scan is already running', true); bump(); return; }
   fs.mkdirSync(path.join(BATCH, 'logs'), { recursive: true });
   const fd = fs.openSync(path.join(BATCH, 'logs', 'snipe-tui-scan.log'), 'a');
-  const child = spawn('node', [path.join(ROOT, 'scan.mjs')], { detached: true, stdio: ['ignore', fd, fd] });
+  // --verify: Playwright-check each new offer before it reaches pipeline.md, so
+  // a dead posting is dropped at scan time instead of surfacing three phases
+  // later as a Phase 1 `unavailable`. Costs one sequential page load per *new*
+  // offer (a handful per scan), not per posting fetched. Safe as a default —
+  // scan.mjs degrades to unverified rather than failing if Chromium is broken.
+  const child = spawn('node', [path.join(ROOT, 'scan.mjs'), '--verify'], { detached: true, stdio: ['ignore', fd, fd] });
   fs.closeSync(fd);
   child.on('exit', code => {
     S.scanActive = false;
