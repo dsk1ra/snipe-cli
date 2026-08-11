@@ -10,9 +10,9 @@
 //
 // Two references, because neither alone is enough:
 //   human  — batch/labels/labels-rev.tsv, 18 offers, real ground truth, but
-//            3 distinct values so rho carries a ~0.30 noise band (CLAUDE.md #3).
+//            3 distinct values so rho carries a ~0.30 noise band (batch/CLAUDE.md #3).
 //   p2     — the 30B's stored eval score over ~180 offers. Drift-affected, so
-//            it is NOT a control in the absolute sense (CLAUDE.md #1) — but it
+//            it is NOT a control in the absolute sense (batch/CLAUDE.md #1) — but it
 //            is the *same* fixed reference for every candidate, so relative
 //            ordering between candidates is fair. Big n, weak truth; the human
 //            set is small n, strong truth. Agreement across both is the signal.
@@ -148,7 +148,7 @@ function runSweep(label, model, ids, timeout) {
 
 const load = (label) => JSON.parse(readFileSync(join(OUT, `${label}.json`), 'utf8'));
 
-/** Paired bootstrap over offers, per CLAUDE.md — a dozen variants will
+/** Paired bootstrap over offers, per batch/CLAUDE.md — a dozen variants will
  *  otherwise always find a "winner". */
 function bootstrapDelta(idsA, fnA, fnB, iters = 2000) {
   const deltas = [];

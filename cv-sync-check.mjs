@@ -11,11 +11,16 @@
  */
 
 import { readFileSync, existsSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = __dirname;
+// SNIPE_HOME overrides the root the same way it does for snipe-tui.mjs, so a
+// test can stand up a fixture project instead of reporting on the developer's
+// own setup. Copying this script into a temp directory would work too — every
+// path here is resolved from the root, not the cwd — but then coverage
+// attributes to the copy and the real file reads as untested.
+const projectRoot = process.env.SNIPE_HOME ? resolve(process.env.SNIPE_HOME) : __dirname;
 
 const warnings = [];
 const errors = [];

@@ -99,11 +99,20 @@ batch/timings.tsv
 # Regenerate: node batch/bench-tools/gen-cv-bank.mjs
 batch/cv-bank.json
 
-# Demo assets. The README embeds demo/snipe-hero.gif and links the walkthrough as
-# demo/snipe-demo.mp4, negated here because *.mp4 is ignored repo-wide. The rest
-# is local build product: the recording sandbox, the full-length GIF (a megabyte
-# larger than the mp4 of the same session) and the hero's own mp4.
-demo/.sandbox/
-demo/snipe-demo.gif
-demo/snipe-hero.mp4
+# Demo assets. Only what README.md actually embeds is tracked; everything else
+# under demo/ is the local recording rig — vhs tapes, the seed script, the
+# caption tool, the sandbox it records against, and the renders the README does
+# not link (the full-length GIF is a megabyte larger than the mp4 of the same
+# session). Ignore the directory wholesale and negate the six files back in, so
+# a new tape or screenshot is local by default rather than accidentally
+# committed. demo/screens/ needs its own re-include: git will not look inside an
+# excluded directory, so the files under it cannot be negated until it is.
+demo/*
+!demo/screens/
+demo/screens/*
+!demo/screens/activity-year.png
+!demo/screens/followups.png
+!demo/screens/queue.png
+!demo/screens/running.png
 !demo/snipe-demo.mp4
+!demo/snipe-hero.gif

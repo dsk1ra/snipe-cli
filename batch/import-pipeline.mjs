@@ -17,11 +17,16 @@ import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PROJECT_DIR = resolve(__dirname, '..');
+// SNIPE_HOME is the data root, as it is for snipe-tui.mjs. It matters beyond
+// testing: the TUI already resolves batch-input.tsv from SNIPE_HOME, so without
+// this the two disagreed about which file the queue lives in whenever the data
+// root was not the repo.
+const PROJECT_DIR = process.env.SNIPE_HOME ? resolve(process.env.SNIPE_HOME) : resolve(__dirname, '..');
+const BATCH_DIR = resolve(PROJECT_DIR, 'batch');
 
 const PIPELINE_PATH = resolve(PROJECT_DIR, 'data/pipeline.md');
-const BATCH_INPUT_PATH = resolve(__dirname, 'batch-input.tsv');
-const BATCH_JDS_DIR = resolve(__dirname, 'jds');
+const BATCH_INPUT_PATH = resolve(BATCH_DIR, 'batch-input.tsv');
+const BATCH_JDS_DIR = resolve(BATCH_DIR, 'jds');
 const APIFY_JD_DIR = process.env.HOME
   ? `${process.env.HOME}/.cache/snipe-apify/jds`
   : '/tmp/snipe-apify/jds';

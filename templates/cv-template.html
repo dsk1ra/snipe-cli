@@ -172,10 +172,31 @@
     color: var(--ink);
   }
 
-  /* Title and location, sharing the company's line. */
-  .job-meta {
-    font-size: 11px;
+  /* Role and location share the company's line, in three visual tiers: size,
+     weight and colour step down together, so company reads first, role second
+     and location as metadata alongside the dates. They used to share one
+     `.job-meta` rule at a single size and colour, which made the role — the
+     thing a reader actually scans for — indistinguishable from the city. */
+  .job-role {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--ink-soft);
+  }
+
+  .job-location {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
+  /* Real text, not a ::before — pseudo-element content is unreliable through
+     PDF text extraction, and the ATS pass in generate-pdf.mjs only rewrites
+     body text, never CSS. */
+  .job-sep {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--muted);
+    margin: 0 6px;
   }
 
   .job-period {
@@ -417,8 +438,11 @@
     {{EXPERIENCE}}
   </div>
 
-  <!-- PROJECTS -->
-  <div class="section avoid-break">
+  <!-- PROJECTS — the section must NOT be avoid-break. `.project` already keeps
+       each project intact on its own; flagging the whole list made all N of them
+       one unbreakable block, so a single project could never fill the tail of a
+       page and every multi-project CV wasted ~25% of page 1. -->
+  <div class="section">
     <div class="section-title">{{SECTION_PROJECTS}}</div>
     {{PROJECTS}}
   </div>

@@ -286,5 +286,7 @@ MIT — see [`LICENSE`](LICENSE).
 ---
 
 Deeper reading: [`CLAUDE.md`](CLAUDE.md) for the data contract ·
+[`batch/CLAUDE.md`](batch/CLAUDE.md) for the pipeline and its benchmark rules ·
+[`docs/README.md`](docs/README.md) for the measurement ledgers ·
 [`docs/SETUP.md`](docs/SETUP.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
 [`docs/CUSTOMIZATION.md`](docs/CUSTOMIZATION.md) · [`docs/SCRIPTS.md`](docs/SCRIPTS.md)

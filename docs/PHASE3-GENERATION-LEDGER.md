@@ -47,7 +47,7 @@ landed:
 
 The previously-recorded `v6-prompt-real` run is **not** a valid control: it was
 made against an older sample, and only 6 of its 24 offer directories overlap the
-current sample's ids. This is benchmark rule 1 from `CLAUDE.md` biting in
+current sample's ids. This is benchmark rule 1 from `batch/CLAUDE.md` biting in
 practice — a historical artifact is not a control.
 
 ## 2. The hardware picture, measured

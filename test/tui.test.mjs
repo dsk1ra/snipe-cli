@@ -77,6 +77,14 @@ stub(BIN, 'notify-send');
 // gets this second directory, so a stubbed bash cannot silently swallow any
 // other shell-out the TUI grows later.
 stub(RUNNER_BIN, 'bash');
+// /scan spawns a bare `node scan.mjs`, resolved off PATH, which is a real scan
+// of the developer's portal list — every fetch, and on Apify entries real
+// money. Its own directory for the same reason RUNNER_BIN has one: a stubbed
+// `node` would otherwise swallow followup-cadence and import-pipeline in every
+// other drive, and those are meant to run.
+const SCAN_BIN = join(tmp, 'scan-bin');
+mkdirSync(SCAN_BIN, { recursive: true });
+stub(SCAN_BIN, 'node');
 
 const opened = () => (existsSync(OPENED) ? readFileSync(OPENED, 'utf8') : '');
 
@@ -514,6 +522,28 @@ async function drive(...keys) {
     const pasteElsewhere = await drive('2', PASTE('some jd'));
     if (/Switch to the Queue tab/.test(pasteElsewhere)) pass('pasting outside the Queue tab says where to paste instead');
     else fail('a paste on another tab was silently swallowed');
+
+    // /scan is the only way into runScan, and the flag it passes is the whole
+    // point of scanning from here rather than the shell: --verify drops a dead
+    // posting at scan time instead of three phases later, as a Phase 1
+    // `unavailable`. A stubbed node stands in for the scanner and records what
+    // it was called with; it exits 0 at once, so the import that follows finds
+    // nothing new and the drive ends on the completion message.
+    rmSync(OPENED, { force: true });
+    driveRaw.extraPath = SCAN_BIN;
+    const scanned = await drive('/', 'scan', 'ENTER', 'ENTER', 'ENTER');
+    driveRaw.extraPath = null;
+
+    if (/node .*scan\.mjs --verify/.test(opened())) pass('/scan runs scan.mjs with --verify, not a bare scan');
+    else fail(`/scan invoked: ${opened().trim() || '(nothing)'}`);
+
+    if (/Scanning portals|Scan done/.test(scanned)) pass('and says the scan is under way');
+    else fail('/scan started without telling the user');
+
+    // The scan is detached and unref'd so it outlives the TUI, which means the
+    // exit handler has to do the queueing — nothing else will.
+    if (/Scan done — nothing new/.test(scanned)) pass('a scan that imports nothing says so rather than reporting a queue');
+    else fail(`scan completion message: ${scanned.match(/Scan done.*|Scanning.*/)?.[0] || '(none)'}`);
 
     // ── Activity tab ─────────────────────────────────────────────────────────
 

@@ -517,7 +517,7 @@ function metricsFor(label, paths = {}) {
     // Two corrections, and they very nearly cancelled — which is why neither was
     // visible. Core Competencies was deleted from the template during the
     // one-page work but kept being scored, inflating every number by 0.009; and
-    // project *bullets*, the field CLAUDE.md calls the one that carries the
+    // project *bullets*, the field batch/CLAUDE.md calls the one that carries the
     // differentiators, were never read at all, deflating them by 0.008. Offsetting
     // errors are luck, not correctness: the phantom section is now gone for good,
     // so the inflation would not have offset anything again.
