@@ -241,7 +241,18 @@ async function main() {
   if (result.errors.length > 0) process.exit(1);
 }
 
-main().catch((err) => {
-  console.error(`validate-portals failed: ${err.message}`);
-  process.exit(1);
-});
+// Guarded the same way goldset.mjs is: importing this module must not run its
+// CLI. Unguarded, `import('validate-portals.mjs')` for the sake of
+// validatePortalsConfig also validated the developer's real portals.yml — and,
+// worse, loadProviderIds() imports every provider module, which binds
+// apify.mjs's CACHE_DIR to the real $HOME at load time. A later test that
+// sandboxes HOME then gets the already-cached instance and writes into
+// ~/.cache/snipe-apify for real.
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  main().catch((err) => {
+    console.error(`validate-portals failed: ${err.message}`);
+    process.exit(1);
+  });
+}
