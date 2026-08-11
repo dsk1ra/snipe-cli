@@ -1,6 +1,14 @@
 {
   "all": true,
   "include": ["**/*.mjs"],
-  "exclude": ["test/**", "test-all.mjs", "node_modules/**", "coverage/**", "batch/bench-tools/**"],
+  "exclude": [
+    "test/**",
+    "test-all.mjs",
+    "node_modules/**",
+    "coverage/**",
+    "batch/bench-tools/**",
+    "demo/**",
+    "batch/cv-bank.mjs"
+  ],
   "reporter": ["text-summary", "lcov"]
 }
