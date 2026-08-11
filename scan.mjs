@@ -801,17 +801,31 @@ async function main() {
   let droppedOffers = [];
   let invalidOffers = [];
   let migratedOffers = [];
+  let verifyFailed = '';
   if (verify && newOffers.length > 0) {
     console.log(`\nVerifying liveness of ${newOffers.length} new offer(s) with Playwright (sequential)...`);
-    const result = await verifyOffers(newOffers, { headedFallback, throttleBaseMs, rediscover });
-    verifiedOffers = result.verified;
-    expiredOffers = result.expired;
-    droppedOffers = result.dropped;
-    invalidOffers = result.invalid;
-    migratedOffers = result.migrated;
-    // Migrated offers re-enter the pipeline at their newly discovered URL.
-    if (migratedOffers.length > 0) {
-      verifiedOffers = [...verifiedOffers, ...migratedOffers];
+    // Non-fatal. verifyOffers() throws when Playwright is missing or Chromium
+    // will not launch, and the write step is below this — so an unguarded throw
+    // turns a browser problem into a total loss of a scan that already cost
+    // ~9k HTTP fetches and, on Apify entries, real money. Degrade to unverified
+    // and let the next scan re-check: an offer that reaches pipeline.md dead is
+    // recoverable (Phase 1 marks it `unavailable`), a scan that wrote nothing
+    // is not. Loud on stderr so a permanently broken Chromium cannot pass for
+    // a run that simply found everything alive.
+    try {
+      const result = await verifyOffers(newOffers, { headedFallback, throttleBaseMs, rediscover });
+      verifiedOffers = result.verified;
+      expiredOffers = result.expired;
+      droppedOffers = result.dropped;
+      invalidOffers = result.invalid;
+      migratedOffers = result.migrated;
+      // Migrated offers re-enter the pipeline at their newly discovered URL.
+      if (migratedOffers.length > 0) {
+        verifiedOffers = [...verifiedOffers, ...migratedOffers];
+      }
+    } catch (err) {
+      verifyFailed = err.message;
+      console.error(`WARN: liveness verification skipped — ${err.message}`);
     }
   }
 
@@ -867,7 +881,9 @@ async function main() {
   if (historyPolicy.recheckAfterDays != null) {
     console.log(`Recheck eligible:      ${seenUrlState.recheckEligible} old scan-history URL(s)`);
   }
-  if (verify) {
+  if (verify && verifyFailed) {
+    console.log(`Liveness check:        SKIPPED — ${verifyFailed}`);
+  } else if (verify) {
     console.log(`Expired (verified):    ${expiredOffers.length} dropped`);
     console.log(`Rediscovered (moved):  ${migratedOffers.length} migrated`);
     console.log(`No apply control:      ${droppedOffers.length} dropped`);
