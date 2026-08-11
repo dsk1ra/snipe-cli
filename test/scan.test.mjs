@@ -614,5 +614,49 @@ console.log('\n9b. scan.mjs end to end');
     pass('the unverified offer still reaches pipeline.md, where Phase 1 can mark it unavailable');
   } else fail('a failed verification cost the whole scan its output');
 
+  // Now the same flag with a browser that does launch. .invalid is reserved by
+  // RFC 2606 and resolves nowhere, so the page load fails as a transient
+  // network error rather than a dead posting — the case that decides whether a
+  // flaky connection quietly deletes offers. It must not: only the classifier
+  // may expire one.
+  const liveParser = join(sandbox, 'live-jobs.mjs');
+  writeFileSync(liveParser,
+    'process.stdout.write(JSON.stringify([' +
+    '{ title: "Backend Engineer", url: "https://fixture.invalid/jobs/verify-2", location: "Remote (EU)" }' +
+    ']));', 'utf8');
+  const livePortals = join(sandbox, 'live.yml');
+  writeFileSync(livePortals, [
+    'tracked_companies:',
+    '  - name: "Live Co"',
+    '    careers_url: "https://live.example/careers"',
+    '    parser:',
+    `      command: "${NODE}"`,
+    `      args: ["${liveParser}"]`,
+    '',
+  ].join('\n'), 'utf8');
+
+  const withBrowser = await runNodeAsync([SCAN, '--verify'], {
+    cwd: sandbox,
+    env: { ...process.env, SNIPE_PORTALS: livePortals },
+    timeout: 180_000,
+  });
+
+  // Same reason pdf.test.mjs warns rather than fails: a developer who never ran
+  // `npx playwright install chromium` has no browser, and CI does.
+  if (/could not launch Chromium|requires Playwright|Executable doesn't exist/.test(withBrowser.err)) {
+    warn('Playwright browser not installed — the verified --verify path was not exercised');
+  } else {
+    if (withBrowser.code === 0) pass('--verify completes against a real browser');
+    else fail(`scan --verify exited ${withBrowser.code}: ${(withBrowser.out + withBrowser.err).slice(-300)}`);
+
+    if (/Expired \(verified\):/.test(withBrowser.out) && !/Liveness check:\s+SKIPPED/.test(withBrowser.out)) {
+      pass('and reports the verified counters, so the verification really ran');
+    } else fail(`no verified counters: ${withBrowser.out.match(/Liveness check:.*|Expired \(verified\):.*/)?.[0]}`);
+
+    if (/fixture\.invalid\/jobs\/verify-2/.test(readFileSync(pipelinePath, 'utf-8'))) {
+      pass('an offer whose page would not load is kept for the next scan, not expired');
+    } else fail('a transient network failure was treated as a dead posting');
+  }
+
   rmSync(sandbox, { force: true, recursive: true });
 }
