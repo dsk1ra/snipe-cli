@@ -2,7 +2,7 @@
 
 **Reference truth:** Phase 2 (`batch/evals/`, 30B staged, evidence-grounded), 115 offers
 overlapping `batch/scores` + `batch/jds`. Rank metrics are offset-immune so the archive's
-~+0.5 calibration drift (CLAUDE.md benchmark rule 1) cancels out.
+~+0.5 calibration drift (batch/CLAUDE.md benchmark rule 1) cancels out.
 
 **Metrics**
 

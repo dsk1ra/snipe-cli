@@ -200,16 +200,26 @@ if (/`https:\/\/\$\{s\}`/.test(fillSrc)) {
 
 console.log('\n11. CLAUDE.md integrity');
 
-const agents = readFile('CLAUDE.md');
+// The instructions are split by directory so a session only loads what its work
+// needs, so each section is asserted against the file that owns it. Checking
+// them all against the root file would pass on a stray mention in its pointer
+// table while the real section had been deleted.
 const requiredSections = [
-  'Data contract', 'Ethics', 'Tracker rules', 'TSV format',
-  '3-phase pipeline', 'canonical',
+  ['CLAUDE.md', 'Data contract'],
+  ['CLAUDE.md', 'Ethics'],
+  ['CLAUDE.md', 'Conventions'],
+  ['batch/CLAUDE.md', '3-phase pipeline'],
+  ['batch/CLAUDE.md', 'Benchmark rules'],
+  ['tracker/CLAUDE.md', 'Tracker rules'],
+  ['tracker/CLAUDE.md', 'TSV format'],
+  ['tracker/CLAUDE.md', 'canonical'],
+  ['test/CLAUDE.md', 'fake-ollama'],
 ];
 
-for (const section of requiredSections) {
-  if (agents.includes(section)) {
-    pass(`CLAUDE.md has section: ${section}`);
+for (const [file, section] of requiredSections) {
+  if (fileExists(file) && readFile(file).includes(section)) {
+    pass(`${file} has section: ${section}`);
   } else {
-    fail(`CLAUDE.md missing section: ${section}`);
+    fail(`${file} missing section: ${section}`);
   }
 }

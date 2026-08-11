@@ -27,7 +27,7 @@ the content the selector produced, not the content that reached the page.** Run 
 one-page experiment against it today and all arms score identically, and the whole
 programme reads as a clean null.
 
-This is CLAUDE.md benchmark rule 5 in a new costume: *what does this metric read if
+This is batch/CLAUDE.md benchmark rule 5 in a new costume: *what does this metric read if
 the change lands?* Answer, today: nothing.
 
 ### E0 — unblock the harness. Do this first; nothing else is measurable without it
@@ -99,7 +99,7 @@ the conversation changes from "how" to "whether".
 
 ### Noise floor — read this before claiming anything
 
-Per CLAUDE.md, take the **wider** floor when measurements disagree:
+Per batch/CLAUDE.md, take the **wider** floor when measurements disagree:
 
 | metric | floor |
 |---|---|
@@ -133,7 +133,7 @@ So the arms were independent and Phase 3 is genuinely deterministic. **Any nonze
 delta from here is signal.** The `≥ +0.05` bar below is now a judgement about
 whether a change is worth its complexity, not about whether it can be detected.
 
-**Why this differs from the floors in CLAUDE.md rule 2.** Those were measured
+**Why this differs from the floors in batch/CLAUDE.md rule 2.** Those were measured
 under `--writer model`. Deleting the 7B tailor call deleted the nondeterminism
 with it: the calls that remain emit a short summary and a schema-constrained list
 of small integers, which have far less room to diverge than a page of rewritten
@@ -342,7 +342,7 @@ keeping.
 
 **Watch item.** `trim()`'s metric-bullet guarantee (`cv-select.mjs:428`) swaps in a
 digit-carrying bullet regardless of length. Under a line budget it can silently blow
-the page by trading a 1-line bullet for a 4-line one. CLAUDE.md already names it the
+the page by trading a 1-line bullet for a 4-line one. batch/CLAUDE.md already names it the
 first suspect for the ATS dip. It must charge for the swap, and that sub-change gets
 its own measurement — it fires on 42% of single-slot project bullets, so it is not
 a corner case.

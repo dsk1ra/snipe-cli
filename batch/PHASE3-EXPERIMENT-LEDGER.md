@@ -28,7 +28,7 @@ Harness: `run <label> --temperature 0` → `metrics <label>` → `compare <a> <b
 
 ## Determinism — measured, not assumed
 
-CLAUDE.md benchmark rule 2 was verified for Phase 2. It does **not** hold for
+batch/CLAUDE.md benchmark rule 2 was verified for Phase 2. It does **not** hold for
 Phase 3 as shipped, because Phase 3 runs at `temperature 0.15`
 (`local-pdf-offer.mjs:197`), not 0.
 
@@ -420,7 +420,7 @@ any more often than it already did.
 −0.023 before the deflate, −0.010 after, against a ±0.004 floor. It penalised
 removing `"…platform with 170+ paying users"` because that phrasing is *close to
 the CV* — a metric scoring CV-similarity necessarily prefers a near-miss
-falsehood to its absence. This is rule 7 from CLAUDE.md reproducing exactly:
+falsehood to its absence. This is rule 7 from batch/CLAUDE.md reproducing exactly:
 the summary metrics can be satisfied by output that is wrong. Recorded, not
 chased. The correct instrument is a summary-level fabrication count, which does
 not exist yet — `metric_fab` still reads only experience bullets, and reported a

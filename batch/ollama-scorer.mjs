@@ -316,7 +316,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, timeoutMs) 
         options: {
           // Greedy. At 0.1 the run-to-run noise floor on this stack was 0.091
           // with individual offers swinging up to 2.1 points, which makes a
-          // single-run A/B meaningless (see CLAUDE.md, benchmark rule 2).
+          // single-run A/B meaningless (see batch/CLAUDE.md, benchmark rule 2).
           temperature: 0,
           num_ctx: 12288,
         },
