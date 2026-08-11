@@ -100,7 +100,7 @@ Page cap holds: all 32 offers render at 2 pages on ladder step 0, no descent.
    `ats_coverage` −0.015. Cheap to test offline before spending another 37 min.
 2. **The 42 s judge figure was never a measurement.** It was the plan's estimate,
    superseded by `p3-judge 66 s/call` in the generation ledger and left standing
-   in this ledger's §4.11 heading and `CLAUDE.md`. Both corrected. Current wall
+   in this ledger's §4.11 heading and `batch/CLAUDE.md`. Both corrected. Current wall
    clock is 67 s/offer median (n=32 spike32, n=32 alloc32 — the allocation adds
    no model call and measured +0.4 s, noise).
 

@@ -318,13 +318,19 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
     // so the page-fit ladder can reduce depth uniformly without gutting any one
     // role. Bullets are already ordered most-relevant-first.
     const bullets = maxBullets ? e.bullets.slice(0, maxBullets) : e.bullets;
-    // Company, location, title and dates share one line. Three stacked lines cost
-    // 51px a role and said nothing the single line does not.
-    const meta = [e.location, e.role].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+    // Company, role, location and dates share one line. Three stacked lines cost
+    // 51px a role and said nothing the single line does not. Role precedes
+    // location and carries its own class: they used to be one blob in one style,
+    // so the role read as part of the address.
+    const sep = '<span class="job-sep">|</span>';
+    const meta = [
+      e.role     ? `<span class="job-role">${esc(e.role)}</span>` : '',
+      e.location ? `<span class="job-location">${esc(e.location)}</span>` : '',
+    ].filter(Boolean).join(sep);
     return `
     <div class="job">
       <div class="job-header">
-        <span><span class="job-company">${esc(e.company)}</span>${meta ? ` <span class="job-meta">${meta}</span>` : ''}</span>
+        <span><span class="job-company">${esc(e.company)}</span>${meta ? sep + meta : ''}</span>
         <span class="job-period">${esc(e.period)}</span>
       </div>
       <ul>

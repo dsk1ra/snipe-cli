@@ -2,7 +2,7 @@
 // harness (counters + reporters + re-exported node builtins); assertions run at
 // import time. Run standalone with: node test/<name>.test.mjs
 import {
-  pass, fail, warn, run, fileExists, readFile, ROOT, NODE,
+  pass, fail, warn, run, fileExists, readFile, ROOT, NODE, runNodeAsync,
   execSync, execFileSync, spawn,
   readFileSync, existsSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync,
   join, dirname, tmpdir, fileURLToPath, pathToFileURL,
@@ -552,6 +552,111 @@ console.log('\n9b. scan.mjs end to end');
   })();
   if (/✗ Junk Co/.test(junk)) pass('scan reports a failing parser against its own company and carries on');
   else fail(`scan did not report the junk parser: ${junk.slice(-300)}`);
+
+  // A broken browser must cost the verification, not the scan. verifyOffers()
+  // throws when Chromium will not launch and the write step sits below it, so
+  // an unguarded throw loses a run that already spent every one of its fetches
+  // and, on Apify entries, real money. The TUI passes --verify on every scan,
+  // which puts this on the default path rather than an interactive corner.
+  //
+  // Pointing PLAYWRIGHT_BROWSERS_PATH at an empty directory breaks the launch
+  // wherever the test runs, CI included — where Chromium genuinely is
+  // installed, so nothing weaker would reach the catch.
+  const emptyBrowsers = join(sandbox, 'no-browsers');
+  mkdirSync(emptyBrowsers, { recursive: true });
+
+  const verifyParser = join(sandbox, 'verify-jobs.mjs');
+  writeFileSync(verifyParser,
+    'process.stdout.write(JSON.stringify([' +
+    '{ title: "Backend Engineer", url: "https://fixture.example/jobs/verify-1", location: "Remote (EU)" }' +
+    ']));', 'utf8');
+  const verifyPortals = join(sandbox, 'verify.yml');
+  writeFileSync(verifyPortals, [
+    'tracked_companies:',
+    '  - name: "Verify Co"',
+    '    careers_url: "https://verify.example/careers"',
+    '    parser:',
+    `      command: "${NODE}"`,
+    `      args: ["${verifyParser}"]`,
+    '',
+  ].join('\n'), 'utf8');
+
+  const verified = await runNodeAsync([SCAN, '--verify'], {
+    cwd: sandbox,
+    env: { ...process.env, SNIPE_PORTALS: verifyPortals, PLAYWRIGHT_BROWSERS_PATH: emptyBrowsers },
+    timeout: 120_000,
+  });
+
+  if (verified.code === 0) pass('a browser that will not launch does not fail the scan');
+  else fail(`scan --verify exited ${verified.code}: ${(verified.out + verified.err).slice(-300)}`);
+
+  if (/WARN: liveness verification skipped/.test(verified.err)) {
+    pass('and says so on stderr, where a broken Chromium cannot be mistaken for a clean run');
+  } else fail(`no stderr warning: ${verified.err.slice(-300)}`);
+
+  if (/could not launch Chromium|requires Playwright/.test(verified.err)) {
+    pass('and names the browser as the reason, with the install command');
+  } else fail(`stderr does not name the cause: ${verified.err.slice(-300)}`);
+
+  // The summary is the half a user actually reads. Reporting "0 dropped" here
+  // would claim every offer was checked and found alive.
+  if (/Liveness check:\s+SKIPPED/.test(verified.out)) {
+    pass('the summary reports SKIPPED rather than an expired count of zero');
+  } else fail(`summary line wrong: ${verified.out.match(/Liveness check:.*|Expired \(verified\):.*/)?.[0]}`);
+
+  if (!/Expired \(verified\):/.test(verified.out)) {
+    pass('and drops the verified-only counters entirely, instead of printing empty ones');
+  } else fail('the summary printed verified counters for a verification that never ran');
+
+  // The point of all of it: the scan still wrote.
+  const afterVerify = readFileSync(pipelinePath, 'utf-8');
+  if (/fixture\.example\/jobs\/verify-1/.test(afterVerify)) {
+    pass('the unverified offer still reaches pipeline.md, where Phase 1 can mark it unavailable');
+  } else fail('a failed verification cost the whole scan its output');
+
+  // Now the same flag with a browser that does launch. .invalid is reserved by
+  // RFC 2606 and resolves nowhere, so the page load fails as a transient
+  // network error rather than a dead posting — the case that decides whether a
+  // flaky connection quietly deletes offers. It must not: only the classifier
+  // may expire one.
+  const liveParser = join(sandbox, 'live-jobs.mjs');
+  writeFileSync(liveParser,
+    'process.stdout.write(JSON.stringify([' +
+    '{ title: "Backend Engineer", url: "https://fixture.invalid/jobs/verify-2", location: "Remote (EU)" }' +
+    ']));', 'utf8');
+  const livePortals = join(sandbox, 'live.yml');
+  writeFileSync(livePortals, [
+    'tracked_companies:',
+    '  - name: "Live Co"',
+    '    careers_url: "https://live.example/careers"',
+    '    parser:',
+    `      command: "${NODE}"`,
+    `      args: ["${liveParser}"]`,
+    '',
+  ].join('\n'), 'utf8');
+
+  const withBrowser = await runNodeAsync([SCAN, '--verify'], {
+    cwd: sandbox,
+    env: { ...process.env, SNIPE_PORTALS: livePortals },
+    timeout: 180_000,
+  });
+
+  // Same reason pdf.test.mjs warns rather than fails: a developer who never ran
+  // `npx playwright install chromium` has no browser, and CI does.
+  if (/could not launch Chromium|requires Playwright|Executable doesn't exist/.test(withBrowser.err)) {
+    warn('Playwright browser not installed — the verified --verify path was not exercised');
+  } else {
+    if (withBrowser.code === 0) pass('--verify completes against a real browser');
+    else fail(`scan --verify exited ${withBrowser.code}: ${(withBrowser.out + withBrowser.err).slice(-300)}`);
+
+    if (/Expired \(verified\):/.test(withBrowser.out) && !/Liveness check:\s+SKIPPED/.test(withBrowser.out)) {
+      pass('and reports the verified counters, so the verification really ran');
+    } else fail(`no verified counters: ${withBrowser.out.match(/Liveness check:.*|Expired \(verified\):.*/)?.[0]}`);
+
+    if (/fixture\.invalid\/jobs\/verify-2/.test(readFileSync(pipelinePath, 'utf-8'))) {
+      pass('an offer whose page would not load is kept for the next scan, not expired');
+    } else fail('a transient network failure was treated as a dead posting');
+  }
 
   rmSync(sandbox, { force: true, recursive: true });
 }
