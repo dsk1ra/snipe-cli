@@ -134,7 +134,7 @@ guessing.
 
 ## Benchmark discipline
 
-From CLAUDE.md, learned the hard way and not relitigated here:
+From batch/CLAUDE.md, learned the hard way and not relitigated here:
 
 - Temperature 0. Greedy decoding is byte-identical on this stack, so the noise
   floor is 0 and a single run is a valid A/B.

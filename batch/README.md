@@ -41,7 +41,7 @@ Process multiple job offers in a 3-phase local pipeline — all LLM work runs on
 | `--start-from N` | `0` | Skip offers with ID below N |
 | `--max-retries N` | `2` | Max retry attempts per offer before giving up |
 | `--classic-eval` | off | Monolithic Phase 2 evaluator instead of the staged default |
-| `--ollama-model` / `--phase2-model` / `--phase3-model` | see CLAUDE.md | Per-phase Ollama model overrides |
+| `--ollama-model` / `--phase2-model` / `--phase3-model` | see batch/CLAUDE.md | Per-phase Ollama model overrides |
 
 ## Directory Layout
 
@@ -93,6 +93,6 @@ Run `npm run merge` manually if you need to merge outside of a batch run.
 
 ## Prerequisites
 
-- Ollama running with the custom models built (see "One-time setup" in CLAUDE.md — `snipe-screen`, `snipe-eval`, `snipe-cv`, `snipe-embed`)
+- Ollama running with the custom models built (see "One-time setup" in batch/CLAUDE.md — `snipe-screen`, `snipe-eval`, `snipe-cv`, `snipe-embed`)
 - Node.js >= 18 (>= 22.5 for the optional SQLite tracker index), Playwright chromium installed
 - `batch-input.tsv` with at least one offer

@@ -159,11 +159,11 @@ const cost = t => Math.max(1, Math.ceil(t.length / 95));
   budget at all and eats 537px unchallenged)
 - greedy stays greedy, but ranks on **score per line**, not score
 - every entry still keeps one bullet, as today
-- `trim()`'s metric-bullet guarantee must charge for the swap. CLAUDE.md already
+- `trim()`'s metric-bullet guarantee must charge for the swap. batch/CLAUDE.md already
   flags it as the first suspect for the ATS dip; under a line budget it can silently
   blow the page by swapping a 1-line bullet for a 4-line one
 
-This is a selection change, so per CLAUDE.md: sweep it offline with
+This is a selection change, so per batch/CLAUDE.md: sweep it offline with
 `select-sweep.mjs`, and **do not reuse an existing `SNIPE_SELECT_CACHE`** — the key
 is over CV and requirements, not the ranker.
 
@@ -173,7 +173,7 @@ benchmark answers is not "did coverage improve" but **"at a fixed one-page budge
 does the line-aware knapsack keep more differentiators than naively cutting counts
 until it fits"** — arm A being the `LADDER` retargeted at 1 page, arm B the knapsack.
 Run `opus-metrics.mjs` for `differentiator_coverage` and `grade_yield`, paired, and
-remember the A/A floors in CLAUDE.md before claiming anything under ±0.02.
+remember the A/A floors in batch/CLAUDE.md before claiming anything under ±0.02.
 
 ### Phase C — retarget the ladder
 

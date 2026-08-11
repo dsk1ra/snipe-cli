@@ -429,7 +429,7 @@ is worse than one that does not ship.
 
 ## 4. Gates, kill criteria, rollback
 
-**Benchmark discipline** (from `CLAUDE.md`, not relitigated):
+**Benchmark discipline** (from `batch/CLAUDE.md`, not relitigated):
 temperature 0 where possible — this stack is byte-identical greedy, so the noise
 floor is 0 and one run is a valid A/B. Compare two runs made *now*; historical
 artifacts are not a control. Paired per offer, bootstrap CI over offers, sign
