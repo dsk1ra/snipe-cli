@@ -744,3 +744,118 @@ const GOOD_PROFILE = 'full_name: "Alex Fixture"\nemail: alex@example.com\nlocati
     pass('a recent article-digest.md raises nothing');
   } else fail(`fresh digest: exit ${r.code}, ${r.out.slice(0, 200)}`);
 }
+
+// ── import-pipeline.mjs: the import itself ───────────────────────────────────
+// The --dry-run test above proves the script starts and reports; it cannot
+// reach the write path, the Apify JD copy, or the checkbox rewrite, because
+// doing so against the real repo would append to the developer's queue.
+// SNIPE_HOME points the whole thing at a fixture root instead.
+
+console.log('\n17d. import-pipeline');
+
+async function importRunIn(files, args = [], env = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'snipe-import-'));
+  for (const [rel, body] of Object.entries(files)) {
+    const abs = join(dir, rel);
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, body);
+  }
+  const r = await runNodeAsync([join(ROOT, 'batch/import-pipeline.mjs'), ...args], {
+    env: { ...process.env, SNIPE_HOME: dir, ...env },
+  });
+  const read = rel => existsSync(join(dir, rel)) ? readFileSync(join(dir, rel), 'utf8') : null;
+  const out = { ...r, read, dir };
+  return out;
+}
+
+const cleanupDirs = [];
+const HEADER = 'id\turl\tsource\tnotes\n';
+
+{
+  const r = await importRunIn({});
+  cleanupDirs.push(r.dir);
+  if (r.code === 0 && /pipeline\.md not found/.test(r.out)) pass('import-pipeline exits clean when there is no pipeline.md');
+  else fail(`no pipeline: exit ${r.code}, ${r.out.slice(0, 140)}`);
+}
+
+{
+  const r = await importRunIn({ 'data/pipeline.md': '- [x] https://a.example/1 | Acme | Dev\nnot a checkbox line\n' });
+  cleanupDirs.push(r.dir);
+  if (r.code === 0 && /No new URLs/.test(r.out)) pass('an already-checked line is not re-imported');
+  else fail(`checked line: exit ${r.code}, ${r.out.slice(0, 140)}`);
+}
+
+{
+  // The happy path: two new URLs, ids continuing from the existing max rather
+  // than restarting, and the source lines ticked so a second run is a no-op.
+  const r = await importRunIn({
+    'data/pipeline.md': [
+      '- [ ] https://a.example/1 | Acme | Backend Engineer',
+      '- [ ] https://b.example/2 | Globex | Platform Engineer',
+      '- [x] https://c.example/3 | Done | Already',
+      '',
+    ].join('\n'),
+    'batch/batch-input.tsv': HEADER + '7\thttps://old.example/x\tseed\tOld\n',
+  });
+  cleanupDirs.push(r.dir);
+  const tsv = r.read('batch/batch-input.tsv') || '';
+  const pipeline = r.read('data/pipeline.md') || '';
+
+  if (r.code === 0 && /Found 2 new URLs/.test(r.out)) pass('import-pipeline finds the unchecked URLs');
+  else fail(`import: exit ${r.code}, ${r.out.slice(0, 140)}`);
+
+  if (/^8\thttps:\/\/a\.example\/1\t/m.test(tsv) && /^9\thttps:\/\/b\.example\/2\t/m.test(tsv)) {
+    pass('and numbers them from the existing max id, not from 1');
+  } else fail(`ids wrong: ${JSON.stringify(tsv)}`);
+
+  if (/7\thttps:\/\/old\.example\/x/.test(tsv)) pass('appending leaves the existing rows intact');
+  else fail('an existing row was lost');
+
+  if (/Backend Engineer/.test(tsv) && /Platform Engineer/.test(tsv)) pass('the company and role text carries into the notes column');
+  else fail(`notes missing: ${JSON.stringify(tsv)}`);
+
+  const ticked = pipeline.split('\n').filter(l => /^-\s+\[x\]/.test(l)).length;
+  if (ticked === 3) pass('every imported line is ticked, so a second run imports nothing');
+  else fail(`expected 3 ticked lines, got ${ticked}: ${JSON.stringify(pipeline)}`);
+}
+
+{
+  // A URL already in batch-input must not be imported twice, however many
+  // times it appears in pipeline.md.
+  const r = await importRunIn({
+    'data/pipeline.md': '- [ ] https://dup.example/1 | Acme | Dev\n',
+    'batch/batch-input.tsv': HEADER + '1\thttps://dup.example/1\tseed\tAlready queued\n',
+  });
+  cleanupDirs.push(r.dir);
+  if (/No new URLs/.test(r.out)) pass('a URL already in batch-input.tsv is skipped');
+  else fail(`dedup: ${r.out.slice(0, 140)}`);
+}
+
+{
+  // LinkedIn and Indeed listing pages are bot-protected: the batch scorer
+  // cannot fetch them, so they stay in pipeline.md unless the scanner already
+  // cached the JD through Apify.
+  const r = await importRunIn({
+    'data/pipeline.md': '- [ ] https://www.linkedin.com/jobs/view/1 | Acme | Dev\n',
+  }, [], { HOME: join(tmpdir(), 'snipe-no-apify-cache') });
+  cleanupDirs.push(r.dir);
+  if (/No new URLs/.test(r.out)) pass('a bot-protected host with no cached JD is left in pipeline.md');
+  else fail(`skip-host: ${r.out.slice(0, 140)}`);
+}
+
+{
+  // --dry-run must report the same findings and write nothing.
+  const r = await importRunIn({
+    'data/pipeline.md': '- [ ] https://d.example/1 | Acme | Dev\n',
+    'batch/batch-input.tsv': HEADER,
+  }, ['--dry-run']);
+  cleanupDirs.push(r.dir);
+  const tsv = r.read('batch/batch-input.tsv') || '';
+  const pipeline = r.read('data/pipeline.md') || '';
+  if (/Found 1 new URL\b/.test(r.out) && /dry run/.test(r.out)) pass('--dry-run reports the single URL in the singular');
+  else fail(`dry run output: ${r.out.slice(0, 160)}`);
+  if (tsv === HEADER && /\[ \]/.test(pipeline)) pass('and writes neither the queue nor the checkbox');
+  else fail(`dry run wrote something: tsv=${JSON.stringify(tsv)}`);
+}
+
+for (const d of cleanupDirs) rmSync(d, { recursive: true, force: true });
