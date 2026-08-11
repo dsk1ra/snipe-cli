@@ -398,6 +398,81 @@ try {
     fail(`row 2 location = ${JSON.stringify(jobs[2]?.location)}`);
   }
 
+  // ── the reject paths ───────────────────────────────────────────────────────
+  // Recruitee is the one provider whose offer URLs are validated per-row rather
+  // than trusted from the API host, because a tenant can put anything in
+  // careers_url. A rejected URL becomes '' rather than dropping the row: the
+  // Job contract wants the offer, and scan.mjs decides what an unusable link
+  // means.
+  const rejected = parseRecruiteeResponse({
+    offers: [
+      { title: 'Off domain', careers_url: 'https://evil.example.com/o/x' },
+      { title: 'Not https', careers_url: 'http://channable.recruitee.com/o/x' },
+      { title: 'Malformed', careers_url: 'h!tps://%%%' },
+      { title: 'Lookalike host', careers_url: 'https://channable.recruitee.com.evil.tld/o/x' },
+      { title: 'No url at all' },
+      { title: 'Non-string url', careers_url: 42 },
+    ],
+  }, 'Channable');
+
+  if (rejected.length === 6 && rejected.every(j => j.url === '')) {
+    pass('every unsafe or absent offer URL becomes an empty string, and the row survives');
+  } else {
+    fail(`reject paths: ${JSON.stringify(rejected.map(j => [j.title, j.url]))}`);
+  }
+
+  if (rejected.every(j => j.company === 'Channable')) pass('and each rejected row still carries its company');
+  else fail('a rejected row lost its company');
+
+  // A response that is not { offers: [...] } is not an error — an empty career
+  // page and a shape change both mean "no jobs" to the scanner.
+  for (const [shape, label] of [[{}, 'no offers key'], [{ offers: null }, 'null offers'],
+                                [{ offers: {} }, 'offers as an object'], [null, 'a null body']]) {
+    const out = parseRecruiteeResponse(shape, 'Channable');
+    if (Array.isArray(out) && out.length === 0) pass(`parseRecruiteeResponse returns [] for ${label}`);
+    else fail(`${label} gave ${JSON.stringify(out)}`);
+  }
+
+  // detect() is how scan.mjs decides whether this provider owns an entry, so
+  // its negative answers matter as much as the positive one.
+  for (const [entry, label] of [
+    [{ name: 'X', careers_url: 'http://x.recruitee.com' }, 'a non-https careers_url'],
+    [{ name: 'X', careers_url: 'not a url' }, 'an unparseable careers_url'],
+    [{ name: 'X', careers_url: '' }, 'an empty careers_url'],
+    [{ name: 'X' }, 'no careers_url at all'],
+    [{ name: 'X', careers_url: 42 }, 'a non-string careers_url'],
+    [{ name: 'X', careers_url: 'https://recruitee.com/x' }, 'the bare recruitee.com apex'],
+  ]) {
+    if (recruitee.detect(entry) === null) pass(`recruitee.detect() declines ${label}`);
+    else fail(`recruitee.detect() claimed ${label}: ${JSON.stringify(recruitee.detect(entry))}`);
+  }
+
+  // fetch() re-derives the URL rather than trusting detect()'s, so it needs its
+  // own guard for an entry that was never detectable.
+  try {
+    await recruitee.fetch({ name: 'X', careers_url: 'https://example.com' },
+      { async fetchJson() { return { offers: [] }; } });
+    fail('recruitee.fetch() should refuse an entry it cannot derive an API URL for');
+  } catch (e) {
+    if (/cannot derive API URL/.test(e.message)) pass('recruitee.fetch() refuses an undetectable entry');
+    else fail(`recruitee.fetch() threw the wrong error: ${e.message}`);
+  }
+
+  // The happy path through fetch(), so the ctx call shape is pinned too.
+  {
+    const seen = [];
+    const jobs2 = await recruitee.fetch(
+      { name: 'Channable', careers_url: 'https://channable.recruitee.com' },
+      { async fetchJson(url, opts) { seen.push({ url, opts }); return { offers: [{ title: 'Dev', careers_url: 'https://channable.recruitee.com/o/dev' }] }; } },
+    );
+    if (jobs2.length === 1 && jobs2[0].title === 'Dev') pass('recruitee.fetch() returns parsed offers');
+    else fail(`recruitee.fetch() returned ${JSON.stringify(jobs2)}`);
+    if (seen[0]?.url === 'https://channable.recruitee.com/api/offers/') pass('and calls the derived api/offers/ endpoint');
+    else fail(`fetch hit ${seen[0]?.url}`);
+    if (seen[0]?.opts?.redirect === 'error') pass('with redirects refused, so an off-domain 302 cannot be followed');
+    else fail(`fetch opts were ${JSON.stringify(seen[0]?.opts)}`);
+  }
+
   if (parseRecruiteeResponse({}, 'X').length === 0) pass('empty {} → empty result');
   else fail('empty {} should yield empty result');
 

@@ -9,6 +9,7 @@ import {
   pass, fail, warn, ROOT, join, run, runNodeAsync, ensureUserLayer,
   existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, mkdtempSync, readdirSync, tmpdir,
 } from './harness.mjs';
+import { utimesSync } from 'node:fs';
 import http from 'node:http';
 
 console.log('\n17. Standalone CLIs');
@@ -552,3 +553,194 @@ const leftovers = existsSync(reportsDir)
   : [];
 if (!leftovers.length) pass('no reservation sentinels left in reports/');
 else fail(`left ${leftovers.length} sentinel(s) behind: ${leftovers.join(', ')}`);
+
+// ── validate-portals: the field validators, called directly ──────────────────
+// The CLI tests above prove a good file passes and a bad one fails, but they
+// reach only the happy path of each validator. These call the exported
+// validator with one malformed field at a time, which is the only way to see
+// that the message names the right path — a validator that reports every fault
+// against `<root>` passes a pass/fail assertion and helps nobody.
+
+console.log('\n17b. validate-portals field validators');
+
+const { validatePortalsConfig } = await import(join(ROOT, 'validate-portals.mjs'));
+const vp = async (config, opts) => (await validatePortalsConfig(config, opts)).errors.map(e => `${e.path}: ${e.message}`).join(' | ');
+const company = (over) => ({ tracked_companies: [{ name: 'Acme', ...over }] });
+
+const hasErr = async (config, needle, label, opts) => {
+  const got = await vp(config, opts);
+  got.includes(needle) ? pass(label) : fail(`${label} — got ${JSON.stringify(got) || '(no errors)'}`);
+};
+
+await hasErr({ tracked_companies: 'nope' }, 'tracked_companies must be an array', 'tracked_companies must be an array');
+await hasErr({ tracked_companies: ['nope'] }, 'company entry must be an object', 'a non-object company entry is rejected');
+await hasErr(company({ name: '   ' }), 'non-empty string name', 'a blank company name is rejected');
+
+// URLs: three distinct faults, three distinct messages.
+await hasErr(company({ careers_url: 42 }), 'must be a string URL', 'a non-string URL is rejected');
+await hasErr(company({ careers_url: 'not a url' }), 'invalid URL', 'an unparseable URL is rejected');
+await hasErr(company({ careers_url: 'ftp://example.com' }), 'unsupported URL protocol', 'a non-http(s) URL is rejected');
+{
+  const clean = await vp(company({ careers_url: 'https://acme.recruitee.com' }));
+  clean === '' ? pass('a valid https careers_url raises nothing') : fail(`clean URL errored: ${clean}`);
+}
+
+// Keyword lists accept a bare string as well as an array, so both shapes have
+// to reach the per-item checks.
+await hasErr({ title_filter: 'nope' }, 'title_filter must be an object', 'a non-object title_filter is rejected');
+await hasErr({ title_filter: { positive: [7] } }, 'keyword must be a string', 'a non-string keyword is rejected');
+await hasErr({ title_filter: { negative: ['  '] } }, 'keyword must not be empty', 'a blank keyword is rejected');
+await hasErr({ location_filter: { block: [null] } }, 'keyword must be a string', 'location_filter keywords are checked too');
+await hasErr({ location_filter: 'nope' }, 'location_filter must be an object', 'a non-object location_filter is rejected');
+await hasErr({ search_queries: 'nope' }, 'search_queries must be an array', 'a non-array search_queries is rejected');
+
+// Parser: every optional field has its own guard, and each names its own path.
+await hasErr(company({ parser: 'nope' }), 'parser must be an object', 'a non-object parser is rejected');
+await hasErr(company({ parser: {} }), 'parser.command must be a non-empty string', 'a parser with no command is rejected');
+await hasErr(company({ parser: { command: 'node', script: '' } }), 'parser.script must be a non-empty string', 'a blank parser.script is rejected');
+await hasErr(company({ parser: { command: 'node', args: 'x' } }), 'parser.args must be an array', 'a non-array parser.args is rejected');
+await hasErr(company({ parser: { command: 'node', timeout_ms: 0 } }), 'timeout_ms must be a positive number', 'a zero parser.timeout_ms is rejected');
+await hasErr(company({ parser: { command: 'node', max_buffer_bytes: -1 } }), 'max_buffer_bytes must be a positive number', 'a negative parser.max_buffer_bytes is rejected');
+
+// provider is checked against the real provider directory, so an unknown id is
+// a typo rather than a new integration.
+await hasErr(company({ provider: 'nosuch' }), 'unknown provider', 'an unknown provider id is rejected', { providerIds: new Set(['greenhouse']) });
+await hasErr(company({ provider: '  ' }), 'provider must be a non-empty string', 'a blank provider is rejected');
+
+// enabled:false skips the entry wholesale — a disabled company may be as
+// malformed as it likes without failing the file.
+{
+  const skipped = await vp({ tracked_companies: [{ enabled: false, name: '', careers_url: 'not a url' }] });
+  skipped === '' ? pass('a disabled entry is not validated at all') : fail(`disabled entry errored: ${skipped}`);
+}
+
+// Duplicates are a warning, not an error: two entries for one company still
+// scan, they just scan twice.
+{
+  const dup = await validatePortalsConfig({ tracked_companies: [{ name: 'Acme' }, { name: '  acme  ' }] });
+  const msg = dup.warnings.map(w => w.message).join(' ');
+  if (!dup.errors.length && /duplicate enabled company name/.test(msg)) {
+    pass('a duplicate company name warns rather than failing, and normalises case and spacing');
+  } else fail(`duplicate handling: ${dup.errors.length} errors, warnings ${JSON.stringify(msg)}`);
+}
+
+{
+  const notObj = await validatePortalsConfig('nope');
+  /must be a YAML object/.test(notObj.errors.map(e => e.message).join(''))
+    ? pass('a non-object config is rejected at the root')
+    : fail('a scalar config was not rejected');
+}
+
+// ── cv-sync-check.mjs ────────────────────────────────────────────────────────
+// The script resolves everything from its own __dirname, so copying it into a
+// temp directory makes that directory the project root. That is the only way
+// to exercise its failure branches: pointed at the real repo it reports the
+// developer's actual setup, which is whatever it happens to be.
+
+console.log('\n17c. cv-sync-check');
+
+/**
+ * Stand up a fixture project root and run the real checker against it.
+ *
+ * SNIPE_HOME rather than a copy of the script: c8 keys coverage on the file
+ * path it executed, so running a copy out of tmpdir would leave the tracked
+ * file reading as untested however thoroughly it was exercised.
+ *
+ * `mtimes` backdates a file, which is the only way to reach the
+ * article-digest staleness branch without waiting a month.
+ */
+async function syncCheck(files, mtimes = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'snipe-sync-'));
+  for (const [rel, body] of Object.entries(files)) {
+    const abs = join(dir, rel);
+    mkdirSync(join(abs, '..'), { recursive: true });
+    writeFileSync(abs, body);
+  }
+  for (const [rel, daysAgo] of Object.entries(mtimes)) {
+    const when = new Date(Date.now() - daysAgo * 86_400_000);
+    utimesSync(join(dir, rel), when, when);
+  }
+  const r = await runNodeAsync([join(ROOT, 'cv-sync-check.mjs')], {
+    env: { ...process.env, SNIPE_HOME: dir },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  return r;
+}
+
+const FULL_CV = '# Alex Fixture\n\n## Summary\n' + 'Backend engineer with a decade of service work. '.repeat(4);
+const GOOD_PROFILE = 'full_name: "Alex Fixture"\nemail: alex@example.com\nlocation: Berlin\n';
+
+{
+  const r = await syncCheck({});
+  if (r.code === 1 && /cv\.md not found/.test(r.out) && /profile\.yml not found/.test(r.out)) {
+    pass('cv-sync-check reports both missing files and exits nonzero');
+  } else fail(`empty project: exit ${r.code}, ${r.out.slice(0, 160)}`);
+}
+
+{
+  const r = await syncCheck({ 'cv.md': '# Me\n', 'config/profile.yml': GOOD_PROFILE });
+  if (r.code === 0 && /cv\.md seems too short/.test(r.out)) {
+    pass('a stub cv.md warns without failing the check');
+  } else fail(`short cv: exit ${r.code}, ${r.out.slice(0, 160)}`);
+}
+
+{
+  // The example file ships full_name: "Jane Smith"; leaving it is the mistake
+  // this check exists for, and it must fire even though every field is present.
+  const r = await syncCheck({ 'cv.md': FULL_CV, 'config/profile.yml': 'full_name: "Jane Smith"\nemail: x\nlocation: y\n' });
+  if (r.code === 0 && /may still have example data/.test(r.out)) {
+    pass('an unedited profile.yml is caught by its example name, not by a missing field');
+  } else fail(`example profile: exit ${r.code}, ${r.out.slice(0, 160)}`);
+}
+
+{
+  const r = await syncCheck({
+    'cv.md': FULL_CV, 'config/profile.yml': GOOD_PROFILE,
+    'modes/_shared.md': 'Cut onboarding to 30 minutes across 170+ hours of work.\n',
+  });
+  if (/Possible hardcoded metric/.test(r.out) && /_shared\.md:1/.test(r.out)) {
+    pass('a hardcoded metric in _shared.md is reported with its line number');
+  } else fail(`metric scan: ${r.out.slice(0, 200)}`);
+}
+
+{
+  // The instruction telling authors not to hardcode metrics contains a number
+  // itself; flagging it would make the check cry wolf on its own rule.
+  const r = await syncCheck({
+    'cv.md': FULL_CV, 'config/profile.yml': GOOD_PROFILE,
+    'modes/_shared.md': 'NEVER hardcode 170+ hours — read it from cv.md.\n# 90% is a heading\n',
+  });
+  if (!/Possible hardcoded metric/.test(r.out)) {
+    pass('the "NEVER hardcode" line and headings are exempt from the metric scan');
+  } else fail(`false positive on exempt lines: ${r.out.slice(0, 200)}`);
+}
+
+{
+  const r = await syncCheck({ 'cv.md': FULL_CV, 'config/profile.yml': GOOD_PROFILE });
+  if (r.code === 0 && /All checks passed/.test(r.out)) {
+    pass('a complete setup passes clean');
+  } else fail(`good setup: exit ${r.code}, ${r.out.slice(0, 160)}`);
+}
+
+{
+  // article-digest.md is where the CV's metrics come from, so a stale one means
+  // the evaluator is quoting numbers the projects have moved past. 30 days is
+  // the threshold; 90 is comfortably over it.
+  const r = await syncCheck(
+    { 'cv.md': FULL_CV, 'config/profile.yml': GOOD_PROFILE, 'article-digest.md': '# Digest\n' },
+    { 'article-digest.md': 90 },
+  );
+  if (/article-digest\.md is 90 days old/.test(r.out)) {
+    pass('a stale article-digest.md is reported with its age');
+  } else fail(`stale digest: ${r.out.slice(0, 200)}`);
+}
+
+{
+  const r = await syncCheck(
+    { 'cv.md': FULL_CV, 'config/profile.yml': GOOD_PROFILE, 'article-digest.md': '# Digest\n' },
+    { 'article-digest.md': 3 },
+  );
+  if (r.code === 0 && /All checks passed/.test(r.out)) {
+    pass('a recent article-digest.md raises nothing');
+  } else fail(`fresh digest: exit ${r.code}, ${r.out.slice(0, 200)}`);
+}
