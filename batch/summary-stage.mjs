@@ -790,13 +790,31 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', r
   if (usable(tailored, cvText, jdText)) return clampSummaryWords(tailored);
   if (usable(grounded, cvText, jdText)) return clampSummaryWords(grounded);
 
-  // Neither is clean. Fall back to the old behaviour — strip what can be stripped
-  // and let the score choose — so a bad pair still ships something rather than
-  // nothing. The incumbent is the shipped JSON field and holds the tie; it is
-  // empty under `--writer verbatim`, which is exactly why it cannot be the only
-  // thing standing between a bad draft and the page.
-  const repair = (t) => (t ? stripFabricatedDomains(
-    stripFabricatedCredentials(stripFabricatedProducts(t, cvText), cvText), cvText) : null);
+  // Neither is clean. Fall back to repairing both and letting the score choose,
+  // so a bad pair still ships something rather than nothing. The incumbent is the
+  // shipped JSON field and holds the tie; it is empty under `--writer verbatim`,
+  // which is exactly why it cannot be the only thing standing between a bad draft
+  // and the page.
+  //
+  // Every guard that runs downstream runs here too, in the same order, because
+  // **the score has to score what actually ships**. It did not, and offer 293 is
+  // what that costs: a three-sentence draft won on the strength of two sentences
+  // that `verifySummaryFigures` and `stripJdProperNouns` then deleted in
+  // `local-pdf-offer.mjs` — an invented "87.5%" where `cv.md` says 90%, and a
+  // sentence naming Git, which the posting names and `\bGit\b` does not find in a
+  // CV that only ever writes "GitHub Actions" and "GitLab CI". What reached the
+  // page was one sentence and the generic closer. Repairing first lets the length
+  // penalty see the damage and hand the slot to the sibling.
+  const repair = (t) => {
+    if (!t) return null;
+    let s = stripFabricatedProducts(t, cvText);
+    s = stripFabricatedCredentials(s, cvText);
+    s = stripFabricatedDomains(s, cvText);
+    s = verifySummaryFigures(s, cvText);
+    s = stripUnsupportedTenure(s, cvText);
+    if (jdText) s = stripJdProperNouns(s, cvText, jdText);
+    return s.trim() || null;
+  };
   const cands = [repair(tailored), repair(grounded), repair(incumbent || null)].filter(Boolean);
   if (!cands.length) return null;
   const best = cands.reduce((a, b) =>
