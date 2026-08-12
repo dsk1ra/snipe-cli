@@ -692,3 +692,86 @@ then gutted fell under the 50-word floor and picked up the generic closer — 13
 cache cold — **confounded, not a speedup.** And the summary call dropping to
 temperature 0 is a determinism choice for production, invisible to a bench where
 every arm was already greedy.
+
+---
+
+## 12. Figure attribution — the defect §10 fixed everywhere except here
+
+Same setup as §11 (`sample32.tsv`, temp 0, `--writer verbatim`, frozen selection).
+
+§10 replaced the CV-global figure allow-set with an entry-scoped one for
+experience bullets and project blurbs: *"does this number exist in the document"
+is not the question, "does it belong to the entry claiming it" is.* The summary
+never got that fix, and it is the surface most able to blend entries, because it
+is the only one that draws on all of them at once.
+
+Shipped example, Sophos: *"Delivered a privacy-preserving peer-to-peer system
+with 85%+ test coverage and maintained 99.9% uptime"*. Both figures are real,
+both are UBWIS's, the sentence names Re:Link. `summaryUnsupported` reports clean
+by construction, because each number genuinely appears in `cv.md`.
+
+| arm | misattributed | fab raw | fab shipped | shape defects | clean |
+|---|---|---|---|---|---|
+| `sum-ctl` | 0/32 | 0.031 | 0.000 | 0.844 | 19% |
+| `sum-new` | 2/32 | 0.313 | 0.125 | 0.125 | 88% |
+| `sum-v3` | 3/32 | 0.063 | 0.031 | 0.063 | 94% |
+| `sum-v4` prompt only | 3/32 | 0.031 | 0.031 | 0.031 | 97% |
+| `sum-v5` shipped | **0/32** | **0.000** | **0.000** | **0.031** | **97%** |
+
+`sum-ctl` → `sum-v5`, paired, n=32: `ats_coverage` **+0.023**, CI [0.013, 0.033],
+19-4, p=0.003. Every selection metric, `grounding`, `num_retention`,
+`metric_fab` and `product_fab` at 0.000 delta.
+
+**The `sum-new`/`sum-v3`/`sum-v4` fabrication figures here are higher than §11
+reports them.** The detector grew bare domain forms while measuring `sum-v4`, and
+every arm is rescored by current code. §11's numbers were the truth the detector
+could see at the time; these are the truth it can see now. `sum-v4` in particular
+was reported as fabrication-free and is not — it claims "clinical AI agents" on a
+clinical-AI posting, which `clinical trials` did not match. The qualifier the list
+happened to carry was doing the work rather than the domain word.
+
+### Asking the model to attribute does not make it attribute
+
+`sum-v4` is the prompt-only arm: the proof sentence must name the entry it
+credits, with the wrong/right pair from offer 70 in the rules. **Attribution did
+not move — 3 of 32 before, 3 of 32 after.** Offer 50 is why:
+
+> "Achieved **85%+ test coverage** and reduced fabricated job requirements by 9x
+> **in the Snipe — Fully Local LLM Job-Application Pipeline**."
+
+The entry is named, exactly as instructed, and UBWIS's figure is welded into the
+same clause anyway. All three survivors were the same figure, `85%+`, attached to
+three different entries. Naming makes the error explicit and detectable; it does
+not prevent it.
+
+It was worth keeping regardless — shape 0.063 → 0.031 and 94% → 97% clean — and
+it is what makes the guard's job easy, because the entry is now stated rather
+than inferred. But as a fix for the thing it targeted it is a null, and the
+entry-scoped guard is what actually closed it: attribution joins the rejection
+gate, so a draft crediting the wrong entry is re-requested with the requirements
+withheld, and `stripMisattributedFigures` is §10's clause surgery on the repair
+path and in the production chain.
+
+`sum-v4` → `sum-v5` costs `summary_jd_fit` −0.033 (CI [−0.056, −0.012], 9-23,
+p=0.020) with `ats_coverage` flat at −0.003 (CI crosses 0). Rule 7 is explicit
+that `jd_fit` is the gameable one and `ats_coverage` is the breadth signal that
+matters, so a fabrication-free, attribution-clean arm at the same ATS breadth is
+the trade taken.
+
+### Two false starts, both pinned in tests
+
+**Naming read off bullets names everything.** The first index was built over
+entry *text*, so any summary reusing a bullet's wording named its entry — which
+is most summaries, since the evidence is where their vocabulary comes from. The
+Sophos error then reads as correctly attributed: it echoes UBWIS's "test
+coverage" while naming Re:Link by title, and any-match declares the figure fine.
+Titles identify; bullets repeat. Index the head, check ownership against
+everything.
+
+**Sentence granularity conflates two true clauses.** *"Achieved sub-500ms
+dashboard load times through cache warming, and improved job-application pipeline
+accuracy from 0.815 to 0.930"* names Snipe and carries Zero Trust's latency, and
+both halves are true. Judged whole it reads as Snipe claiming 500ms. Clause
+granularity is the same level `stripUnsupportedClauses` repairs at, and it errs
+toward silence — a name in one clause and its figure in the next is missed rather
+than invented.
