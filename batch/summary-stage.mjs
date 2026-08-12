@@ -246,20 +246,52 @@ export function selectedBullets(selectedCv) {
   return out;
 }
 
+/**
+ * The template is the industry-standard one, not an invention. Every current CV
+ * guide converges on the same three moves — positioning, the skills the posting
+ * named, one quantified achievement — in 2-4 sentences and 50-80 words, with the
+ * employer's own wording for the skills the candidate genuinely has, because a
+ * keyword search and a 7-second human scan both read for exactly that.
+ *
+ * The previous prompt withheld the posting entirely, because handing a 7B the
+ * JD's vocabulary produced straight parroting ("expertise in networking, HFT and
+ * financial markets" against a CV showing none of it). That defence cost the
+ * summary its reason to exist: with no posting in view the model wrote whichever
+ * bullets it liked, and the shipped shape was three achievements with the bullet
+ * points removed — no positioning clause, redundant with the Experience section
+ * directly below it, and on offer 305 it spent 2 of its 3 sentences on a Java
+ * coursework project for a TypeScript/Node/AWS posting.
+ *
+ * So the requirements come back and the model is the 30B rather than the 7B. The
+ * anti-parroting rule is now explicit and one-directional: **the posting supplies
+ * the wording, the evidence supplies the facts**, and a requirement the evidence
+ * cannot answer is not mentioned at all. That is the honest form of keyword
+ * matching — it puts the recruiter's term on the page only where the candidate
+ * really has the thing. The grounding guards are unchanged and still run after
+ * this call, so a term the model borrows and `cv.md` cannot support is removed
+ * rather than trusted.
+ */
 const SUMMARY_SYSTEM = [
   'You write ONE professional summary for a CV. Output ONLY the summary as plain text —',
   'no JSON, no quotes, no preamble, no label.',
   '',
+  'Shape — exactly three sentences, in this order:',
+  '  1. POSITIONING. What the candidate IS: the posting\'s own job title, plus the one',
+  '     specialisation the evidence most supports. Never open this sentence with a verb.',
+  '  2. SKILLS. The two or three requirements from the posting that the evidence',
+  '     actually answers, in the posting\'s wording.',
+  '  3. PROOF. One concrete achievement from the evidence, with its figure.',
+  '',
   'Rules:',
-  '- Length: 60 to 70 words. Count them. This is mandatory. Under 60 is too short.',
+  '- Length: 50 to 70 words in total. Count them.',
   '- Implied first person: never use a name, never "he"/"she"/"they".',
-  '- EVERY claim must be traceable to a specific line of the evidence below. The',
-  '  evidence is the ONLY source of fact. You are describing this candidate, not',
-  '  the job.',
-  '- Do not state a number of years of experience. The evidence does not contain one.',
-  '- Do not name a domain or industry the evidence does not show. Do not name a',
-  '  technology, product, cloud or framework absent from the evidence. Describing',
-  '  the KIND of work ("distributed systems", "low-latency") is fine.',
+  '- The posting supplies the WORDING. The evidence supplies the FACTS. Use a',
+  '  requirement\'s exact term only where a specific line of the evidence shows that',
+  '  work. A requirement the evidence cannot answer is left out entirely — never',
+  '  claim it, never hedge it.',
+  '- Do not state a number of years of experience, and do not label a seniority',
+  '  level. The evidence contains neither.',
+  '- Use ONE job title. Never invent a hybrid or dual title.',
   '- Never name the target company, and never claim to have worked for them.',
   '- BE SPECIFIC. Name the actual systems, technologies and figures that appear',
   '  in the evidence. A summary that could describe any engineer is a failed',
@@ -268,31 +300,34 @@ const SUMMARY_SYSTEM = [
 ].join('\n');
 
 /**
- * The role title is the only JD-derived input, and even that is only a target.
+ * Posting first, evidence second, so the instruction to take every fact from the
+ * evidence sits next to the evidence itself.
  *
- * The Block B requirement list used to be passed here as "emphasis context",
- * and the 7B copied it wholesale — for an HFT posting it produced "expertise in
- * networking, HFT, and financial markets" and "over a decade of experience"
- * against a CV showing none of those. Handing a weak model the posting's
- * vocabulary and asking it not to use it does not work.
- *
- * The requirements are also redundant: `cv-select` has already ranked and
- * trimmed these bullets against Block B, so the JD signal is encoded in *which*
- * evidence is here. Describing the evidence faithfully is the tailoring.
+ * The requirements are capped because Block B runs to a dozen on some reports and
+ * the tail is the part a posting cares least about — the same cap `goldset.mjs`
+ * uses when it shows requirements to a human.
  *
  * @param {string[]} bullets the selected CV bullets — the ONLY source of fact
  * @param {string} role
+ * @param {string[]} reqs Block B requirements, in the posting's own wording
  */
-export function summaryUser(bullets, role) {
+export function summaryUser(bullets, role, reqs = []) {
   const ev = bullets.length ? bullets.map(b => `- ${b}`).join('\n') : '(none)';
+  const req = reqs.length
+    ? reqs.slice(0, 8).map(r => `- ${r}`).join('\n')
+    : '(none listed — describe the evidence)';
   return [
-    '## Evidence — the bullets that will appear on this CV',
+    '## What the posting asks for — use this WORDING, never as a claim',
+    '',
+    req,
+    '',
+    '## Evidence — the bullets that will appear on this CV. The only source of fact.',
     '',
     ev,
     '',
     `## Target role title: ${role || 'software engineering'}`,
     '',
-    'Write the 50-70 word summary now. Every claim must come from the evidence above.',
+    'Write the three-sentence, 50-70 word summary now.',
   ].join('\n');
 }
 
@@ -364,17 +399,88 @@ export function fillerCount(text) {
 }
 
 /**
+ * Verbs a CV bullet opens with. A summary whose first sentence starts here is
+ * describing an achievement, not the candidate — it is a bullet with the bullet
+ * point removed.
+ *
+ * Same contract as NAMED_PRODUCTS: a *detector*, not a generator. A verb missing
+ * from this list understates the defect rate, it never invents one. Seeded from
+ * the openers actually observed across the shipped summaries in `output/`.
+ */
+const BULLET_VERBS = [
+  'led', 'delivered', 'built', 'designed', 'developed', 'created', 'implemented',
+  'migrated', 'raised', 'automated', 'owned', 'engineered', 'found', 'executed',
+  'managed', 'conducted', 'architected', 'improved', 're-architected', 'ran',
+  'authored', 'resolved', 'diagnosed', 'applied', 'identified', 'tracked', 'won',
+];
+
+/**
+ * Shape defects in a summary, named. Empty array means the shape is sound.
+ *
+ * The eight generation metrics all measure *falsity*, and a summary can be
+ * entirely true and still be unusable: three consecutive runs of offer 305
+ * produced an achievement list, a 75-word single-sentence run-on, and an opener
+ * reading "Experienced PM/Software Engineer with a proven track record". Every
+ * falsity metric scored those identically. `summary_jd_fit` and `summary_cv_fit`
+ * are cosines against the JD and the CV — the run-on scores *well* on both,
+ * because it names every technology in the evidence.
+ *
+ * So this is the missing direction, in the same spirit as rule 9: the suite
+ * could not see a summary that was true and shapeless. It is deliberately a
+ * *shape* metric and nothing more — it cannot tell a well-chosen fact from a
+ * badly-chosen one, and a two-word summary ("Backend engineer.") clears
+ * `no_positioning` while failing `off_band`. Read it next to the falsity
+ * metrics, never instead of them.
+ *
+ *   run_on         one sentence carrying the whole summary (>40 words). This is
+ *                  also how `clampSummaryWords` gets defeated: it splits on
+ *                  sentences and always keeps the first, so a single-sentence
+ *                  75-word summary passes a hard 70-word band untouched.
+ *   filler_open    the first sentence — the only one some readers finish —
+ *                  leads on a phrase that describes nobody.
+ *   no_positioning no sentence says what the candidate *is*; every one opens
+ *                  with a bullet verb. This is the shipped 237 shape.
+ *   off_band       outside the 50-70 words the stage claims to enforce.
+ *
+ * @param {string} summary
+ * @returns {string[]}
+ */
+export function summaryShape(summary) {
+  const s = String(summary || '').trim();
+  if (!s) return ['empty'];
+  const out = [];
+  const sentences = s.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.some(x => wordCount(x) > 40)) out.push('run_on');
+  if (fillerCount(sentences[0]) > 0) out.push('filler_open');
+  const opensAsBullet = (x) =>
+    BULLET_VERBS.includes(String(x).trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z-]/g, ''));
+  if (sentences.every(opensAsBullet)) out.push('no_positioning');
+  const w = wordCount(s);
+  if (w < 50 || w > 70) out.push('off_band');
+  return out;
+}
+
+/**
  * Deterministic quality score for one candidate summary. Higher is better.
  * Label-free: word-count distance, fabricated products, and how much of it is
  * traceable to the evidence. Non-prose scores -Infinity — see looksLikeProse.
+ *
+ * Shape is priced at 4 a defect, which is deliberately enough to cancel half the
+ * evidence-overlap term: the 75-word run-on that shipped scored *well* on
+ * overlap precisely because it named every technology in the evidence, and
+ * nothing else in this function could see it. `off_band` is dropped because
+ * `lenPenalty` already charges for length, at a rate that scales with how far
+ * out it is.
  */
 export function scoreSummary(text, { bullets, cvText }) {
   if (!text || !looksLikeProse(text)) return -Infinity;
   const w = wordCount(text);
   const lenPenalty = w < 50 ? 50 - w : w > 70 ? w - 70 : 0;
+  const shape = summaryShape(text).filter(d => d !== 'off_band');
   return -lenPenalty
          - 5 * productFab(text, cvText).length
          - 4 * fillerCount(text)
+         - 4 * shape.length
          + 8 * evidenceOverlap(text, bullets);
 }
 
@@ -442,6 +548,13 @@ export function stripJdProperNouns(summary, cvText, jdText) {
  * The first sentence is always kept: a summary trimmed to nothing is worse than
  * one trimmed to too-long, and the caller's <50-word pad can top it back up.
  *
+ * That guarantee is also the hole. Keeping `sentences[0]` unconditionally means a
+ * summary that *is* one sentence cannot be clamped at all, which is how a 75-word
+ * run-on passed a hard 70-word band into a 2-page-capped PDF. The band is a
+ * layout requirement rather than a preference, so the fallback cuts at the word
+ * and closes the sentence. A mid-clause cut reads badly on purpose — it is the
+ * backstop for a shape the prompt is supposed to prevent, not a repair.
+ *
  * @param {string} text
  * @param {number} max
  */
@@ -453,6 +566,10 @@ export function clampSummaryWords(text, max = 70) {
   for (const next of sentences.slice(1)) {
     if (wordCount(`${out} ${next}`) > max) break;
     out += ` ${next}`;
+  }
+  if (wordCount(out) > max) {
+    out = out.trim().split(/\s+/).slice(0, max).join(' ')
+      .replace(/[.,;:!?]+$/, '') + '.';
   }
   return out.trim();
 }
@@ -478,14 +595,15 @@ export function cleanSummary(raw) {
  * which is what makes a single-run A/B valid on this stack.
  *
  * @param {{bullets: string[], role: string, cvText: string, incumbent?: string,
+ *          reqs?: string[],
  *          call: (system: string, user: string) => Promise<string>,
  *          margin?: number}} opts
  * @returns {Promise<string|null>} the winning summary, or null if neither works
  */
-export async function generateSummary({ bullets, role, cvText, incumbent = '', call, margin = 1.0 }) {
+export async function generateSummary({ bullets, role, cvText, incumbent = '', reqs = [], call, margin = 1.0 }) {
   let challenger = null;
   try {
-    const text = cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role)));
+    const text = cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role, reqs)));
     if (text) challenger = stripFabricatedProducts(text, cvText);
   } catch { /* the incumbent still stands */ }
 

@@ -10,6 +10,7 @@
  *   node batch/local-pdf-offer.mjs --id N --url URL --report-path PATH
  *     --report-num NNN --jd-file PATH --eval-score X.X --company CO
  *     --role ROLE --date YYYY-MM-DD [--model snipe-screen]
+ *     [--summary-model snipe-eval]
  *     [--ollama-url http://localhost:11434] [--threshold 3.7] [--num-ctx 16384]
  */
 
@@ -51,6 +52,13 @@ function parseArgs(argv) {
     id: null, url: null, reportPath: null, reportNum: null, jdFile: null,
     evalScore: null, company: null, role: null, date: null, p1Score: null,
     p1Archetype: null, model: 'snipe-screen',
+    // The summary is the one piece of real prose Phase 3 still generates, and it
+    // has to read the posting's requirements to be worth generating at all — a
+    // job the 7B could not do without parroting them. It runs on the eval model
+    // by default, which under `--writer verbatim` also *saves* a model load:
+    // the 7B's only remaining call was this one, so the 30B is already resident
+    // from the bullet judge and never gets swapped out for it.
+    summaryModel: 'snipe-eval',
     ollamaUrl: 'http://localhost:11434', threshold: 3.7, numCtx: 8192,
     // Benchmarking only. --bench-dir redirects the output folder and stops
     // before PDF generation (the model's work is done once cv-content.json is
@@ -78,6 +86,7 @@ function parseArgs(argv) {
       case '--p1-score':     a.p1Score      = argv[++i]; break;
       case '--p1-archetype': a.p1Archetype  = argv[++i]; break;
       case '--model':        a.model        = argv[++i]; break;
+      case '--summary-model': a.summaryModel = argv[++i]; break;
       case '--ollama-url':   a.ollamaUrl    = argv[++i]; break;
       case '--threshold':    a.threshold    = parseFloat(argv[++i]); break;
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
@@ -752,6 +761,13 @@ if (rankedModules.length) cvContent.education_modules = rankedModules;
 // the JD and the profile narrative *without ever seeing the selected bullets* —
 // structurally guaranteed to pull the summary toward the posting.
 //
+// Block B goes in alongside the evidence. That is a reversal: the requirements
+// were pulled out when the 7B copied them wholesale, and they are back because
+// the writer is now the 30B and because a summary that cannot see what the
+// posting asked for cannot be tailored to it. The evidence is still the only
+// source of fact — see SUMMARY_SYSTEM — and every grounding guard below still
+// runs on the result.
+//
 // The JSON field is still generated and still the fallback: if this call fails
 // the offer ships the old summary rather than nothing.
 try {
@@ -759,7 +775,8 @@ try {
   if (bullets.length) {
     const generated = await generateSummary({
       bullets, role: args.role, cvText, incumbent: cvContent.summary,
-      call: (sys, usr) => callOllama(args.ollamaUrl, args.model, sys, usr,
+      reqs: blockBReqs,
+      call: (sys, usr) => callOllama(args.ollamaUrl, args.summaryModel, sys, usr,
                                      args.numCtx, null, args.temperature),
     });
     if (generated) cvContent.summary = generated;

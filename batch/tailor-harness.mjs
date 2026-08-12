@@ -26,6 +26,13 @@
  *                   is how many offers could answer at all        want 0
  *   example_copy    offers copying an 8-gram from the prompt's
  *                   own worked example                             want 0
+ *   summary_shape   shape defects per summary, and the fraction of
+ *      _defects     offers carrying any. The only metric here that
+ *      _pct         is not about falsity: a summary can be entirely
+ *                   true and still ship as a 75-word run-on or a
+ *                   list of bullets with the bullets removed, and
+ *                   every other metric scores those clean. See
+ *                   `summaryShape`                                 want 0
  *   grounding       mean token overlap of each output bullet with
  *                   the best-matching cv.md bullet for that role   higher
  *   num_retention   figures in that source bullet that survived
@@ -57,7 +64,7 @@ import { createHash } from 'crypto';
 import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
          stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
-import { productFab, credentialFab } from './summary-stage.mjs';
+import { productFab, credentialFab, summaryShape } from './summary-stage.mjs';
 import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
@@ -180,7 +187,7 @@ function headSha() {
   } catch { return ''; }
 }
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', summaryModel = 'snipe-eval', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
   // two limited runs stay paired. A limited run is only comparable to another
@@ -214,7 +221,7 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
         '--id', s.id, '--report-path', resolve(PROJECT, s.report), '--report-num', s.reportNum,
         '--jd-file', resolve(PROJECT, s.jd), '--eval-score', String(s.score),
         '--company', s.company, '--role', s.role, '--date', '2026-01-01',
-        '--model', model, '--ollama-url', ollamaUrl,
+        '--model', model, '--summary-model', summaryModel, '--ollama-url', ollamaUrl,
         '--threshold', '0', '--temperature', String(temperature), '--bench-dir', dir,
         '--writer', writer,
       ], { stdio: ['ignore', 'pipe', 'pipe'], cwd: PROJECT, timeout: 900_000 });
@@ -230,7 +237,7 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
   const sha1 = headSha();
   const split = !!(sha0 && sha1 && sha0 !== sha1);
-  const meta = { label, temperature, model, writer, sample: samplePath, n: sample.length,
+  const meta = { label, temperature, model, summaryModel, writer, sample: samplePath, n: sample.length,
                  limit: limit || null, ok, failed, skipped: resume ? skipped : null,
                  commit: sha0, commit_end: sha1,
                  // Loud, and in the artifact rather than only on a terminal
@@ -557,6 +564,13 @@ function metricsFor(label, paths = {}) {
       summary_fab_raw: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).length,
       summary_fab_kinds: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).join('+'),
       has_pre_guard: typeof c._summary_pre_guard === 'string',
+      // Shape, on the same shipped/raw split as fabrication and for the same
+      // reason (rule 5): nothing repairs shape today, so the two agree — but the
+      // guard that will is the point of measuring this, and a shipped-only
+      // metric would read 0 the moment it lands.
+      summary_shape: summaryShape(c.summary || '').length,
+      summary_shape_raw: summaryShape(c._summary_pre_guard ?? c.summary ?? '').length,
+      summary_shape_kinds: summaryShape(c._summary_pre_guard ?? c.summary ?? '').join('+'),
       reqs,
       // Structured, not just folded into outputText: the label metrics have to
       // ask which project blurb an atom survived into, not merely whether its
@@ -615,6 +629,15 @@ function metricsFor(label, paths = {}) {
     // Runs predating _summary_pre_guard cannot answer the raw question; say so
     // rather than letting a 0 read as good news.
     summary_fab_raw_n: rows.filter(r => r.has_pre_guard).length,
+    // Shape defects per offer, and how many offers carry any. The mean is the
+    // one to move: an offer can fail on run_on and off_band at once, and fixing
+    // only the band would leave `_pct` flat while the summary is still a
+    // run-on.
+    summary_shape_defects: +mean('summary_shape_raw').toFixed(3),
+    summary_shape_pct: +(rows.filter(r => r.summary_shape_raw > 0).length / n).toFixed(3),
+    // Leaked past the guards, once there are any. Non-zero is a guard
+    // regression, exactly as with summary_fab_pct.
+    summary_shape_shipped_pct: +(rows.filter(r => r.summary_shape > 0).length / n).toFixed(3),
     ats_coverage: +mean('ats_coverage').toFixed(3),
     // The one to target. See `skillCoverage` for why `ats_coverage` is not.
     skill_coverage: meanOf('skill_coverage') === null ? null : +meanOf('skill_coverage').toFixed(3),
@@ -924,6 +947,7 @@ if (!isMain) {
     temperature: parseFloat(String(flag('temperature', '0'))),
     ollamaUrl: String(flag('ollama-url', 'http://localhost:11434')),
     model: String(flag('model', 'snipe-cv')),
+    summaryModel: String(flag('summary-model', 'snipe-eval')),
     limit: parseInt(String(flag('limit', '0')), 10),
     writer: String(flag('writer', 'model')),
     // rule 6: retrieval-bench reported a clean-looking null result for a whole
@@ -944,7 +968,7 @@ if (!isMain) {
   // Pages first: during the one-page work it is the gate, and a row that does not
   // fit is not improved by whatever its other columns say.
   const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -1032,7 +1056,7 @@ if (!isMain) {
     console.log(`${pad(k, 18)}${pad(A[k], w)}${pad(B[k], w)}${d}`);
   }
 } else {
-  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
+  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--summary-model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
 }
 
 export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles, withEmbedMetrics, allMetrics };
