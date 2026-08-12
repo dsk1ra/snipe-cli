@@ -725,9 +725,22 @@ export function cleanSummary(raw) {
  * a trade, and no amount of evidence overlap makes "production systems in Go"
  * true. So a candidate that claims anything `cv.md` cannot support is out,
  * whatever else it does well.
+ *
+ * `stripJdProperNouns` is asked the same question even though it runs *downstream*
+ * in `local-pdf-offer.mjs`, because a candidate this gate accepts and that guard
+ * then guts is not actually usable. Measured: with the gate blind to it, 13 of 32
+ * summaries lost a sentence downstream, fell under the 50-word floor, and had the
+ * generic "Targeting … own systems end-to-end" closer appended — against 5 of 32
+ * before. That closer is true and on-brand, but it is fifteen words of prose that
+ * describes nobody in particular, and it was replacing fifteen words of evidence.
+ * Rejecting here instead hands the slot to the grounded draft, which cannot carry
+ * a name from a posting it never saw.
  */
-function usable(text, cvText) {
-  return !!text && looksLikeProse(text) && summaryUnsupported(text, cvText).length === 0;
+function usable(text, cvText, jdText = '') {
+  return !!text
+    && looksLikeProse(text)
+    && summaryUnsupported(text, cvText).length === 0
+    && (!jdText || stripJdProperNouns(text, cvText, jdText) === text);
 }
 
 /**
@@ -759,12 +772,12 @@ function usable(text, cvText) {
  * deterministic and a single run remains a valid A/B on this stack.
  *
  * @param {{bullets: string[], role: string, cvText: string, incumbent?: string,
- *          reqs?: string[],
+ *          reqs?: string[], jdText?: string,
  *          call: (system: string, user: string) => Promise<string>,
  *          margin?: number}} opts
  * @returns {Promise<string|null>} the winning summary, or null if nothing works
  */
-export async function generateSummary({ bullets, role, cvText, incumbent = '', reqs = [], call, margin = 1.0 }) {
+export async function generateSummary({ bullets, role, cvText, incumbent = '', reqs = [], jdText = '', call, margin = 1.0 }) {
   const draft = async (rs) => {
     try { return cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role, rs))) || null; }
     catch { return null; }
@@ -772,10 +785,10 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', r
 
   const tailored = await draft(reqs);
   // Only paid for when the tailored draft cannot ship as written.
-  const grounded = (reqs.length && !usable(tailored, cvText)) ? await draft([]) : null;
+  const grounded = (reqs.length && !usable(tailored, cvText, jdText)) ? await draft([]) : null;
 
-  if (usable(tailored, cvText)) return clampSummaryWords(tailored);
-  if (usable(grounded, cvText)) return clampSummaryWords(grounded);
+  if (usable(tailored, cvText, jdText)) return clampSummaryWords(tailored);
+  if (usable(grounded, cvText, jdText)) return clampSummaryWords(grounded);
 
   // Neither is clean. Fall back to the old behaviour — strip what can be stripped
   // and let the score choose — so a bad pair still ships something rather than

@@ -787,7 +787,7 @@ try {
   if (bullets.length) {
     const generated = await generateSummary({
       bullets, role: args.role, cvText, incumbent: cvContent.summary,
-      reqs: blockBReqs,
+      reqs: blockBReqs, jdText,
       call: (sys, usr) => callOllama(args.ollamaUrl, args.summaryModel, sys, usr,
                                      args.numCtx, null, args.summaryTemperature),
     });
