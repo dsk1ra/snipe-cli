@@ -380,6 +380,9 @@ export function bulletCost(text) {
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
     maxProjects = 4, maxBulletsPerProject = 4, maxBulletsPerRole = 4,
+    // Floor on the highest-scoring experience entry. 1 restores the pre-floor
+    // allocation exactly, which is what makes this measurable as one change.
+    minTopExpBullets = 2,
     // Project bullets are drawn from one shared budget rather than a flat cap
     // per project: a posting that is mostly about what one project did should
     // spend more of the page on that project. The budget is exactly what 4
@@ -556,14 +559,45 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
    * result is over budget rather than an entry rendered as a bare heading.
    * `caps` bounds how lopsided one entry can get, as before.
    */
-  function allocateLines(entries, budget, caps) {
+  function allocateLines(entries, budget, caps, floorSet = null, floorMin = 1) {
     const n = new Map(entries.map(e => [e, 1]));
     let spent = entries.reduce((a, e) => {
       const top = [...e.scored].sort((x, y) => y.score - x.score)[0];
       return a + (top ? bulletCost(top.text) : 0);
     }, 0);
+    // The floor, paid before the open contest and out of the same budget, so it
+    // takes lines from projects exactly as it appears to.
+    //
+    // It applies to ONE entry — the experience entry this posting scores highest
+    // — and that restriction is the entire result. Swept over the 128-offer label
+    // corpus, a floor on *every* experience entry costs 0.055 differentiator
+    // coverage held out, because the entry the budget actually starves is the
+    // teaching assistantship (1.39 bullets, at the floor in 71% of offers) rather
+    // than the commercial role (2.41, 25%), so a blanket floor spends the page on
+    // the least differentiating evidence on the CV. Restricted to the top entry
+    // it costs 0.018 held out and is indistinguishable from zero on train.
+    //
+    // **That 0.018 is a real cost, not noise** — Phase 3's A/A floor is 0.000. It
+    // buys something the metric cannot see: the one employer a reader checks
+    // first never renders as a single line. `differentiator_coverage` scores an
+    // Experience section of two one-line entries perfectly if the projects carry
+    // the differentiators, which is rule 9 exactly.
+    if (floorSet && floorMin > 1) {
+      const pool = entries.filter(e => floorSet.has(e) && e.scored?.length);
+      const best = pool.map(e => ({ e, top: Math.max(...e.scored.map(x => x.score)) }))
+        .sort((a, b) => b.top - a.top)[0]?.e;
+      if (best) {
+        const ranked = [...best.scored].sort((x, y) => y.score - x.score);
+        const want = Math.min(floorMin, caps.get(best) ?? Infinity, ranked.length);
+        while ((n.get(best) ?? 0) < want) {
+          const k = n.get(best) ?? 0;
+          spent += bulletCost(ranked[k].text);
+          n.set(best, k + 1);
+        }
+      }
+    }
     const rest = entries.flatMap(e =>
-      [...e.scored].sort((a, b) => b.score - a.score).slice(1)
+      [...e.scored].sort((a, b) => b.score - a.score).slice(n.get(e) ?? 1)
         .map(b => ({ e, cost: bulletCost(b.text), score: b.score })));
     // Sort once by value density. Re-sorting after each pick would be a true
     // greedy knapsack, but the costs here are 1-4 and the scores are cosines in
@@ -614,7 +648,10 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
       ...(projParsed?.entries ?? []).map(e => /** @type {[any, number]} */ ([e, maxBulletsPerProject])),
     ]);
     const all = [...(expParsed?.entries ?? []), ...(projParsed?.entries ?? [])];
-    for (const [e, k] of allocateLines(all, lineBudget, caps)) trim(e, k, true);
+    const expSet = new Set(expParsed?.entries ?? []);
+    for (const [e, k] of allocateLines(all, lineBudget, caps, expSet, minTopExpBullets)) {
+      trim(e, k, true);
+    }
   } else {
     if (expParsed) for (const e of expParsed.entries) trim(e, maxBulletsPerRole);
     if (projParsed) {
@@ -1540,6 +1577,26 @@ Text.
     const after = starved.slice(starved.indexOf(heading));
     assert(/^- /m.test(after.split('###')[1] ?? after), `${heading} keeps a bullet at an impossible budget`);
   }
+  // The experience floor. `minTopExpBullets: 1` must reproduce the pre-floor
+  // allocation byte for byte, or the floor is not one change but two.
+  const floorArgs = { maxProjects: 3, maxBulletsPerRole: 4, maxBulletsPerProject: 4,
+                      lineBudget: 12, _embed: stub };
+  const noFloor = await selectCvForJd(fakeCv, reqs, '', { ...floorArgs, minTopExpBullets: 1 });
+  const floored = await selectCvForJd(fakeCv, reqs, '', { ...floorArgs, minTopExpBullets: 2 });
+  const expBullets = (t) => (t.split('## Experience')[1] ?? '').split('## Projects')[0]
+    .split('\n').filter(l => l.startsWith('- ')).length;
+  assert(expBullets(floored) >= expBullets(noFloor),
+    'a floor never renders fewer experience bullets than no floor');
+  // Paid out of the same budget, so it is redistribution and not expansion.
+  const lines = (t) => t.split('\n').filter(l => l.startsWith('- '))
+    .reduce((a, l) => a + bulletLines(l.slice(2)), 0);
+  assert(lines(floored) <= 12, `floored selection still honours the budget (${lines(floored)} of 12)`);
+  // One entry, not all of them: the sweep result the floor exists to encode.
+  const perEntry = (t) => (t.split('## Experience')[1] ?? '').split('## Projects')[0]
+    .split(/^### /m).slice(1).map(b => b.split('\n').filter(l => l.startsWith('- ')).length);
+  assert(perEntry(floored).filter(k => k >= 2).length <= 1 + perEntry(noFloor).filter(k => k >= 2).length,
+    'the floor lifts one experience entry, not every one');
+
   // lineBudget null is the old path, untouched.
   const counted = await selectCvForJd(fakeCv, reqs, '', {
     maxProjects: 2, maxBulletsPerRole: 2, maxBulletsPerProject: 2, _embed: stub,
