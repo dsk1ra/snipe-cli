@@ -26,7 +26,8 @@ import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChr
          verifySummaryFigures } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
-         stripFabricatedCredentials, stripFabricatedDomains, stripJdProperNouns,
+         stripFabricatedCredentials, stripFabricatedDomains,
+         stripMisattributedFigures, stripJdProperNouns,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 import { verbatimContent } from './cv-writers.mjs';
 import { createHash } from 'crypto';
@@ -834,6 +835,9 @@ if (typeof cvContent.summary === 'string') {
   // well as inside generateSummary for the same reason the product strip does —
   // when the stage throws, the JSON summary ships down this path instead.
   cvContent.summary = stripFabricatedDomains(cvContent.summary, cvText);
+  // Ledger §10's entry-scoped rule, on the surface it never reached: a figure
+  // that is real, and belongs to a different entry than the clause names.
+  cvContent.summary = stripMisattributedFigures(cvContent.summary, cvText);
   // The general case of the company-name strip below: any name the posting
   // supplies and cv.md does not. The `--company` comparison alone missed a
   // summary claiming work "for Joybuy Systems" on a JD.com posting.

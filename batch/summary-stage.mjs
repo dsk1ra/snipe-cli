@@ -141,6 +141,10 @@ export const NAMED_DOMAINS = [
   // health & life sciences
   'healthcare', 'health tech', 'healthtech', 'medtech', 'medical devices',
   'pharmaceutical', 'biotech', 'clinical trials', 'life sciences',
+  // Bare forms. `clinical trials` did not catch "building and improving clinical
+  // AI agents" on a clinical-AI posting — the qualifier the list happened to
+  // carry was doing the work, not the domain word.
+  'clinical', 'medical', 'financial', 'pharma',
   // commerce & marketing
   'e-commerce', 'ecommerce', 'retail industry', 'adtech', 'ad tech',
   'advertising technology', 'martech', 'digital marketing',
@@ -227,6 +231,17 @@ export function summaryUnsupported(summary, cvText) {
   if (domainFab(summary, cvText).length) out.push('domain');
   if (casedFab(summary, cvText).length) out.push('cased_product');
   return out;
+}
+
+/**
+ * Drop the clauses that credit an entry with another entry's figure.
+ *
+ * Ledger §10's repair, applied to the surface it never reached. Clause surgery
+ * rather than revert, for §10's own reason: a summary is synthesised from several
+ * source bullets and has no single line to revert to.
+ */
+export function stripMisattributedFigures(text, cvText) {
+  return stripUnsupportedClauses(text, t => figureAttribution(t, cvText).length > 0);
 }
 
 /** Drop the clauses claiming a domain `cv.md` never mentions. */
@@ -906,6 +921,7 @@ function usable(text, cvText, jdText = '') {
   return !!text
     && looksLikeProse(text)
     && summaryUnsupported(text, cvText).length === 0
+    && figureAttribution(text, cvText).length === 0
     && (!jdText || stripJdProperNouns(text, cvText, jdText) === text);
 }
 
@@ -977,6 +993,7 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', r
     s = stripFabricatedCredentials(s, cvText);
     s = stripFabricatedDomains(s, cvText);
     s = verifySummaryFigures(s, cvText);
+    s = stripMisattributedFigures(s, cvText);
     s = stripUnsupportedTenure(s, cvText);
     if (jdText) s = stripJdProperNouns(s, cvText, jdText);
     return s.trim() || null;

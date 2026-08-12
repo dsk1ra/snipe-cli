@@ -631,8 +631,13 @@ try {
     // was reported clean by `product_fab`.
     const { domainFab, casedFab, summaryUnsupported } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
     const cvNoFin = 'Built a membership platform. Languages: Rust, Java, Python, TypeScript.';
-    deepEq(domainFab('Python Software Engineer with deep expertise in financial services IT systems.', cvNoFin),
-      ['financial services'], 'an industry the CV never claims is caught');
+    deepEq(domainFab('Python Software Engineer with deep expertise in financial services IT systems.', cvNoFin).sort(),
+      ['financial', 'financial services'],
+      'an industry the CV never claims is caught, in both the bare and qualified form');
+    // The bare forms exist because the qualifier was doing the work: "clinical
+    // trials" did not catch "building and improving clinical AI agents".
+    deepEq(domainFab('Builds clinical AI agents.', cvNoFin), ['clinical'],
+      'a domain named without its usual qualifier is still a domain');
     deepEq(domainFab('Engineer who builds retail operations tooling.', 'Designed a system for retail operations'),
       [], 'a domain the CV does state is not flagged');
     // The 3-char floor in stripJdProperNouns cannot see "Go"; case is what

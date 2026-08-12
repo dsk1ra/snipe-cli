@@ -61,7 +61,7 @@ its own area; this file holds only what applies everywhere.
 
 ## Tests
 
-`node test-all.mjs` — 1334 checks, must stay green. It's a launcher over
+`node test-all.mjs` — 1335 checks, must stay green. It's a launcher over
 `test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
 `node test/<name>.test.mjs`.
 
