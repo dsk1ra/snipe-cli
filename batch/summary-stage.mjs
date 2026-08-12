@@ -305,6 +305,164 @@ export function verifyBulletProducts(items, cvText) {
   return revertUnsupportedBullets(items, cvText, b => productFab(b, cvText).length > 0);
 }
 
+// ── Figure attribution ────────────────────────────────────────────────────────
+
+/**
+ * Every Experience/Projects entry in `cv.md`, with the full text that entry owns.
+ *
+ * The head is included for the same reason `verifyBulletNumbers` includes it
+ * (ledger §10): the dates and tech-stack line carry figures a claim about that
+ * entry may legitimately cite.
+ *
+ * `head` is kept separate from `text` because the two answer different questions.
+ * The head is the entry's *identity* — its title, badge and tech line, the things
+ * a summary uses to say which system it is talking about. The bullets are its
+ * *claims*. Naming is read off the head alone; ownership is checked against
+ * everything.
+ *
+ * @param {string} cvText
+ * @returns {{name: string, head: string, text: string}[]}
+ */
+export function cvEntries(cvText) {
+  const out = [];
+  try {
+    for (const sec of parseCvSections(cvText)) {
+      if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
+      for (const e of parseEntries(sec.lines).entries) {
+        out.push({ name: e.head[0].replace(/^###\s+/, '').trim(),
+                   head: e.head.join(' '),
+                   text: [...e.head, ...e.bullets].join(' ') });
+      }
+    }
+  } catch { /* odd CV shape — caller degrades to no attribution */ }
+  return out;
+}
+
+const NGRAM_STOP = new Set(['with', 'that', 'this', 'from', 'into', 'across', 'over',
+  'through', 'their', 'which', 'while', 'been', 'were', 'have', 'they', 'them',
+  'more', 'than', 'also', 'each', 'both', 'such', 'used', 'using', 'built',
+  'built-in', 'other', 'when', 'where', 'what', 'will', 'would', 'could']);
+
+const wordsOf = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9+#.-]+/g, ' ').split(/\s+/).filter(Boolean);
+
+/**
+ * Phrases that identify exactly one entry — derived, never hand-listed.
+ *
+ * A 2- or 3-word phrase occurring in one entry's text and no other's names that
+ * entry. Nothing is curated: "privacy-preserving peer-to-peer" points at Re:Link
+ * and "membership platform" at UBWIS because of what `cv.md` says, so editing
+ * `cv.md` re-derives the index instead of invalidating a list someone has to
+ * remember to update. A phrase shared by two entries identifies neither, which is
+ * the conservative direction — it can only *miss* an attribution, never invent one.
+ *
+ * Read off the **head only**, never the bullets. Built over bullet text instead,
+ * any sentence reusing a bullet's wording counts as naming its entry — which is
+ * most summaries, since the evidence is where their vocabulary comes from. The
+ * shipped Sophos error demonstrates the failure exactly: "a privacy-preserving
+ * peer-to-peer system with 85%+ test coverage" names Re:Link by title *and*
+ * UBWIS by echoing "test coverage", and any-match then declares the figure
+ * correctly attributed. Titles identify; bullets only repeat.
+ *
+ * Two content tokens minimum, or common connective runs ("a week", "for the")
+ * would name an entry by accident.
+ *
+ * @param {{name: string, head: string, text: string}[]} entries
+ * @returns {Map<string, string>} phrase → the single entry name that owns it
+ */
+export function namingPhrases(entries) {
+  const seen = new Map();                       // phrase → Set(entry name)
+  for (const e of entries) {
+    const w = wordsOf(e.head);
+    for (let n = 2; n <= 3; n++) {
+      for (let i = 0; i + n <= w.length; i++) {
+        const parts = w.slice(i, i + n);
+        if (parts.filter(x => x.length >= 4 && !NGRAM_STOP.has(x)).length < 2) continue;
+        const p = parts.join(' ');
+        if (!seen.has(p)) seen.set(p, new Set());
+        seen.get(p).add(e.name);
+      }
+    }
+  }
+  const out = new Map();
+  for (const [p, owners] of seen) if (owners.size === 1) out.set(p, [...owners][0]);
+  return out;
+}
+
+// Figures worth attributing: percentages, latencies, magnitudes, counts, and the
+// bare decimals this CV states accuracies as (0.815, 0.930). Deliberately not
+// bare integers or years — "4 weeks" is attributable, "2026" is not.
+const ATTRIB_FIG = new RegExp([
+  '\\d[\\d,]*(?:\\.\\d+)?%\\+?',
+  '\\d[\\d,]*(?:\\.\\d+)?\\s?(?:ms|s|x|×|GB|MB|TB|KB|bn)\\b\\+?',
+  '(?<![A-Za-z])\\d[\\d,]*(?:\\.\\d+)?[kKMB]\\+?(?![a-zA-Z])',
+  '\\d[\\d,]*\\+',
+  '\\d{1,3}(?:,\\d{3})+',
+  '\\b0\\.\\d{2,3}\\b',
+].join('|'), 'g');
+
+/**
+ * Figures the summary attaches to an entry that does not own them.
+ *
+ * The defect this measures, from a shipped Sophos summary: *"Delivered a
+ * privacy-preserving peer-to-peer system with 85%+ test coverage and maintained
+ * 99.9% uptime"*. Both figures are real and both belong to UBWIS; the sentence
+ * hands them to Re:Link. Every existing guard passes it, because
+ * `verifySummaryFigures` asks whether a number appears **anywhere** in `cv.md` —
+ * the CV-global allow-set that ledger §10 replaced for bullets and project blurbs
+ * and never reached the summary.
+ *
+ * **Only sentences that actually name an entry are judged.** "Delivered a
+ * production system with 99.9% uptime" asserts no owner, so it cannot have the
+ * owner wrong; flagging it would be measuring vagueness, not falsity. That keeps
+ * this a falsity metric and keeps it from firing on the many true summaries that
+ * simply do not name their systems.
+ *
+ * Figures absent from `cv.md` entirely are not attribution errors — they are
+ * fabrications, and `summaryUnsupported` already counts them. Counting them here
+ * too would double-charge one defect across two metrics.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {{figure: string, named: string, owners: string[]}[]}
+ */
+export function figureAttribution(summary, cvText) {
+  const s = String(summary || '').trim();
+  const entries = cvEntries(cvText);
+  if (!s || entries.length < 2) return [];
+  const phrases = namingPhrases(entries);
+  const byName = new Map(entries.map(e => [e.name, e.text]));
+  const out = [];
+
+  // Clause, not sentence. A summary routinely reports two entries in one
+  // sentence, each correctly: "Achieved sub-500ms dashboard load times through
+  // cache warming, and improved job-application pipeline accuracy from 0.815 to
+  // 0.930" names Snipe and carries Zero Trust's latency, and both halves are
+  // true. Judged whole, the sentence reads as Snipe claiming 500ms. Splitting on
+  // the comma is the same granularity `stripUnsupportedClauses` repairs at, and
+  // it errs toward silence: a name in one clause and its figure in the next is
+  // missed rather than invented.
+  for (const clause of s.split(/(?<=[.!?])\s+|,\s+|;\s+/)) {
+    const figs = [...new Set(clause.match(ATTRIB_FIG) || [])];
+    if (!figs.length) continue;
+    const w = wordsOf(clause);
+    const named = new Set();
+    for (let n = 2; n <= 3; n++) {
+      for (let i = 0; i + n <= w.length; i++) {
+        const owner = phrases.get(w.slice(i, i + n).join(' '));
+        if (owner) named.add(owner);
+      }
+    }
+    if (!named.size) continue;                  // asserts no owner
+    for (const f of figs) {
+      const owners = entries.filter(e => e.text.includes(f)).map(e => e.name);
+      if (!owners.length) continue;             // not in cv.md at all → summaryUnsupported's job
+      if ([...named].some(n => byName.get(n)?.includes(f))) continue;
+      out.push({ figure: f, named: [...named].join(' + '), owners });
+    }
+  }
+  return out;
+}
+
 /**
  * Drop skill items naming a product `cv.md` never mentions.
  *

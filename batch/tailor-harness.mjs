@@ -65,7 +65,7 @@ import { parseCvSections, parseEntries, entryCompany,
          extractBlockBRequirements } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
 import { summaryUnsupported as summaryFab, productFab,
-         summaryShape } from './summary-stage.mjs';
+         summaryShape, figureAttribution } from './summary-stage.mjs';
 import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
@@ -570,6 +570,17 @@ function metricsFor(label, paths = {}) {
       summary_shape: summaryShape(c.summary || '').length,
       summary_shape_raw: summaryShape(c._summary_pre_guard ?? c.summary ?? '').length,
       summary_shape_kinds: summaryShape(c._summary_pre_guard ?? c.summary ?? '').join('+'),
+      // Figures the summary hands to the wrong entry. Distinct from
+      // `summary_fab`, which asks whether a number is real; this asks whether it
+      // is *theirs*. Both figures in "a privacy-preserving peer-to-peer system
+      // with 85%+ test coverage and 99.9% uptime" are real and neither is
+      // Re:Link's. Ledger §10 fixed this for bullets and project blurbs by
+      // scoping the allow-set to the claiming entry; the summary was the surface
+      // that fix never reached.
+      summary_attrib: figureAttribution(c.summary || '', cvText).length,
+      summary_attrib_raw: figureAttribution(c._summary_pre_guard ?? c.summary ?? '', cvText).length,
+      summary_attrib_kinds: figureAttribution(c._summary_pre_guard ?? c.summary ?? '', cvText)
+        .map(x => x.figure).join('+'),
       reqs,
       // Structured, not just folded into outputText: the label metrics have to
       // ask which project blurb an atom survived into, not merely whether its
@@ -637,6 +648,9 @@ function metricsFor(label, paths = {}) {
     // Leaked past the guards, once there are any. Non-zero is a guard
     // regression, exactly as with summary_fab_pct.
     summary_shape_shipped_pct: +(rows.filter(r => r.summary_shape > 0).length / n).toFixed(3),
+    summary_attrib_figures: +mean('summary_attrib_raw').toFixed(3),
+    summary_attrib_pct: +(rows.filter(r => r.summary_attrib_raw > 0).length / n).toFixed(3),
+    summary_attrib_shipped_pct: +(rows.filter(r => r.summary_attrib > 0).length / n).toFixed(3),
     ats_coverage: +mean('ats_coverage').toFixed(3),
     // The one to target. See `skillCoverage` for why `ats_coverage` is not.
     skill_coverage: meanOf('skill_coverage') === null ? null : +meanOf('skill_coverage').toFixed(3),
@@ -967,7 +981,7 @@ if (!isMain) {
   // Pages first: during the one-page work it is the gate, and a row that does not
   // fit is not improved by whatever its other columns say.
   const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'} attrib=${r.summary_attrib_kinds || '-'}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -1043,6 +1057,7 @@ if (!isMain) {
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
                 'product_fab', 'product_fab_pct', 'skill_coverage', 'skills_asked', 'ats_coverage',
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
+                'summary_attrib_pct', 'summary_attrib_shipped_pct',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
                 'labelled_n', 'differentiator_coverage', 'differentiators_lost',
                 'noise_rate', 'grade_yield', 'mean_grade'];

@@ -653,6 +653,59 @@ try {
       'cased_product+domain', 'both new classes are named');
     deepEq(summaryUnsupported('', cvNoFin), [], 'an empty summary claims nothing');
 
+    // Figure attribution — a real figure handed to the wrong entry. Every case
+    // is from the 32-offer bench, and every one is reported clean by
+    // summaryUnsupported, because each number genuinely appears in cv.md.
+    const { figureAttribution, namingPhrases, cvEntries } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const attribCv = [
+      '## Experience', '',
+      '### PM / Software Engineer',
+      '**UBWIS** — Edinburgh | Oct 2024 – Sep 2025', '',
+      '- Built the admin console backed by Redis caching and 85%+ test coverage',
+      '- Owned production security, maintaining 99.9% average uptime', '',
+      '## Projects', '',
+      '### Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System',
+      '**Honours Dissertation** | Rust, Flutter, WebRTC | 2025 – 2026', '',
+      '- Designed a blind rendezvous protocol with end-to-end encryption', '',
+      '### Post-Quantum Signature Benchmarking',
+      '**Personal research** | Rust, Python | 2025 – 2026', '',
+      '- Executed 63,000+ benchmark runs across 7 signature schemes', '',
+    ].join('\n');
+
+    // The shipped Sophos defect: both figures real, both UBWIS's, sentence names Re:Link.
+    deepEq(figureAttribution(
+      'Delivered a privacy-preserving peer-to-peer system with 85%+ test coverage and maintained 99.9% uptime.',
+      attribCv).map(x => x.figure).sort(), ['85%+', '99.9%'],
+      'figures welded onto an entry that does not own them are caught');
+
+    // A clause that names no entry asserts no owner, so it cannot have one wrong.
+    // Flagging it would measure vagueness, not falsity.
+    deepEq(figureAttribution('Achieved 99.9% uptime by resolving critical SSL/DNS failures.', attribCv), [],
+      'a figure with no entity named is not an attribution error');
+    deepEq(figureAttribution('Executed 63,000+ benchmark runs across 7 signature schemes.', attribCv), [],
+      'a correctly attributed figure is clean');
+
+    // Clause granularity, not sentence: two entries reported in one sentence,
+    // each correctly, must not read as one claiming the other's figure.
+    deepEq(figureAttribution(
+      'Achieved sub-500ms load times through cache warming, and executed 63,000+ benchmark runs in the post-quantum signature testbed.',
+      attribCv), [],
+      'two correctly-attributed clauses in one sentence stay clean');
+
+    // A figure absent from the CV is a fabrication, not a misattribution —
+    // summaryUnsupported owns that, and double-charging it would inflate both.
+    deepEq(figureAttribution('Shipped a privacy-preserving peer-to-peer system serving 970%+ growth.', attribCv), [],
+      'an invented figure is summaryUnsupported\'s job, not this metric\'s');
+
+    // Naming is read off entry heads, never bullets. Built over bullet text, any
+    // summary reusing a bullet's wording names its entry — which is most of them.
+    const ph = namingPhrases(cvEntries(attribCv));
+    eq(ph.get('privacy-preserving peer-to-peer'), 'Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System',
+      'a title phrase identifies its entry');
+    eq(ph.has('admin console'), false, 'a bullet phrase does not');
+    deepEq(figureAttribution('Anything at all with 85%+ coverage.', 'no entries here'), [],
+      'a CV with under two entries yields no attribution rather than throwing');
+
     // Shape is priced into the score, or a well-overlapping list beats a
     // well-shaped summary. Both candidates carry the same tail, so evidence
     // overlap is near-identical and the shape term is what separates them — and
