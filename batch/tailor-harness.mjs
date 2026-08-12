@@ -61,10 +61,11 @@ import { tmpdir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
-         stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
+import { parseCvSections, parseEntries, entryCompany,
+         extractBlockBRequirements } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
-import { productFab, credentialFab, summaryShape } from './summary-stage.mjs';
+import { summaryUnsupported as summaryFab, productFab,
+         summaryShape } from './summary-stage.mjs';
 import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
@@ -86,15 +87,13 @@ import { loadLabels, scoreOffer } from './opus-metrics.mjs';
  * @param {string} cvText
  * @returns {string[]}
  */
-export function summaryFab(summary, cvText) {
-  if (typeof summary !== 'string' || !summary) return [];
-  const out = [];
-  if (stripUnsupportedTenure(summary, cvText) !== summary) out.push('tenure');
-  if (verifySummaryFigures(summary, cvText) !== summary) out.push('figure');
-  if (credentialFab(summary, cvText).length) out.push('credential');
-  if (productFab(summary, cvText).length) out.push('product');
-  return out;
-}
+// Re-exported rather than reimplemented. This function used to have its own copy
+// of the kind list, and the copy drifted: it grew `tenure` and `figure` while the
+// generation gate in summary-stage.mjs kept checking only products. The stage
+// therefore believed it had rejected every fabrication while eight of 32 offers
+// shipped one. The gate and the metric now cannot disagree, because they are the
+// same function.
+export { summaryFab };
 
 const readSafe = (p) => { try { return p && existsSync(p) ? readFileSync(p, 'utf8') : ''; } catch { return ''; } };
 

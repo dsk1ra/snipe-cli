@@ -625,6 +625,34 @@ try {
     eq(summaryUser(['x'], 'Engineer', Array.from({ length: 12 }, (_, i) => `req${i}`)).includes('req8'),
       false, 'the requirement list is capped');
 
+    // Domain, cased-product and figure fabrication — the three classes that
+    // opened the moment the summary started reading the posting. Each case below
+    // is a real shipped summary from the 32-offer bench, and every one of them
+    // was reported clean by `product_fab`.
+    const { domainFab, casedFab, summaryUnsupported } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const cvNoFin = 'Built a membership platform. Languages: Rust, Java, Python, TypeScript.';
+    deepEq(domainFab('Python Software Engineer with deep expertise in financial services IT systems.', cvNoFin),
+      ['financial services'], 'an industry the CV never claims is caught');
+    deepEq(domainFab('Engineer who builds retail operations tooling.', 'Designed a system for retail operations'),
+      [], 'a domain the CV does state is not flagged');
+    // The 3-char floor in stripJdProperNouns cannot see "Go"; case is what
+    // separates the language from the verb.
+    deepEq(casedFab('Delivers production systems in Go and Rust.', cvNoFin), ['Go'],
+      'a two-letter language name is caught even though the proper-noun guard skips it');
+    deepEq(casedFab('Ready to go live with the platform.', cvNoFin), [],
+      'the lowercase verb is not the language');
+    deepEq(casedFab('Builds systems in Rust.', cvNoFin), [],
+      'a cased name the CV does claim is not flagged');
+
+    // The gate and the metric are one function, so a class the metric grew
+    // cannot be one the gate ignores.
+    const { summaryFab } = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+    eq(summaryFab === summaryUnsupported, true,
+      'the harness metric IS the generation gate — no second detector to drift');
+    eq(summaryUnsupported('Engineer in financial services delivering systems in Go.', cvNoFin).sort().join('+'),
+      'cased_product+domain', 'both new classes are named');
+    deepEq(summaryUnsupported('', cvNoFin), [], 'an empty summary claims nothing');
+
     // Shape is priced into the score, or a well-overlapping list beats a
     // well-shaped summary. Both candidates carry the same tail, so evidence
     // overlap is near-identical and the shape term is what separates them — and
