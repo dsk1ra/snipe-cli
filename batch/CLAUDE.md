@@ -171,12 +171,36 @@ grades to shrink the output — that costs 0.03.
 Regenerate exemplars after editing cv.md:
 `node batch/goldset.mjs export-shots --ids 5,50`.
 
-The **summary** is a separate call (`batch/summary-stage.mjs`), fed the bullets
-that will actually appear on the CV. It is deliberately *not* given the JD's
-requirements: `cv-select` has already ranked the evidence against them, and
-handing the posting's vocabulary to a 7B produced straight parroting. Candidates
-must pass a prose gate before being scored, and the main JSON call's summary is
-the incumbent — the stage only displaces it by a clear margin.
+The **summary** is a separate call (`batch/summary-stage.mjs`) on `snipe-eval`,
+fed the selected bullets *and* Block B, at temperature 0. It follows the standard
+CV template — positioning, the requirements the evidence answers in the posting's
+own wording, one quantified achievement — and **the posting supplies the wording
+while the evidence supplies the facts**.
+
+Block B was withheld for a long time because handing a 7B the posting's
+vocabulary produced straight parroting. Giving it back is worth `ats_coverage`
++0.029 (n=32, 21-3, CI [0.018, 0.041], p<0.001) and shape defects 0.844 → 0.063
+per summary, but **it reopens every fabrication path at once** — 8 of 32 offers
+invented a domain, a language or a figure the first time it landed, against 1 of
+32 JD-blind. `docs/PHASE3-GENERATION-LEDGER.md` §11 has the full account; the
+three things that hold it shut:
+
+1. **Rejection, not repair.** A draft that claims anything `cv.md` cannot support
+   is thrown away and re-requested *with the requirements withheld*. That sibling
+   is clean by construction rather than by inspection — it never saw the posting.
+   Fires on 3 of 32, so the common case still costs one call.
+2. **`summaryUnsupported` is the gate and the metric.** One function, six classes
+   (tenure, figure, credential, product, domain, cased_product). They were two
+   functions and drifted, and the stage shipped 8 fabrications believing it had
+   rejected everything.
+3. **The gate knows about guards that run after it.** `stripJdProperNouns` runs
+   downstream in `local-pdf-offer.mjs`; candidates it would gut are rejected up
+   front, or the summary falls under the 50-word floor and picks up the generic
+   "Targeting … end-to-end" closer.
+
+**A figure the evidence does not literally contain is a fabrication even when the
+arithmetic is right** — "93.0%" for 0.930, "14.1%" for 0.815 → 0.930, "87.5%"
+where `cv.md` says 90%. This was the largest class, 6 of 8.
 
 Named products absent from `cv.md` are **rejected, not counted**: experience
 bullets revert to their CV source line, summaries and project blurbs get clause
@@ -405,6 +429,12 @@ has grades.
    overlap then produced a slash-separated keyword dump that scored well and was
    not prose. Read the actual output of the first few offers of any generation
    change before trusting its table.
+   **This rule paid for itself.** `sum-new` read as a clean win — shape 0.844 →
+   0.125, `ats_coverage` +0.028, `product_fab` a flat 0 — while fabricating on 8
+   of 32 offers. The tell was `summary_jd_fit` +0.151 sitting next to
+   `summary_cv_fit` −0.087, and nothing but reading five summaries confirmed it.
+   `summaryUnsupported` now covers the domain gap this rule predicted, so the
+   *specific* hole is shut; the habit is what generalises.
 8. **rho is corruptible here: the labels skew high, so generosity buys rho without
    buying truth.** Judge changes on row-level grounding too — how often a graded
    row cites evidence that does not contain the technology the requirement names,

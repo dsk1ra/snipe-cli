@@ -595,3 +595,100 @@ On the experience side the blast radius is 0.8 % of bullets and the single hit
 is a true positive that reverts to a *longer* source bullet, which moves
 `num_retention` and `ats_coverage` the same direction §9 already measured. A
 40-minute arm to resolve one bullet would not be measuring anything.
+
+---
+
+## 11. The summary reads the posting — and what that cost before it paid
+
+Measured on `sample32.tsv` (32 offers, not the 24 of §0–§10), `--temperature 0`,
+`--writer verbatim`, `SNIPE_LINE_BUDGET=24 SNIPE_MAX_PROJECTS=3`, selection
+frozen across every arm with `SNIPE_SELECT_CACHE` — legitimate here and only
+here, because nothing in this section touches `cv-select`, and every selection
+metric reading identically 0.000 in all four arms is the check that it held.
+
+### The defect
+
+The shipped summary was three achievements with the bullet points removed. On
+offer 305 (Trustpilot, asking for TypeScript/Node/AWS) it spent two of its three
+sentences on a Java coursework project, and the evidence set *contained* the
+Stripe/Node/Next.js bullet it ignored. Two further runs of the same offer
+produced a 75-word single-sentence run-on and a "proven track record" opener, so
+there was no stable format to critique — which is itself the finding.
+
+**No metric could see any of it.** All eight punish falsity; the three shapes
+scored identically. `summaryShape` is the answer to that (rule 9 again) and is
+deliberately *only* a shape metric — a two-word summary clears `no_positioning`.
+
+### The arms
+
+| arm | what it is |
+|---|---|
+| `sum-ctl` | pre-`5ec5a44`: 7B writer, no requirements in the prompt |
+| `sum-new` | `5ec5a44`: 30B, Block B in the prompt, industry template |
+| `sum-v2` | `bfc51aa`: + domain/cased/figure rejection with a grounded retry |
+| `sum-v3` | shipped: + reject what `stripJdProperNouns` would gut |
+
+| arm | fab raw | fab shipped | shape defects | clean | generic closer |
+|---|---|---|---|---|---|
+| `sum-ctl` | 0.031 (1) | 0.000 | 0.844 | 19% | 5/32 |
+| `sum-new` | **0.250 (8)** | **0.063 (2)** | 0.125 | 88% | 14/32 |
+| `sum-v2` | 0.031 (1) | 0.000 | 0.125 | 88% | 13/32 |
+| `sum-v3` | 0.031 (1) | 0.000 | **0.063** | **94%** | 9/32 |
+
+`sum-ctl` → `sum-v3`, paired, n=32: **`ats_coverage` +0.029, CI [0.018, 0.041],
+21-3, p<0.001** — 15× its ±0.002 A/A floor. `summary_jd_fit` +0.138 (30-2).
+Every selection metric, `grounding`, `num_retention`, `metric_fab` and
+`product_fab` at 0.000 delta.
+
+### Rule 7 caught this, and the table would not have
+
+`sum-new` reads as a clean win — shape 0.844 → 0.125, `ats_coverage` +0.028,
+`product_fab` a flat 0. It was fabricating on **8 of 32 offers**. The tell was
+`summary_cv_fit` −0.087 next to `summary_jd_fit` +0.151, which is rule 7's
+signature exactly, and the only way to confirm it was reading the output:
+
+- *"deep expertise in **financial services** IT systems"* — JPMorganChase posting,
+  CV contains "financial" zero times
+- *"production systems in **Go** and Rust"* — CV contains standalone "Go" zero times
+- *"reduced configuration time by **87.5%**"* — `cv.md` says 90%
+- *"improved accuracy by **14.1%**"* — computed from 0.815 → 0.930, never stated
+- *"**C++17/20**"* — `cv.md` says "C/C++"
+
+Three classes, none visible to any guard. Domains because `productFab` matches
+products; `Go` because `stripJdProperNouns` skips words under three characters —
+**the same 3-char floor this repo already recorded zeroing `C#` and `CI/CD` in
+`tokenize`**, found twice now in unrelated code; derived figures because nothing
+asked whether a *correct* calculation was a *stated* one.
+
+`summary_cv_fit` −0.082 survives into `sum-v3` and is no longer evidence of
+falsity: fabrication is measured directly and sits at the control's level. It is
+the summary using the posting's vocabulary for things `cv.md` genuinely contains,
+which is the entire point of showing it the posting.
+
+### What actually fixed it
+
+**Rejection, not repair.** Clause surgery had no sibling to fall back on when it
+was written; it does now. One repair had shipped *"Linux systems programming, and
+advanced concurrency patterns."* as a sentence. When a draft is unusable the
+stage asks for a second one with the requirements withheld — clean *by
+construction*, since it never sees the posting, which is the only kind of clean a
+closed-vocabulary detector can be trusted to deliver. The second call fires on 3
+of 32.
+
+**One function for the gate and the metric.** `summaryUnsupported` is now both.
+They were separate and drifted: the harness copy grew `tenure` and `figure` while
+the gate still checked only products, so the stage believed it had rejected
+everything while 8 offers shipped a fabrication. Same failure `normPhrase` was
+shared to prevent.
+
+**The gate must know about guards that run after it.** `stripJdProperNouns` runs
+downstream in `local-pdf-offer.mjs`; a candidate the gate passed and that guard
+then gutted fell under the 50-word floor and picked up the generic closer — 13 of
+32. Asking it up front moved that to 9 and shape defects 0.125 → 0.063.
+
+### Two things not claimed
+
+`sum-ctl` ran 36.7 min against `sum-new`'s 3.5, but the control built the select
+cache cold — **confounded, not a speedup.** And the summary call dropping to
+temperature 0 is a determinism choice for production, invisible to a bench where
+every arm was already greedy.
