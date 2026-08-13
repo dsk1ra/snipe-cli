@@ -30,7 +30,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { stackMismatchCap, seniorityCaps, languageMismatchCap, looksMultiPosting, strengthFrom, verifyAgainstCv } from './fit-rules.mjs';
+import { stackMismatchCap, seniorityCaps, languageMismatchCap, locationMismatchCap, looksMultiPosting, strengthFrom, verifyAgainstCv } from './fit-rules.mjs';
 import {
   cleanCvForPrompt, cleanJd, extractSalary, parseCompTargets,
   compScoreFromSalary, buildCompBlock,
@@ -735,6 +735,15 @@ async function main() {
     cvBlend = Math.min(cvBlend, langCap.cvCap);
     nsDim = Math.min(nsDim, langCap.nsCap);
     judgment.hard_stops = [...new Set([`Requires ${langCap.missing} fluency — not in CV languages`, ...(judgment.hard_stops || [])])];
+  }
+  // Office attendance somewhere the profile will not commute to — same gate, and
+  // it has to be one: `hard_stops` never reaches `final_decision`, so Phase 2 was
+  // printing this exact deal-breaker on offers it then told the user to Apply to.
+  const locCap = locationMismatchCap(jd, config);
+  if (locCap.city) {
+    cvBlend = Math.min(cvBlend, locCap.cvCap);
+    nsDim = Math.min(nsDim, locCap.nsCap);
+    judgment.hard_stops = [...new Set([`On-site/hybrid in ${locCap.city} — outside the commutable base`, ...(judgment.hard_stops || [])])];
   }
   // Deterministic junk-input guard: a hiring thread, blog page, or homepage is
   // not an evaluable posting — a capable model happily "matches" the candidate

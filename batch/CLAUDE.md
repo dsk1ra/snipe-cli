@@ -26,7 +26,22 @@ model never writes markdown. `--classic-eval` reverts to the monolithic
 `ollama-evaluator.mjs`. Phase 1's score is deliberately withheld from the prompt
 to avoid anchoring. Salary is parsed from the JD in code (`text-utils.mjs`),
 never guessed; when present the weights become `cv×0.50 + ns×0.30 + comp×0.20`.
-Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both phases.
+Seniority, stack-mismatch, language and **location** caps (`fit-rules.mjs`) are
+code-enforced in both phases.
+
+The location cap exists because `hard_stops` never reaches `final_decision`:
+Phase 2 printed the profile's "hybrid or on-site outside the commutable base"
+hard stop verbatim on offers it then scored 4.9 and told the user to Apply to,
+with a tailored PDF. It caps both dimensions at 2 (composite 2.0 — under Phase
+1's 2.5 gate and Phase 2's `< 3 ⇒ Skip`), and reads the commutable base from
+`location.city` + `search_locations` in `profile.yml`, so the policy stays in
+the user layer.
+**Both signals must be within 160 characters of each other.** Testing "names a
+city" and "demands attendance" independently capped a posting that says it has
+*no* in-office requirement and lists London among its global offices, 1.7k
+characters apart — 5.0 → 2.0 on a role that was fine. A monthly cadence ("6 days
+a month travel to office") is inside the stated travel policy and is exempt.
+Fires on 49 of the 310 cached JDs, 12 of which had scored ≥ 4.0.
 
 `candidateEcosystems` reads experience, projects and education, **never the
 `## Skills` block** — the same "a catalogue line is a claim, not a demonstration"

@@ -21,7 +21,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
-import { stackMismatchCap, languageMismatchCap, seniorityCaps, verifyAgainstCv } from './fit-rules.mjs';
+import { stackMismatchCap, languageMismatchCap, locationMismatchCap, seniorityCaps, verifyAgainstCv } from './fit-rules.mjs';
 import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { logCall } from './timing.mjs';
 
@@ -537,12 +537,16 @@ async function main() {
     const parsed = extractJson(rawResponse);
     const { cap: stackCap } = stackMismatchCap(jdText, cv);
     const langCap = languageMismatchCap(jdText, cv);
+    // A commute the profile calls a hard no, gated in code for the same reason
+    // as the language cap: it is one requirement among forty and the model
+    // scores the role on its merits regardless.
+    const locCap = locationMismatchCap(jdText, config);
     // Same seniority caps Phase 2 applies (benchmarked 2026-07-17: every tested
     // model overscored Senior-titled roles at P1 — this gate can't live in the model).
     const sen = seniorityCaps(parsed.role, jdText);
     scored = validateScore(parsed, {
-      cvCap: Math.min(stackCap, langCap.cvCap, sen.cvCap),
-      nsCap: Math.min(langCap.nsCap, sen.nsCap),
+      cvCap: Math.min(stackCap, langCap.cvCap, locCap.cvCap, sen.cvCap),
+      nsCap: Math.min(langCap.nsCap, locCap.nsCap, sen.nsCap),
       jdText,
       cvText: cv,
     });
@@ -551,6 +555,9 @@ async function main() {
     }
     if (langCap.missing) {
       scored.hard_stops = [...new Set([`Requires ${langCap.missing} fluency — not in CV languages`, ...scored.hard_stops])];
+    }
+    if (locCap.city) {
+      scored.hard_stops = [...new Set([`On-site/hybrid in ${locCap.city} — outside the commutable base`, ...scored.hard_stops])];
     }
   } catch (e) {
     fatal('Failed to parse model response', e.message);
