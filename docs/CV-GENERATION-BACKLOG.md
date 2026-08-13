@@ -10,8 +10,8 @@ and one item below was already closed there.
 | # | item | area | cost to answer |
 |---|---|---|---|
 | 1 | ~~dead pin in `profile.yml`~~ | selection | **code done, your string edit** |
-| 2 | blanket experience floor | selection | one 45-min arm |
-| 3 | section-level budget ratio | selection | offline sweep, then one arm |
+| 2 | ~~blanket experience floor~~ | selection | **subsumed by item 3, quantified** |
+| 3 | ~~section-level budget ratio~~ | selection | **shipped, `projMaxLines=14`** |
 | 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
 | 6 | best-of-N summary | summary | one 32-offer arm |
@@ -46,7 +46,29 @@ Worth knowing before you correct the string: a pin spends one of the three
 project slots and moves the benchmark for every arm, so any comparison against a
 run made before the pin fires needs saying out loud.
 
-## 2. Blanket experience floor instead of top-entry only
+## 2. Blanket experience floor — SUBSUMED by item 3
+
+The section cap answers this without a blanket floor, because it attacks the
+same imbalance from the budget side. Per-entity, over the 128-offer corpus,
+measured on the entity the complaint was actually about:
+
+| config | Teaching Assistant at 1 bullet | **commercial role at 1 bullet** | Δ coverage held out |
+|---|---|---|---|
+| floor only (what shipped) | 53% | **18%** | — |
+| **floor + cap 14 (ships now)** | 37% | **3%** | −0.011, CI contains 0 |
+| blanket floor | 0% | 0% | −0.035, CI excludes 0 |
+| blanket floor + cap 14 | 0% | 0% | −0.037, CI excludes 0 |
+
+The cap removes **83% of the complaint for free** — the commercial role goes
+from one bullet on 18% of postings to 3%. A blanket floor closes the last 3% and
+charges 0.024 more coverage for it, and stacking it on top of the cap buys
+nothing further (−0.037 against −0.035 alone).
+
+Still your judgement rather than the corpus's, but it is now a much smaller
+question: 3% of postings against 0.024 coverage. The original framing below
+priced it at 0.037 for the whole gap, which was before the cap existed.
+
+### The original proposal, for the record
 
 The shipped floor lifts the highest-scoring experience entry to two bullets. On
 the 128-offer corpus that entry is usually the teaching assistantship, which is
