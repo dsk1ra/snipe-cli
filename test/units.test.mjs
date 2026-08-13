@@ -327,15 +327,16 @@ try {
   ].join('\n');
   deepEq(g.selectedBullets(selCv), ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
     'with no grades the evidence keeps selection order — the pre-change behaviour, exactly');
-  deepEq(g.selectedBullets(selCv, new Map([['strong bullet', 3], ['middling bullet', 2], ['weak bullet', 0]])),
-    ['Engineer: strong bullet', 'Engineer: weak bullet', 'Thing: middling bullet'],
-    'grades reorder within a section and never across one');
-  // Projects hold most of the high grades, so a global sort buries Experience and
-  // the summary stops opening with a positioning line. Measured, not theorised —
+  // Experience is never reordered: the first evidence line anchors the opener,
+  // and the opener is the positioning sentence. Measured, not theorised — sorting
   // it cost the JPMorgan summary its opener while every metric read clean.
-  deepEq(g.selectedBullets(selCv, new Map([['middling bullet', 3], ['weak bullet', 1], ['strong bullet', 0]])),
+  deepEq(g.selectedBullets(selCv, new Map([['strong bullet', 3], ['middling bullet', 2], ['weak bullet', 0]])),
     ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
-    'the top-graded bullet in the CV cannot pull its section above Experience');
+    'grades never reorder Experience, whatever the judge thinks of it');
+  const twoProj = selCv + '\n\n### Other\n**2022**\n\n- other bullet';
+  deepEq(g.selectedBullets(twoProj, new Map([['other bullet', 3], ['middling bullet', 0]])).slice(-2),
+    ['Other: other bullet', 'Thing: middling bullet'],
+    'and do reorder Projects, which is the sentence the change was aimed at');
   deepEq(g.selectedBullets(selCv, new Map()),
     ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
     'an empty grade map is stable, not a reshuffle — every bullet ties at 0');

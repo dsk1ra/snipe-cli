@@ -562,11 +562,15 @@ export function selectedBullets(selectedCv, grades = null) {
   // Stable within a section — `sort` is stable in V8 and the input order is the
   // selection order the previous prompt shipped, so an ungraded run is
   // byte-identical to the old behaviour rather than merely similar.
+  // Projects only. The first evidence line anchors the *opener*, and the opener
+  // is supposed to be positioning — so reordering Experience rewrites the wrong
+  // sentence. Reordering Projects moves which achievement lands in sentence
+  // three, which is the sentence this was aimed at.
   if (grades) {
-    const order = ['Experience', 'Projects'];
-    const bySection = order.map(s => out.filter(x => x.section === s)
-      .sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0)));
-    return bySection.flat().map(x => x.line);
+    const exp = out.filter(x => x.section === 'Experience');
+    const proj = out.filter(x => x.section === 'Projects')
+      .sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0));
+    return [...exp, ...proj].map(x => x.line);
   }
   return out.map(x => x.line);
 }
