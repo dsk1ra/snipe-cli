@@ -216,6 +216,29 @@ check_prerequisites() {
     THRESHOLD="${yml_threshold:-3.0}"
   fi
   echo "PDF threshold: $THRESHOLD"
+
+  # A pinned project naming nothing in cv.md ranks as if the list were empty.
+  # cv-select says so per offer, into a per-offer log nobody opens unless that
+  # offer failed — which is how "Zero Trust SIEM" went unnoticed against a title
+  # reading "Zero Trust Security Analytics Dashboard" for 16 runs. Config errors
+  # belong at startup, once, where the other config validation already is.
+  # A warning, never an exit: a stale pin must not stop a run.
+  local bad_pins
+  bad_pins=$(node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    import { unmatchedPins } from "./batch/cv-select.mjs";
+    const yaml = (await import("js-yaml")).default;
+    const cfg = yaml.load(readFileSync("config/profile.yml", "utf8")) || {};
+    const pins = cfg?.cv?.pinned_projects;
+    if (Array.isArray(pins))
+      console.log(unmatchedPins(readFileSync("cv.md", "utf8"), pins).join("\n"));
+  ' 2>/dev/null || true)
+  if [[ -n "$bad_pins" ]]; then
+    while IFS= read -r p; do
+      [[ -n "$p" ]] && echo "WARNING: pinned project \"$p\" matches no '### ' title in cv.md — it is being ignored"
+    done <<< "$bad_pins"
+    echo "         fix config/profile.yml cv.pinned_projects, or the pin does nothing"
+  fi
 }
 
 check_ollama() {
