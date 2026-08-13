@@ -880,10 +880,10 @@ try {
     ].join('\n'), 'utf8');
 
     const benchRoot = join(root, 'bench');
-    const write = (label, dir, experience) => {
+    const write = (label, dir, experience, projects) => {
       const d = join(benchRoot, label, dir);
       mkdirSync(d, { recursive: true });
-      writeFileSync(join(d, 'cv-content.json'), JSON.stringify({ experience }), 'utf8');
+      writeFileSync(join(d, 'cv-content.json'), JSON.stringify({ experience, projects }), 'utf8');
     };
 
     // Perfect run: both employers, CV figures only.
@@ -933,6 +933,46 @@ try {
     const inv = h.metricsFor('invented', { benchRoot, cvPath });
     eq(inv.role_retention, 1, 'a spurious extra entry does not reduce retention of the real roles');
     eq(inv.invented_roles, 1, 'an employer absent from the CV is reported as invented');
+
+    // Section balance. The defect this exists for: a page spent almost entirely
+    // on projects, with both employers cut to a single line, which reads as no
+    // experience whatever the projects say. Every bullet below is verbatim cv.md,
+    // so the falsity metrics are all perfect — that is the point of the fixture,
+    // not a detail of it (standing rule 9, asked of sections instead of an empty
+    // output).
+    const proj9 = (n) => [{ name: 'a project', bullets: Array.from({ length: n }, (_, i) => `built part ${i}`) }];
+    write('starved', 'a', [
+      { company: 'Northgate College', bullets: ['Taught programming to 800+ undergraduates across two languages'] },
+      { company: 'Acme SaaS', bullets: ['Led a team building a subscription platform, MVP in 4 weeks, grew to 170 members'] },
+    ], proj9(9));
+    const starved = h.metricsFor('starved', { benchRoot, cvPath });
+    eq(starved.grounding, 1, 'the starved page is perfectly grounded — every other metric misses it');
+    eq(starved.metric_fab, 0, 'and invents no figure, which is why nothing caught this before');
+    eq(starved.num_retention, 1, 'and loses no figure either');
+    eq(starved.section_balance, 0.182, 'two of eleven bullets carry the whole Experience section');
+    eq(starved.exp_starved, 2, 'both employers are at the one-bullet floor');
+    eq(starved.all_exp_starved_pct, 1, 'and the offer counts toward every-employer-starved');
+
+    // The healthy shape, same total page.
+    write('balanced', 'a', [
+      { company: 'Northgate College', bullets: ['Taught programming to 800+ undergraduates across two languages',
+                                                'Wrote setup guides cutting configuration time to 30 minutes'] },
+      { company: 'Acme SaaS', bullets: ['Led a team building a subscription platform, MVP in 4 weeks, grew to 170 members',
+                                        'Automated billing, cutting onboarding time by over 80%'] },
+    ], proj9(7));
+    const bal = h.metricsFor('balanced', { benchRoot, cvPath });
+    eq(bal.section_balance, 0.364, 'the same eleven bullets, four of them experience');
+    eq(bal.exp_starved, 0, 'no employer is at the floor');
+    eq(bal.all_exp_starved_pct, 0, 'so the offer does not count as starved');
+
+    // A CV with no Experience section at all must not read as the healthy end of
+    // the scale. `all_exp_starved` is null there, not 0, so it drops out of the
+    // mean rather than reporting that no entry was starved.
+    write('noexp', 'a', [], proj9(4));
+    const noexp = h.metricsFor('noexp', { benchRoot, cvPath });
+    eq(noexp.all_exp_starved_pct, null, 'no experience entries is not the same as none starved');
+    eq(noexp.section_balance, 0, 'and the balance reads zero, which is the bad direction');
+    eq(noexp.role_retention, 0, 'role_retention is the metric that owns the vanished-section case');
 
     // Sample selection: only offers with an eval, a report and a cached JD.
     const batchDir = join(root, 'batch');
