@@ -312,35 +312,6 @@ try {
   deepEq(w.skillForms('Agile / Scrum'), ['Agile', 'Scrum'], 'a spaced slash lists alternatives');
   deepEq(w.skillForms('CI/CD'), ['CI/CD'], 'a tight slash is part of the name');
 
-  // ── selectedBullets: the summary's evidence, ordered by the judge ──
-  // The judge's positives are 0.950 precise against the Opus corpus and its
-  // zeros 0.228 (ledger §16), so "which of these is strongest" is the half of
-  // its signal worth acting on — and the summary prompt, which asks for one
-  // quantified achievement, never saw it.
-  const selCv = [
-    '## Experience', '',
-    '### Engineer', '**Acme** | 2024', '',
-    '- weak bullet', '- strong bullet', '',
-    '## Projects', '',
-    '### Thing', '**2023**', '',
-    '- middling bullet',
-  ].join('\n');
-  deepEq(g.selectedBullets(selCv), ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
-    'with no grades the evidence keeps selection order — the pre-change behaviour, exactly');
-  // Experience is never reordered: the first evidence line anchors the opener,
-  // and the opener is the positioning sentence. Measured, not theorised — sorting
-  // it cost the JPMorgan summary its opener while every metric read clean.
-  deepEq(g.selectedBullets(selCv, new Map([['strong bullet', 3], ['middling bullet', 2], ['weak bullet', 0]])),
-    ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
-    'grades never reorder Experience, whatever the judge thinks of it');
-  const twoProj = selCv + '\n\n### Other\n**2022**\n\n- other bullet';
-  deepEq(g.selectedBullets(twoProj, new Map([['other bullet', 3], ['middling bullet', 0]])).slice(-2),
-    ['Other: other bullet', 'Thing: middling bullet'],
-    'and do reorder Projects, which is the sentence the change was aimed at');
-  deepEq(g.selectedBullets(selCv, new Map()),
-    ['Engineer: weak bullet', 'Engineer: strong bullet', 'Thing: middling bullet'],
-    'an empty grade map is stable, not a reshuffle — every bullet ties at 0');
-
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
   deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),

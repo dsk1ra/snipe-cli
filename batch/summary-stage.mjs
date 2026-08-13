@@ -526,53 +526,18 @@ export function filterSkillItems(skills, cvText) {
  * @param {string} selectedCv the post-selection CV handed to the tailor model
  * @returns {string[]}
  */
-export function selectedBullets(selectedCv, grades = null) {
+export function selectedBullets(selectedCv) {
   const out = [];
   try {
     for (const sec of parseCvSections(selectedCv)) {
       if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
       for (const e of parseEntries(sec.lines).entries) {
         const name = e.head[0].replace(/^###\s+/, '').trim();
-        for (const b of e.bullets) out.push({ line: `${name}: ${b}`, text: b, section: sec.name });
+        for (const b of e.bullets) out.push(`${name}: ${b}`);
       }
     }
   } catch { /* odd CV shape — caller falls back */ }
-  // The prompt asks for ONE quantified achievement from the evidence, and the
-  // model has been taking the first plausible line rather than the strongest.
-  // The judge has already graded every one of these bullets for this posting and
-  // the summary never saw the grades.
-  //
-  // Sorting by grade uses the half of the judge's signal that is trustworthy:
-  // generation ledger §16 measured its positives at 0.950 precision against the
-  // Opus corpus and its zeros at 0.228, so "which of these is strong" is a
-  // question it answers well even though "which is worthless" is not.
-  //
-  // **Within each section, never across them.** Sorting the whole list by grade
-  // put project bullets above experience — projects hold 24 of the CV's 33 atoms
-  // and most of the high grades — and the summary stopped opening with a
-  // positioning line, because the model leads with whatever it is handed first.
-  // On the JPMorgan offer that turned "Python Software Engineer with advanced
-  // proficiency in system design…" into a bare skills list that also leaked the
-  // phrase "in the Re:Link — … Remote Access System entry".
-  //
-  // No metric caught it: fabrication 0, grounding 1.000, shipped shape clean,
-  // `ats_coverage` up. Benchmark rule 7, and `summaryShape`'s `no_positioning`
-  // check is evidently too weak to see a missing opener.
-  //
-  // Stable within a section — `sort` is stable in V8 and the input order is the
-  // selection order the previous prompt shipped, so an ungraded run is
-  // byte-identical to the old behaviour rather than merely similar.
-  // Projects only. The first evidence line anchors the *opener*, and the opener
-  // is supposed to be positioning — so reordering Experience rewrites the wrong
-  // sentence. Reordering Projects moves which achievement lands in sentence
-  // three, which is the sentence this was aimed at.
-  if (grades) {
-    const exp = out.filter(x => x.section === 'Experience');
-    const proj = out.filter(x => x.section === 'Projects')
-      .sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0));
-    return [...exp, ...proj].map(x => x.line);
-  }
-  return out.map(x => x.line);
+  return out;
 }
 
 /**
