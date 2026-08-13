@@ -40,11 +40,15 @@ Fixed: the runner asks `unmatchedPins` once at preflight, beside the other confi
 validation, and prints a warning rather than exiting — a stale pin must not stop
 a run. The per-offer warning stays for callers that are not the runner.
 
-The string itself is still yours.
+**Corrected 2026-08-13**: the string now reads `"Zero Trust Security Analytics"`
+and the pin fires. Measured in ledger §20 — `differentiator_coverage`
+0.530 → 0.580, 7 offers up and none down, against `selection_regret` +0.018.
 
-Worth knowing before you correct the string: a pin spends one of the three
-project slots and moves the benchmark for every arm, so any comparison against a
-run made before the pin fires needs saying out loud.
+A pin spends one of the three project slots and moves the benchmark for every
+arm, so any comparison against a run made before it fired needs saying out loud.
+It also does more than take a slot: `allocateLines` spends one shared budget, so
+two of the seven improved offers ship the same three projects as before with the
+bullets redistributed underneath.
 
 ## 2. Blanket experience floor — SUBSUMED by item 3
 
@@ -227,7 +231,7 @@ Distinct from Experiment B (`PHASE3-NEXT.md`), which rewrites `cv.md` itself to
 lower a bullet's corpus mean. That one attacks ranking; this one attacks the
 keyword surface, and they can ship independently.
 
-## 9. Widen the skills taxonomy — ANSWERED, your edit next
+## 9. Widen the skills taxonomy — DONE 2026-08-13
 
 The taxonomy lives in `cv.md`'s `## Skills` block, not `profile.yml` —
 `selectSkills(cvText, …)` parses the CV. Both are the user layer, so it does not
@@ -251,6 +255,13 @@ one-character edit:
 
 Then a genuine gap that is safe to claim: **Git** (10 offers, 8%) — the CV lists
 GitHub Actions and GitLab CI but never Git itself.
+
+**All three landed on 2026-08-13**, plus `Git` beside CI/CD under Cloud &
+Infrastructure. `skill_coverage` 0.993 → 1.000, ledger §20. Re-running
+`skills-gap --min 4 --shaped` today reports AI at 80 offers (63%), REST at 14
+(11%) and Git at 8 (6%) rather than the 84/21/10 above; the ranking and the
+conclusion are unchanged, but quote the current run rather than this table. All
+three now sit inside the taxonomy and no longer appear in either gap pass.
 
 Everything below is a capability question the corpus cannot answer. Nothing here
 carries fabrication risk either way: `filterSkillItems` grounds every rendered

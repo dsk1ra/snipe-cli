@@ -1334,3 +1334,115 @@ removes three and adds one.
 
 Shipped: five offers rescued from having no quantified achievement, against one
 that lost its targeting, with every falsity metric unmoved.
+
+## 20. The two user-layer edits — SHIPPED, +0.050 differentiator coverage, 7-0
+
+Both changes live in the user layer, so neither is a code diff. They landed
+together because each invalidates `bestof2` as a control on its own.
+
+1. **`config/profile.yml`** — `cv.pinned_projects` read `"Zero Trust SIEM"`
+   against a `cv.md` whose title is `Zero Trust Security Analytics Dashboard`.
+   The pin had matched nothing for 16 runs. Now `"Zero Trust Security
+   Analytics"`.
+2. **`cv.md` `## Skills`** — `RESTful APIs` → `REST / RESTful APIs`,
+   `LLM application development` → `AI / LLM application development`, and `Git`
+   added beside CI/CD. The first two are notation, not a new claim: `skillForms`
+   reads a spaced slash as alternatives, so the taxonomy now answers a posting
+   that writes "REST" or "AI". Of the 128-offer corpus, 80 name AI, 14 name REST
+   and 8 name Git.
+
+Arm `userlayer`: 32 offers, 51 minutes, temperature 0, `--writer verbatim`,
+fresh selection — a selection change may not reuse a select cache. `ok: 32`,
+`split_run: null`. Control is `bestof2`.
+
+| metric | bestof2 | userlayer | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.530 | **0.580** | +0.050 | [0.017, 0.089] | 7-0 | 0.016 |
+| `selection_regret` | 0.084 | 0.102 | +0.018 | [0.009, 0.028] | 17-3 | 0.003 |
+| `ats_coverage` | 0.649 | 0.664 | +0.015 | [0.002, 0.028] | 11-5 | 0.210 |
+| `skill_coverage` | 0.993 | **1.000** | +0.007 | [0.000, 0.018] | 2-0 | 0.500 |
+| `grade_yield` | 0.759 | 0.768 | +0.010 | [−0.010, 0.028] | 13-6 | 0.167 |
+| `noise_rate` | 0.180 | 0.190 | +0.010 | [−0.010, 0.033] | 7-6 | 1.000 |
+| `exp_starved` | 0.469 | 0.469 | 0.000 | [−0.125, 0.125] | 2-2 | 1.000 |
+
+`grounding`, `num_retention`, `metric_fab`, `product_fab`, `num_lost` and
+`all_exp_starved` are all identically flat.
+
+### Which edit moved which metric
+
+They cannot be disentangled by a second arm without splitting them, but the code
+answers it directly. `outputChunks` reads experience bullets, project name,
+description and bullets, and the summary — never the skills block. And
+`selectableAtoms` takes bullets from Experience and Projects only. So editing
+`## Skills` cannot touch `differentiator_coverage`, cannot inflate it, and leaves
+all 128 Opus labels valid: they are positional against atoms that did not move.
+That puts coverage, regret and the bullet allocation on the pin, and
+`skill_coverage` on the notation, where 0.993 was two offers naming a form the
+taxonomy spelled differently.
+
+### The pin does not do what the pin advertises
+
+`CLAUDE.md` warns that a pin spends one of three project slots. It does — but on
+2 of the 7 improved offers the selection is **identical** in both arms and
+coverage still rose. Offer 156 ships Re:Link, PQC and Zero Trust in both, and
+the allocation moves underneath: Re:Link 1 → 2 bullets, PQC 2 → 1, UBWIS 2 → 3,
+Napier 2 → 1. Ten bullets before and ten after, redistributed.
+
+`allocateLines` spends one shared budget, so forcing an entry past the cut
+perturbs what everything else gets even when the surviving set does not change.
+A pin is a change to the whole allocation and has to be benchmarked as one.
+
+### The disagreement is the point
+
+Regret rose on 17 offers and fell on 3. It is measured against a cosine oracle
+over Block B requirements; coverage is measured against the Opus labels. A pin
+exists precisely for an entry whose worth is something other than its cosine to
+the posting, so this is the case the two metrics were built to disagree about.
+The labels win here: 7 offers gained a flagged differentiator, none lost one.
+
+`bestof2` is retired as a control. `userlayer` is the baseline for anything next.
+
+### Reading the summaries, which the table could not see
+
+Rule 7, and it paid again. Every falsity metric above reads flat, and the
+summaries still moved — the summary stage is untouched, but selection feeds it,
+so changing selection changes what it writes.
+
+Read: the six changed offers whose bench output survives, plus all four
+regenerated reports.
+
+- **Offer 185 lost its positioning line.** It now opens *"Particularly in
+  developing reliable, fully local LLM pipelines…"* — a fragment with no subject,
+  where `bestof2` opened *"Product Engineer with deep expertise in full-stack
+  product development…"*. Across all 32, openers that start mid-clause go
+  **0/32 → 1/32**. No metric moves on it.
+- **Offer 175 welds one project's attributes onto another.** *"a Zero Trust
+  Security Analytics Dashboard with end-to-end distributed tracing and resilience
+  patterns"* — the tracing and the circuit breakers belong to the Distributed
+  Store Management System, which is on the same page. `bestof2` had the same two
+  projects apart and said neither.
+- **Two of the four regenerated reports borrow a figure.** 240 gives the MongoDB
+  project 85%+ test coverage, which is UBWIS's (`cv.md:25`); the rest of that
+  sentence is right, since the Zero Trust dashboard *is* the MongoDB client
+  partnership. 243 says *"Reduced configuration time by 80%"*, welding UBWIS's
+  onboarding figure onto the Teaching Assistant's configuration guides — where
+  `cv.md` says 2+ hours to 30 minutes, and 90% is escalations. Reports 241 and
+  242 are clean, and 242 quotes the configuration figure exactly right, so the
+  stage can do it.
+
+All three are §12's class — a figure or a capability that exists in `cv.md`
+attached to an entry that did not earn it — and §12 records `sum-v5` shipping at
+0/32 on the bench sample. The class is not fixed; it was measured to zero on one
+sample and reappears when the evidence set changes underneath it.
+
+Note what this does not say. `bestof2` was not clean either — its offer 4 summary
+ends *"shipped cross-platform tools with 85%+ test coverage"*, the same borrowed
+figure under a vaguer noun. One of the three defects is a genuine regression
+(185's opener); the other two are the standing defect landing on different
+offers.
+
+**The +0.050 stands and the summaries are the open cost.** Coverage is measured
+against labels, 7-0, and none of the above touches which evidence reached the
+page. What it says is that `summaryUnsupported` cannot see attribution, so the
+next summary experiment has a target: entry-scoped figures in the summary, which
+§10 gave experience bullets and project blurbs and §12 left undone here.
