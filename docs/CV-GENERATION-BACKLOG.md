@@ -18,7 +18,7 @@ and one item below was already closed there.
 | 7 | grade-ordered evidence | summary | one 32-offer arm |
 | 8 | curated synonym alignment | ATS | offline, then one arm |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
-| 10 | generic proper-noun detector | fabrication | offline against 32 shipped |
+| 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
 | 12 | regenerate 240–243 | hygiene | ~20 min of machine time |
 
@@ -227,7 +227,36 @@ see the ledger. Also measured and **rejected as marginal**: bare `Express` /
 128, and the bare forms of `Next.js` and `.NET` collide with ordinary English
 ("next steps", "net salary"), so an alias rule would invent more than it fixes.
 
-## 10. A generic proper-noun fabrication detector
+## 10. Generic proper-noun detector — CLOSED, measured against the arm that fabricated
+
+Run as proposed — "a capitalised token appearing in neither `cv.md` nor the
+posting" — over the pre-guard summaries of `sum-new`, the arm that fabricated on
+8 of 32 offers, and of `sum-v4`:
+
+| | `sum-new` | `sum-v4` |
+|---|---|---|
+| caught by `summaryUnsupported` only | **9** | 1 |
+| caught by both | 1 | 0 |
+| caught by the generic rule only | 5 | 2 |
+| …of those, real fabrications | **0** | **0** |
+
+Every generic-only hit is a compound or hyphenated form of a term `cv.md`
+genuinely claims: `C#-Python`, `React-based`, `Rust-based`, `Kafka-based`,
+`P2P`, `Python-based`, `Kafka/RabbitMQ`. A 16% false-positive rate on `sum-new`
+for nothing.
+
+**And it cannot catch the miss that motivated it.** §12's example is `sum-v4`
+claiming *"clinical AI agents"* on a clinical-AI posting. The rule keys on
+capitalisation; "clinical" is lowercase. The one documented gap in the hand
+lists is invisible to the proposed replacement for them.
+
+Fixing the false positives means morphological normalisation — splitting
+hyphens, stripping `-based`, matching compounds — which is real code for a
+measured yield of zero. The hand-maintained lists stay. Their weakness is real
+and this is not the fix for it; a lowercase-domain rule would be, and that is
+what `NAMED_DOMAINS` already is.
+
+### The original proposal, for the record
 
 `NAMED_DOMAINS` and `CASED_PRODUCTS` are hand-maintained word lists, and every
 entry in them was added *after* a fabrication got through. The clinical-AI miss
