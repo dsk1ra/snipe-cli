@@ -26,6 +26,13 @@
  *                   is how many offers could answer at all        want 0
  *   example_copy    offers copying an 8-gram from the prompt's
  *                   own worked example                             want 0
+ *   summary_shape   shape defects per summary, and the fraction of
+ *      _defects     offers carrying any. The only metric here that
+ *      _pct         is not about falsity: a summary can be entirely
+ *                   true and still ship as a 75-word run-on or a
+ *                   list of bullets with the bullets removed, and
+ *                   every other metric scores those clean. See
+ *                   `summaryShape`                                 want 0
  *   grounding       mean token overlap of each output bullet with
  *                   the best-matching cv.md bullet for that role   higher
  *   num_retention   figures in that source bullet that survived
@@ -54,11 +61,12 @@ import { tmpdir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
-import { parseCvSections, parseEntries, entryCompany, extractBlockBRequirements,
-         stripUnsupportedTenure, verifySummaryFigures } from './cv-select.mjs';
+import { parseCvSections, parseEntries, entryCompany,
+         extractBlockBRequirements } from './cv-select.mjs';
 import { embed, cosine } from './embeddings.mjs';
-import { productFab, credentialFab } from './summary-stage.mjs';
-import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
+import { summaryUnsupported as summaryFab, productFab,
+         summaryShape, figureAttribution } from './summary-stage.mjs';
+import { parseSkillCategories, normPhrase, skillForms } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
@@ -79,15 +87,13 @@ import { loadLabels, scoreOffer } from './opus-metrics.mjs';
  * @param {string} cvText
  * @returns {string[]}
  */
-export function summaryFab(summary, cvText) {
-  if (typeof summary !== 'string' || !summary) return [];
-  const out = [];
-  if (stripUnsupportedTenure(summary, cvText) !== summary) out.push('tenure');
-  if (verifySummaryFigures(summary, cvText) !== summary) out.push('figure');
-  if (credentialFab(summary, cvText).length) out.push('credential');
-  if (productFab(summary, cvText).length) out.push('product');
-  return out;
-}
+// Re-exported rather than reimplemented. This function used to have its own copy
+// of the kind list, and the copy drifted: it grew `tenure` and `figure` while the
+// generation gate in summary-stage.mjs kept checking only products. The stage
+// therefore believed it had rejected every fabrication while eight of 32 offers
+// shipped one. The gate and the metric now cannot disagree, because they are the
+// same function.
+export { summaryFab };
 
 const readSafe = (p) => { try { return p && existsSync(p) ? readFileSync(p, 'utf8') : ''; } catch { return ''; } };
 
@@ -180,7 +186,21 @@ function headSha() {
   } catch { return ''; }
 }
 
-function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
+/**
+ * Repo-relative paths that differ between two commits.
+ *
+ * Returns `['<unknown>']` when git cannot answer, so a failure to check reads as
+ * "something changed" rather than as "nothing did" — the safe direction for a
+ * guard whose job is refusing to score.
+ */
+function changedFiles(a, b) {
+  try {
+    return execFileSync('git', ['diff', '--name-only', a, b], { cwd: PROJECT, encoding: 'utf8' })
+      .split('\n').map(s => s.trim()).filter(Boolean);
+  } catch { return ['<unknown>']; }
+}
+
+function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', summaryModel = 'snipe-eval', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
   // two limited runs stay paired. A limited run is only comparable to another
@@ -214,7 +234,7 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
         '--id', s.id, '--report-path', resolve(PROJECT, s.report), '--report-num', s.reportNum,
         '--jd-file', resolve(PROJECT, s.jd), '--eval-score', String(s.score),
         '--company', s.company, '--role', s.role, '--date', '2026-01-01',
-        '--model', model, '--ollama-url', ollamaUrl,
+        '--model', model, '--summary-model', summaryModel, '--ollama-url', ollamaUrl,
         '--threshold', '0', '--temperature', String(temperature), '--bench-dir', dir,
         '--writer', writer,
       ], { stdio: ['ignore', 'pipe', 'pipe'], cwd: PROJECT, timeout: 900_000 });
@@ -229,17 +249,32 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   const flags = Object.fromEntries(Object.entries(process.env)
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
   const sha1 = headSha();
-  const split = !!(sha0 && sha1 && sha0 !== sha1);
-  const meta = { label, temperature, model, writer, sample: samplePath, n: sample.length,
+  // A moved HEAD is the symptom; the question is whether any offer ran different
+  // code. `docs/` is the one tree the pipeline never reads — the repo's own data
+  // contract makes it documentation, and nothing there is imported or prompted
+  // from. Everything else counts, and `batch/*.md` counts loudly: the Phase 2 and
+  // Phase 3 prompts live there, so "it was only markdown" is not the test.
+  //
+  // Narrowing this rather than widening it: a docs-only commit mid-run made the
+  // guard reject a run in which all 32 offers demonstrably ran identical code,
+  // and a rule that cries wolf is a rule someone eventually overrides by hand.
+  const changed = sha0 && sha1 && sha0 !== sha1 ? changedFiles(sha0, sha1) : [];
+  const split = changed.length > 0 && !changed.every(f => f.startsWith('docs/'));
+  const meta = { label, temperature, model, summaryModel, writer, sample: samplePath, n: sample.length,
                  limit: limit || null, ok, failed, skipped: resume ? skipped : null,
                  commit: sha0, commit_end: sha1,
                  // Loud, and in the artifact rather than only on a terminal
                  // nobody was watching: a split run's mean is of neither version.
                  split_run: split || null,
+                 // Kept even when the run is clean: "HEAD moved and here is
+                 // exactly what moved" is the evidence for scoring it anyway,
+                 // and a later reader should not have to take that on trust.
+                 changed_files: changed.length ? changed : null,
                  flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   if (split) {
     process.stderr.write(`\n*** HEAD MOVED DURING THIS RUN: ${sha0.slice(0, 8)} -> ${sha1.slice(0, 8)}\n`
+      + `*** changed: ${changed.slice(0, 8).join(', ')}${changed.length > 8 ? ` (+${changed.length - 8} more)` : ''}\n`
       + `*** local-pdf-offer.mjs re-imports per offer, so offers before and after ran\n`
       + `*** different code. This run is a mongrel — do not score it. (rule 4)\n\n`);
   }
@@ -415,8 +450,14 @@ export function skillCoverage(jdText, cvText, outputText) {
   const norm = normPhrase;
   const items = [...new Set(parseSkillCategories(cvText).flatMap(c => c.items))];
   const jd = norm(jdText), out = norm(outputText);
-  const asked = items.filter(s => jd.includes(norm(s)));
-  const missed = asked.filter(s => !out.includes(norm(s)));
+  // Matched through `skillForms`, so an item the CV writes as a list of
+  // alternatives is asked when the posting names any one of them. Scoring the
+  // CV's exact string instead did not count those postings as misses — it
+  // dropped them from the denominator entirely, which is why this read 1.000
+  // over 3.5 skills a posting while 31 postings named TypeScript against a CV
+  // that writes "TypeScript / JavaScript".
+  const asked = items.filter(s => skillForms(s).some(f => jd.includes(norm(f))));
+  const missed = asked.filter(s => !skillForms(s).some(f => out.includes(norm(f))));
   return {
     coverage: asked.length ? (asked.length - missed.length) / asked.length : null,
     asked: asked.length,
@@ -529,6 +570,26 @@ function metricsFor(label, paths = {}) {
       (c.skills || []).map(s => `${s.category || ''} ${s.items || ''}`).join(' '),
       exp.map(e => (e.bullets || []).join(' ')).join(' '),
     ].join('\n');
+    // How the page's evidence budget was split between the two sections that
+    // compete for it. The imbalance the experience floor was built to fix was
+    // invisible to every metric in this file — nine project bullets over two
+    // one-line employers scores full marks on all of them, which is standing
+    // rule 9's question asked of the sections rather than of an empty output.
+    // `mean_bullets` counts the page; it cannot say who holds it.
+    //
+    // Two numbers, because the obvious one alone does not work. `section_balance`
+    // catches the catastrophic shape and misses the real one: across the floor arm
+    // it moved 0.354 → 0.387, which reads as noise. What actually moved is the
+    // starvation count — offers with every employer at a single bullet went
+    // 7/32 → 0/32, and that had to be counted by hand off rendered PDFs because
+    // nothing here could see it (ledger §13).
+    //
+    // Scored off cv-content.json like everything else, which for a bench arm IS
+    // the rendered document: local-pdf-offer.mjs exits before the density ladder
+    // under --bench-dir, so no post-ladder page exists to disagree with it.
+    const expB = exp.reduce((a, e) => a + (e.bullets || []).length, 0);
+    const projB = (c.projects || []).reduce((a, p) => a + (p.bullets || []).length, 0);
+    const starved = exp.filter(e => (e.bullets || []).length <= 1).length;
     const jdText = readSafe(join(dir, d, 'job-description.txt'));
     const fabProducts = productFab(outputText, cvText);
     const ats = atsCoverage(jdText, cvText, outputText);
@@ -542,6 +603,15 @@ function metricsFor(label, paths = {}) {
       dir: d,
       role: roleById.get(d.split('_')[0]) || '',
       roles: exp.length,
+      exp_bullets: expB,
+      proj_bullets: projB,
+      section_balance: expB + projB ? expB / (expB + projB) : null,
+      exp_starved: starved,
+      // null, not 0, when there is no Experience section at all. "every entry is
+      // at the floor" is not satisfied by having no entries, and a 0 would put
+      // that case at the healthy end of the scale. `role_retention` is the metric
+      // that catches a vanished section; this one must not claim to.
+      all_exp_starved: exp.length ? (starved === exp.length ? 1 : 0) : null,
       products: fabProducts,
       product_fab: fabProducts.length,
       ats_coverage: ats.coverage,
@@ -557,6 +627,24 @@ function metricsFor(label, paths = {}) {
       summary_fab_raw: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).length,
       summary_fab_kinds: summaryFab(c._summary_pre_guard ?? c.summary ?? '', cvText).join('+'),
       has_pre_guard: typeof c._summary_pre_guard === 'string',
+      // Shape, on the same shipped/raw split as fabrication and for the same
+      // reason (rule 5): nothing repairs shape today, so the two agree — but the
+      // guard that will is the point of measuring this, and a shipped-only
+      // metric would read 0 the moment it lands.
+      summary_shape: summaryShape(c.summary || '').length,
+      summary_shape_raw: summaryShape(c._summary_pre_guard ?? c.summary ?? '').length,
+      summary_shape_kinds: summaryShape(c._summary_pre_guard ?? c.summary ?? '').join('+'),
+      // Figures the summary hands to the wrong entry. Distinct from
+      // `summary_fab`, which asks whether a number is real; this asks whether it
+      // is *theirs*. Both figures in "a privacy-preserving peer-to-peer system
+      // with 85%+ test coverage and 99.9% uptime" are real and neither is
+      // Re:Link's. Ledger §10 fixed this for bullets and project blurbs by
+      // scoping the allow-set to the claiming entry; the summary was the surface
+      // that fix never reached.
+      summary_attrib: figureAttribution(c.summary || '', cvText).length,
+      summary_attrib_raw: figureAttribution(c._summary_pre_guard ?? c.summary ?? '', cvText).length,
+      summary_attrib_kinds: figureAttribution(c._summary_pre_guard ?? c.summary ?? '', cvText)
+        .map(x => x.figure).join('+'),
       reqs,
       // Structured, not just folded into outputText: the label metrics have to
       // ask which project blurb an atom survived into, not merely whether its
@@ -574,6 +662,14 @@ function metricsFor(label, paths = {}) {
       fabList: [...new Set(fabNums)],
       copied,
       grounding: groundN ? groundSum / groundN : 0,
+      // `mean_bullets` once averaged — and it counts **matched experience bullets
+      // only**, because it is grounding's denominator rather than a page census.
+      // The name says otherwise and the ledgers have read it as the page: Experiment
+      // A's "mean_bullets identical to three decimals, so this is redistribution
+      // not a bigger page" was quoted about an allocation change to *project*
+      // bullets, which this number cannot see. The conclusion survived — measured
+      // now, `proj_bullets` is 8.00 in both arms — but the evidence did not support
+      // it. Use `exp_bullets` + `proj_bullets` for anything about page size.
       bullets: groundN,
       // ponytail: a CV whose source bullets carry no figures scores 1 — nothing
       // to lose. num_lost is the absolute counterpart, immune to that.
@@ -615,12 +711,32 @@ function metricsFor(label, paths = {}) {
     // Runs predating _summary_pre_guard cannot answer the raw question; say so
     // rather than letting a 0 read as good news.
     summary_fab_raw_n: rows.filter(r => r.has_pre_guard).length,
+    // Shape defects per offer, and how many offers carry any. The mean is the
+    // one to move: an offer can fail on run_on and off_band at once, and fixing
+    // only the band would leave `_pct` flat while the summary is still a
+    // run-on.
+    summary_shape_defects: +mean('summary_shape_raw').toFixed(3),
+    summary_shape_pct: +(rows.filter(r => r.summary_shape_raw > 0).length / n).toFixed(3),
+    // Leaked past the guards, once there are any. Non-zero is a guard
+    // regression, exactly as with summary_fab_pct.
+    summary_shape_shipped_pct: +(rows.filter(r => r.summary_shape > 0).length / n).toFixed(3),
+    summary_attrib_figures: +mean('summary_attrib_raw').toFixed(3),
+    summary_attrib_pct: +(rows.filter(r => r.summary_attrib_raw > 0).length / n).toFixed(3),
+    summary_attrib_shipped_pct: +(rows.filter(r => r.summary_attrib > 0).length / n).toFixed(3),
     ats_coverage: +mean('ats_coverage').toFixed(3),
     // The one to target. See `skillCoverage` for why `ats_coverage` is not.
     skill_coverage: meanOf('skill_coverage') === null ? null : +meanOf('skill_coverage').toFixed(3),
     skill_coverage_n: rows.filter(r => typeof r.skill_coverage === 'number').length,
     skills_asked: +mean('skills_asked').toFixed(1),
     mean_bullets: +mean('bullets').toFixed(2),
+    exp_bullets: +mean('exp_bullets').toFixed(2),
+    proj_bullets: +mean('proj_bullets').toFixed(2),
+    // A share, not a score — there is no correct value, and projects legitimately
+    // take more of the page. Read it as drift, and read `all_exp_starved_pct` as
+    // the gate.
+    section_balance: meanOf('section_balance') === null ? null : +meanOf('section_balance').toFixed(3),
+    exp_starved: +mean('exp_starved').toFixed(2),
+    all_exp_starved_pct: meanOf('all_exp_starved') === null ? null : +meanOf('all_exp_starved').toFixed(3),
     rows,
   };
 }
@@ -924,6 +1040,7 @@ if (!isMain) {
     temperature: parseFloat(String(flag('temperature', '0'))),
     ollamaUrl: String(flag('ollama-url', 'http://localhost:11434')),
     model: String(flag('model', 'snipe-cv')),
+    summaryModel: String(flag('summary-model', 'snipe-eval')),
     limit: parseInt(String(flag('limit', '0')), 10),
     writer: String(flag('writer', 'model')),
     // rule 6: retrieval-bench reported a clean-looking null result for a whole
@@ -944,7 +1061,7 @@ if (!isMain) {
   // Pages first: during the one-page work it is the gate, and a row that does not
   // fit is not improved by whatever its other columns say.
   const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} bal=${r.exp_bullets}/${r.proj_bullets}${r.all_exp_starved ? '!' : ''} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'} attrib=${r.summary_attrib_kinds || '-'}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -976,6 +1093,11 @@ if (!isMain) {
     ['metric_fab', 'fab'], ['product_fab', 'product_fab'],
     ['summary_cv_fit', 'summary_cv_fit'], ['summary_jd_fit', 'summary_jd_fit'],
     ['selection_regret', 'selection_regret'], ['mean_bullets', 'bullets'],
+    // Paired like everything else: a balance shift on 2 of 32 offers must not
+    // read as a win. `all_exp_starved` is 0/1 per offer, so its sign test is a
+    // paired proportion — which is exactly the 7/32 → 0/32 claim, with a p.
+    ['section_balance', 'section_balance'], ['exp_starved', 'exp_starved'],
+    ['all_exp_starved', 'all_exp_starved'],
   ];
   console.log(`paired on ${common.length} offers · ${a} → ${b}\n`);
   console.log(`${'metric'.padEnd(24)}${a.padEnd(10)}${b.padEnd(10)}${'delta'.padEnd(9)}${'CI95'.padEnd(20)}w-l    p`);
@@ -1020,7 +1142,10 @@ if (!isMain) {
                 'example_copy_pct', 'grounding', 'num_retention', 'num_lost',
                 'product_fab', 'product_fab_pct', 'skill_coverage', 'skills_asked', 'ats_coverage',
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
+                'summary_attrib_pct', 'summary_attrib_shipped_pct',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
+                'exp_bullets', 'proj_bullets', 'section_balance', 'exp_starved',
+                'all_exp_starved_pct',
                 'labelled_n', 'differentiator_coverage', 'differentiators_lost',
                 'noise_rate', 'grade_yield', 'mean_grade'];
   const pad = (s, w) => String(s).padEnd(w);
@@ -1032,7 +1157,7 @@ if (!isMain) {
     console.log(`${pad(k, 18)}${pad(A[k], w)}${pad(B[k], w)}${d}`);
   }
 } else {
-  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
+  console.log('usage: sample --n 24 | run <label> [--temperature 0] [--model M] [--summary-model M] [--limit N] [--resume] | metrics <label> [--rows] [--no-embed] [--no-pages] | compare <a> <b> [--no-embed]');
 }
 
 export { buildSample, cvExperience, metricsFor, numsOf, shingles, exampleShingles, withEmbedMetrics, allMetrics };

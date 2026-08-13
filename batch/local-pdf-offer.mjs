@@ -10,6 +10,7 @@
  *   node batch/local-pdf-offer.mjs --id N --url URL --report-path PATH
  *     --report-num NNN --jd-file PATH --eval-score X.X --company CO
  *     --role ROLE --date YYYY-MM-DD [--model snipe-screen]
+ *     [--summary-model snipe-eval]
  *     [--ollama-url http://localhost:11434] [--threshold 3.7] [--num-ctx 16384]
  */
 
@@ -25,7 +26,8 @@ import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChr
          verifySummaryFigures } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
 import { generateSummary, selectedBullets, stripFabricatedProducts,
-         stripFabricatedCredentials, stripJdProperNouns,
+         stripFabricatedCredentials, stripFabricatedDomains,
+         stripMisattributedFigures, stripJdProperNouns,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 import { verbatimContent } from './cv-writers.mjs';
 import { createHash } from 'crypto';
@@ -51,6 +53,24 @@ function parseArgs(argv) {
     id: null, url: null, reportPath: null, reportNum: null, jdFile: null,
     evalScore: null, company: null, role: null, date: null, p1Score: null,
     p1Archetype: null, model: 'snipe-screen',
+    // The summary is the one piece of real prose Phase 3 still generates, and it
+    // has to read the posting's requirements to be worth generating at all — a
+    // job the 7B could not do without parroting them. It runs on the eval model
+    // by default, which under `--writer verbatim` also *saves* a model load:
+    // the 7B's only remaining call was this one, so the 30B is already resident
+    // from the bullet judge and never gets swapped out for it.
+    summaryModel: 'snipe-eval',
+    // Greedy, and deliberately not `temperature`. Production runs the tailor call
+    // at 0.15, and three consecutive runs of offer 305 at that temperature
+    // produced three unrelated summaries — an achievement list, a 75-word run-on,
+    // and a "proven track record" opener. Sampling buys diversity, and there is
+    // nothing to be diverse about: one summary is written, kept or rejected, and
+    // never compared against its own alternate takes. Greedy decoding makes the
+    // same CV and the same posting produce the same summary every time.
+    //
+    // Not visible in the benchmark, which already runs every arm at 0 — this is a
+    // determinism choice for the production path, not a measured quality claim.
+    summaryTemperature: 0,
     ollamaUrl: 'http://localhost:11434', threshold: 3.7, numCtx: 8192,
     // Benchmarking only. --bench-dir redirects the output folder and stops
     // before PDF generation (the model's work is done once cv-content.json is
@@ -78,6 +98,8 @@ function parseArgs(argv) {
       case '--p1-score':     a.p1Score      = argv[++i]; break;
       case '--p1-archetype': a.p1Archetype  = argv[++i]; break;
       case '--model':        a.model        = argv[++i]; break;
+      case '--summary-model': a.summaryModel = argv[++i]; break;
+      case '--summary-temperature': a.summaryTemperature = parseFloat(argv[++i]); break;
       case '--ollama-url':   a.ollamaUrl    = argv[++i]; break;
       case '--threshold':    a.threshold    = parseFloat(argv[++i]); break;
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
@@ -633,6 +655,8 @@ if (!cached) try {
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
       maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
+      // 0 restores the single pool, which is the pre-cap arm's selector.
+      projMaxLines: parseInt(process.env.SNIPE_PROJ_MAX_LINES ?? '14', 10) || 0,
       projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
       maxProjects:         num('SNIPE_MAX_PROJECTS', 3) });
   storeSelection(cvForPrompt);
@@ -752,6 +776,13 @@ if (rankedModules.length) cvContent.education_modules = rankedModules;
 // the JD and the profile narrative *without ever seeing the selected bullets* —
 // structurally guaranteed to pull the summary toward the posting.
 //
+// Block B goes in alongside the evidence. That is a reversal: the requirements
+// were pulled out when the 7B copied them wholesale, and they are back because
+// the writer is now the 30B and because a summary that cannot see what the
+// posting asked for cannot be tailored to it. The evidence is still the only
+// source of fact — see SUMMARY_SYSTEM — and every grounding guard below still
+// runs on the result.
+//
 // The JSON field is still generated and still the fallback: if this call fails
 // the offer ships the old summary rather than nothing.
 try {
@@ -759,8 +790,9 @@ try {
   if (bullets.length) {
     const generated = await generateSummary({
       bullets, role: args.role, cvText, incumbent: cvContent.summary,
-      call: (sys, usr) => callOllama(args.ollamaUrl, args.model, sys, usr,
-                                     args.numCtx, null, args.temperature),
+      reqs: blockBReqs, jdText,
+      call: (sys, usr) => callOllama(args.ollamaUrl, args.summaryModel, sys, usr,
+                                     args.numCtx, null, args.summaryTemperature),
     });
     if (generated) cvContent.summary = generated;
   }
@@ -800,6 +832,14 @@ if (typeof cvContent.summary === 'string') {
   cvContent.summary = verifySummaryFigures(cvContent.summary, cvText);
   cvContent.summary = stripFabricatedCredentials(cvContent.summary, cvText);
   cvContent.summary = stripFabricatedProducts(cvContent.summary, cvText);
+  // Sibling of the two above, and the one benchmark rule 7 predicted would be
+  // needed: a domain the posting supplies and cv.md never claims. It runs here as
+  // well as inside generateSummary for the same reason the product strip does —
+  // when the stage throws, the JSON summary ships down this path instead.
+  cvContent.summary = stripFabricatedDomains(cvContent.summary, cvText);
+  // Ledger §10's entry-scoped rule, on the surface it never reached: a figure
+  // that is real, and belongs to a different entry than the clause names.
+  cvContent.summary = stripMisattributedFigures(cvContent.summary, cvText);
   // The general case of the company-name strip below: any name the posting
   // supplies and cv.md does not. The `--company` comparison alone missed a
   // summary claiming work "for Joybuy Systems" on a JD.com posting.

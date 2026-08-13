@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { stackMismatchCap, languageMismatchCap } from './fit-rules.mjs';
+import { stackMismatchCap, languageMismatchCap, locationMismatchCap } from './fit-rules.mjs';
 import { cleanCvForPrompt, cleanJd, extractSalary, parseCompTargets, compScoreFromSalary } from './text-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -478,6 +478,15 @@ async function main() {
   if (langCap.missing && cvDim !== null && nsDim !== null) {
     cvDim = Math.min(cvDim, langCap.cvCap);
     nsDim = Math.min(nsDim, langCap.nsCap);
+  }
+
+  // Code-enforced LOCATION CAP, same shape: office attendance somewhere the
+  // profile will not commute to. Kept in step with the staged evaluator so the
+  // `--classic-eval` control differs only in how it prompts, not in what it gates.
+  const locCap = locationMismatchCap(jd, config);
+  if (locCap.city && cvDim !== null && nsDim !== null) {
+    cvDim = Math.min(cvDim, locCap.cvCap);
+    nsDim = Math.min(nsDim, locCap.nsCap);
   }
 
   // Authoritative score computed IN CODE from the (capped) integer dimensions.

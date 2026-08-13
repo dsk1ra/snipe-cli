@@ -18,7 +18,8 @@
  */
 
 import { parseCvSections, parseEntries, revertUnsupportedBullets,
-         stripUnsupportedClauses } from './cv-select.mjs';
+         stripUnsupportedClauses, stripUnsupportedTenure,
+         verifySummaryFigures } from './cv-select.mjs';
 
 // ── Named-product vocabulary ──────────────────────────────────────────────────
 /**
@@ -114,6 +115,141 @@ export const NAMED_CREDENTIALS = [
 ];
 
 /**
+ * Industries and domains that have to be grounded in `cv.md`.
+ *
+ * Third detector on the same contract as NAMED_PRODUCTS and NAMED_CREDENTIALS: a
+ * missing entry understates the count, it never invents one. This one closes the
+ * gap benchmark rule 7 names outright — *"`product_fab` does not know a domain
+ * ('HFT', 'financial markets') from a product"* — which stayed open for as long as
+ * the summary never saw the posting, and opened the moment it did. Measured:
+ * feeding Block B to the 30B produced "Python Software Engineer with deep
+ * expertise in **financial services** IT systems" on a JPMorganChase posting
+ * against a CV whose text contains "financial" zero times. Every existing guard
+ * passed it — `productFab` because a domain is not a product, `stripJdProperNouns`
+ * because the phrase is lowercase and it only tests capitalised words.
+ *
+ * A domain is the most dangerous thing to fabricate after a credential: it is the
+ * first filter a recruiter applies and the first question an interviewer asks.
+ */
+export const NAMED_DOMAINS = [
+  // finance
+  'financial services', 'financial technology', 'financial markets', 'fintech',
+  'banking', 'investment banking', 'capital markets', 'hedge fund',
+  'high-frequency trading', 'hft', 'algorithmic trading', 'trading systems',
+  'payments industry', 'insurance', 'insurtech', 'wealth management',
+  'asset management', 'regtech',
+  // health & life sciences
+  'healthcare', 'health tech', 'healthtech', 'medtech', 'medical devices',
+  'pharmaceutical', 'biotech', 'clinical trials', 'life sciences',
+  // Bare forms. `clinical trials` did not catch "building and improving clinical
+  // AI agents" on a clinical-AI posting — the qualifier the list happened to
+  // carry was doing the work, not the domain word.
+  'clinical', 'medical', 'financial', 'pharma',
+  // commerce & marketing
+  'e-commerce', 'ecommerce', 'retail industry', 'adtech', 'ad tech',
+  'advertising technology', 'martech', 'digital marketing',
+  // other verticals
+  'telecommunications', 'telecom', 'igaming', 'gambling', 'gaming industry',
+  'logistics', 'supply chain', 'automotive', 'aerospace', 'defence sector',
+  'defense sector', 'energy sector', 'oil and gas', 'real estate', 'proptech',
+  'edtech', 'govtech', 'public sector', 'legal tech', 'legaltech', 'hr tech',
+  'travel industry', 'hospitality', 'media and entertainment',
+];
+
+/**
+ * Products whose names are too short for `phraseSpace` to match safely, or common
+ * enough as English words that a lowercase match would fire constantly.
+ *
+ * "Go" is the motivating case: it shipped in "Demonstrated ability to deliver
+ * production systems in **Go** and Rust" against a CV that names Go nowhere.
+ * `stripJdProperNouns` could not see it — that function skips any word under
+ * three characters (`w.length < 3`), the same 3-character floor that
+ * `batch/CLAUDE.md` already records silently zeroing `C#` and `CI/CD` in
+ * `tokenize`. Lowering that floor globally is not the fix: it would start testing
+ * "IT", "UK" and "AI" and delete whole sentences over them.
+ *
+ * Case is the discriminator instead. The language is always written "Go"; the verb
+ * is written "go". So these are matched against the original-case text, never the
+ * normalised one, which is why they cannot live in NAMED_PRODUCTS.
+ */
+export const CASED_PRODUCTS = ['Go', 'Rust', 'Nim', 'Zig'];
+
+/** Cased short names the text claims that `cv.md` never mentions. */
+export function casedFab(text, cvText) {
+  const has = (hay, w) => new RegExp(`\\b${w}\\b`).test(hay);
+  return CASED_PRODUCTS.filter(p => has(String(text || ''), p) && !has(String(cvText || ''), p));
+}
+
+/**
+ * Domains the text claims that `cv.md` never mentions.
+ * @param {string} text
+ * @param {string} cvText
+ * @returns {string[]}
+ */
+export function domainFab(text, cvText) {
+  const out = phraseSpace(text);
+  const cv = phraseSpace(cvText);
+  return NAMED_DOMAINS.filter(p => hasPhrase(out, p) && !hasPhrase(cv, p));
+}
+
+/**
+ * Every way a summary can claim something `cv.md` does not support, named.
+ * Empty array means the summary is grounded.
+ *
+ * **This is deliberately one function serving two callers**: the harness metric
+ * `summary_fab` and the generation gate in `generateSummary`. They were separate,
+ * and the harness's copy grew two detectors the gate never got. A gate that is
+ * looser than the metric measuring it produces exactly the result seen here —
+ * eight fabricating offers shipped while the stage believed it had rejected
+ * everything. Same anti-drift reason `normPhrase` is shared with the harness
+ * rather than reimplemented (see batch/CLAUDE.md, the `Next.js` bug).
+ *
+ * The six kinds and what each caught in the wild:
+ *
+ *   tenure         "over a decade of experience" on a graduate CV.
+ *   figure         a number the CV does not state — including a *derived* one.
+ *                  Observed: "reduced configuration time by 87.5%" where cv.md
+ *                  says 90%, and "improved accuracy by 14.1%" computed from
+ *                  0.815 → 0.930. Invented precision reads as more credible than
+ *                  the truth, which is what makes it worth rejecting.
+ *   credential     "Russell Group graduate" at a post-1992 institution.
+ *   product        a named technology absent from the CV.
+ *   domain         an industry absent from the CV — "financial services".
+ *   cased_product  a short name the proper-noun guard's 3-char floor cannot see.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {string[]}
+ */
+export function summaryUnsupported(summary, cvText) {
+  if (typeof summary !== 'string' || !summary) return [];
+  const out = [];
+  if (stripUnsupportedTenure(summary, cvText) !== summary) out.push('tenure');
+  if (verifySummaryFigures(summary, cvText) !== summary) out.push('figure');
+  if (credentialFab(summary, cvText).length) out.push('credential');
+  if (productFab(summary, cvText).length) out.push('product');
+  if (domainFab(summary, cvText).length) out.push('domain');
+  if (casedFab(summary, cvText).length) out.push('cased_product');
+  return out;
+}
+
+/**
+ * Drop the clauses that credit an entry with another entry's figure.
+ *
+ * Ledger §10's repair, applied to the surface it never reached. Clause surgery
+ * rather than revert, for §10's own reason: a summary is synthesised from several
+ * source bullets and has no single line to revert to.
+ */
+export function stripMisattributedFigures(text, cvText) {
+  return stripUnsupportedClauses(text, t => figureAttribution(t, cvText).length > 0);
+}
+
+/** Drop the clauses claiming a domain `cv.md` never mentions. */
+export function stripFabricatedDomains(text, cvText) {
+  return stripUnsupportedClauses(text, t => domainFab(t, cvText).length > 0);
+}
+
+/**
  * Credentials the text claims that `cv.md` never mentions.
  * @param {string} text
  * @param {string} cvText
@@ -184,6 +320,164 @@ export function verifyBulletProducts(items, cvText) {
   return revertUnsupportedBullets(items, cvText, b => productFab(b, cvText).length > 0);
 }
 
+// ── Figure attribution ────────────────────────────────────────────────────────
+
+/**
+ * Every Experience/Projects entry in `cv.md`, with the full text that entry owns.
+ *
+ * The head is included for the same reason `verifyBulletNumbers` includes it
+ * (ledger §10): the dates and tech-stack line carry figures a claim about that
+ * entry may legitimately cite.
+ *
+ * `head` is kept separate from `text` because the two answer different questions.
+ * The head is the entry's *identity* — its title, badge and tech line, the things
+ * a summary uses to say which system it is talking about. The bullets are its
+ * *claims*. Naming is read off the head alone; ownership is checked against
+ * everything.
+ *
+ * @param {string} cvText
+ * @returns {{name: string, head: string, text: string}[]}
+ */
+export function cvEntries(cvText) {
+  const out = [];
+  try {
+    for (const sec of parseCvSections(cvText)) {
+      if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
+      for (const e of parseEntries(sec.lines).entries) {
+        out.push({ name: e.head[0].replace(/^###\s+/, '').trim(),
+                   head: e.head.join(' '),
+                   text: [...e.head, ...e.bullets].join(' ') });
+      }
+    }
+  } catch { /* odd CV shape — caller degrades to no attribution */ }
+  return out;
+}
+
+const NGRAM_STOP = new Set(['with', 'that', 'this', 'from', 'into', 'across', 'over',
+  'through', 'their', 'which', 'while', 'been', 'were', 'have', 'they', 'them',
+  'more', 'than', 'also', 'each', 'both', 'such', 'used', 'using', 'built',
+  'built-in', 'other', 'when', 'where', 'what', 'will', 'would', 'could']);
+
+const wordsOf = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9+#.-]+/g, ' ').split(/\s+/).filter(Boolean);
+
+/**
+ * Phrases that identify exactly one entry — derived, never hand-listed.
+ *
+ * A 2- or 3-word phrase occurring in one entry's text and no other's names that
+ * entry. Nothing is curated: "privacy-preserving peer-to-peer" points at Re:Link
+ * and "membership platform" at UBWIS because of what `cv.md` says, so editing
+ * `cv.md` re-derives the index instead of invalidating a list someone has to
+ * remember to update. A phrase shared by two entries identifies neither, which is
+ * the conservative direction — it can only *miss* an attribution, never invent one.
+ *
+ * Read off the **head only**, never the bullets. Built over bullet text instead,
+ * any sentence reusing a bullet's wording counts as naming its entry — which is
+ * most summaries, since the evidence is where their vocabulary comes from. The
+ * shipped Sophos error demonstrates the failure exactly: "a privacy-preserving
+ * peer-to-peer system with 85%+ test coverage" names Re:Link by title *and*
+ * UBWIS by echoing "test coverage", and any-match then declares the figure
+ * correctly attributed. Titles identify; bullets only repeat.
+ *
+ * Two content tokens minimum, or common connective runs ("a week", "for the")
+ * would name an entry by accident.
+ *
+ * @param {{name: string, head: string, text: string}[]} entries
+ * @returns {Map<string, string>} phrase → the single entry name that owns it
+ */
+export function namingPhrases(entries) {
+  const seen = new Map();                       // phrase → Set(entry name)
+  for (const e of entries) {
+    const w = wordsOf(e.head);
+    for (let n = 2; n <= 3; n++) {
+      for (let i = 0; i + n <= w.length; i++) {
+        const parts = w.slice(i, i + n);
+        if (parts.filter(x => x.length >= 4 && !NGRAM_STOP.has(x)).length < 2) continue;
+        const p = parts.join(' ');
+        if (!seen.has(p)) seen.set(p, new Set());
+        seen.get(p).add(e.name);
+      }
+    }
+  }
+  const out = new Map();
+  for (const [p, owners] of seen) if (owners.size === 1) out.set(p, [...owners][0]);
+  return out;
+}
+
+// Figures worth attributing: percentages, latencies, magnitudes, counts, and the
+// bare decimals this CV states accuracies as (0.815, 0.930). Deliberately not
+// bare integers or years — "4 weeks" is attributable, "2026" is not.
+const ATTRIB_FIG = new RegExp([
+  '\\d[\\d,]*(?:\\.\\d+)?%\\+?',
+  '\\d[\\d,]*(?:\\.\\d+)?\\s?(?:ms|s|x|×|GB|MB|TB|KB|bn)\\b\\+?',
+  '(?<![A-Za-z])\\d[\\d,]*(?:\\.\\d+)?[kKMB]\\+?(?![a-zA-Z])',
+  '\\d[\\d,]*\\+',
+  '\\d{1,3}(?:,\\d{3})+',
+  '\\b0\\.\\d{2,3}\\b',
+].join('|'), 'g');
+
+/**
+ * Figures the summary attaches to an entry that does not own them.
+ *
+ * The defect this measures, from a shipped Sophos summary: *"Delivered a
+ * privacy-preserving peer-to-peer system with 85%+ test coverage and maintained
+ * 99.9% uptime"*. Both figures are real and both belong to UBWIS; the sentence
+ * hands them to Re:Link. Every existing guard passes it, because
+ * `verifySummaryFigures` asks whether a number appears **anywhere** in `cv.md` —
+ * the CV-global allow-set that ledger §10 replaced for bullets and project blurbs
+ * and never reached the summary.
+ *
+ * **Only sentences that actually name an entry are judged.** "Delivered a
+ * production system with 99.9% uptime" asserts no owner, so it cannot have the
+ * owner wrong; flagging it would be measuring vagueness, not falsity. That keeps
+ * this a falsity metric and keeps it from firing on the many true summaries that
+ * simply do not name their systems.
+ *
+ * Figures absent from `cv.md` entirely are not attribution errors — they are
+ * fabrications, and `summaryUnsupported` already counts them. Counting them here
+ * too would double-charge one defect across two metrics.
+ *
+ * @param {string} summary
+ * @param {string} cvText
+ * @returns {{figure: string, named: string, owners: string[]}[]}
+ */
+export function figureAttribution(summary, cvText) {
+  const s = String(summary || '').trim();
+  const entries = cvEntries(cvText);
+  if (!s || entries.length < 2) return [];
+  const phrases = namingPhrases(entries);
+  const byName = new Map(entries.map(e => [e.name, e.text]));
+  const out = [];
+
+  // Clause, not sentence. A summary routinely reports two entries in one
+  // sentence, each correctly: "Achieved sub-500ms dashboard load times through
+  // cache warming, and improved job-application pipeline accuracy from 0.815 to
+  // 0.930" names Snipe and carries Zero Trust's latency, and both halves are
+  // true. Judged whole, the sentence reads as Snipe claiming 500ms. Splitting on
+  // the comma is the same granularity `stripUnsupportedClauses` repairs at, and
+  // it errs toward silence: a name in one clause and its figure in the next is
+  // missed rather than invented.
+  for (const clause of s.split(/(?<=[.!?])\s+|,\s+|;\s+/)) {
+    const figs = [...new Set(clause.match(ATTRIB_FIG) || [])];
+    if (!figs.length) continue;
+    const w = wordsOf(clause);
+    const named = new Set();
+    for (let n = 2; n <= 3; n++) {
+      for (let i = 0; i + n <= w.length; i++) {
+        const owner = phrases.get(w.slice(i, i + n).join(' '));
+        if (owner) named.add(owner);
+      }
+    }
+    if (!named.size) continue;                  // asserts no owner
+    for (const f of figs) {
+      const owners = entries.filter(e => e.text.includes(f)).map(e => e.name);
+      if (!owners.length) continue;             // not in cv.md at all → summaryUnsupported's job
+      if ([...named].some(n => byName.get(n)?.includes(f))) continue;
+      out.push({ figure: f, named: [...named].join(' + '), owners });
+    }
+  }
+  return out;
+}
+
 /**
  * Drop skill items naming a product `cv.md` never mentions.
  *
@@ -246,20 +540,70 @@ export function selectedBullets(selectedCv) {
   return out;
 }
 
+/**
+ * The template is the industry-standard one, not an invention. Every current CV
+ * guide converges on the same three moves — positioning, the skills the posting
+ * named, one quantified achievement — in 2-4 sentences and 50-80 words, with the
+ * employer's own wording for the skills the candidate genuinely has, because a
+ * keyword search and a 7-second human scan both read for exactly that.
+ *
+ * The previous prompt withheld the posting entirely, because handing a 7B the
+ * JD's vocabulary produced straight parroting ("expertise in networking, HFT and
+ * financial markets" against a CV showing none of it). That defence cost the
+ * summary its reason to exist: with no posting in view the model wrote whichever
+ * bullets it liked, and the shipped shape was three achievements with the bullet
+ * points removed — no positioning clause, redundant with the Experience section
+ * directly below it, and on offer 305 it spent 2 of its 3 sentences on a Java
+ * coursework project for a TypeScript/Node/AWS posting.
+ *
+ * So the requirements come back and the model is the 30B rather than the 7B. The
+ * anti-parroting rule is now explicit and one-directional: **the posting supplies
+ * the wording, the evidence supplies the facts**, and a requirement the evidence
+ * cannot answer is not mentioned at all. That is the honest form of keyword
+ * matching — it puts the recruiter's term on the page only where the candidate
+ * really has the thing. The grounding guards are unchanged and still run after
+ * this call, so a term the model borrows and `cv.md` cannot support is removed
+ * rather than trusted.
+ */
 const SUMMARY_SYSTEM = [
   'You write ONE professional summary for a CV. Output ONLY the summary as plain text —',
   'no JSON, no quotes, no preamble, no label.',
   '',
+  'Shape — exactly three sentences, in this order:',
+  '  1. POSITIONING. What the candidate IS: the posting\'s own job title, plus the one',
+  '     specialisation the evidence most supports. Never open this sentence with a verb.',
+  '  2. SKILLS. The two or three requirements from the posting that the evidence',
+  '     actually answers, in the posting\'s wording.',
+  '  3. PROOF. ONE achievement, from ONE entry, and SAY WHICH ENTRY. Every line of',
+  '     evidence begins with the name of the entry that owns it — use that name,',
+  '     and take the figure from that same entry\'s lines only.',
+  '',
   'Rules:',
-  '- Length: 60 to 70 words. Count them. This is mandatory. Under 60 is too short.',
+  '- Length: 50 to 70 words in total. Count them.',
   '- Implied first person: never use a name, never "he"/"she"/"they".',
-  '- EVERY claim must be traceable to a specific line of the evidence below. The',
-  '  evidence is the ONLY source of fact. You are describing this candidate, not',
-  '  the job.',
-  '- Do not state a number of years of experience. The evidence does not contain one.',
-  '- Do not name a domain or industry the evidence does not show. Do not name a',
-  '  technology, product, cloud or framework absent from the evidence. Describing',
-  '  the KIND of work ("distributed systems", "low-latency") is fine.',
+  '- The posting supplies the WORDING. The evidence supplies the FACTS. Use a',
+  '  requirement\'s exact term only where a specific line of the evidence shows that',
+  '  work. A requirement the evidence cannot answer is left out entirely — never',
+  '  claim it, never hedge it.',
+  '- Do not name an industry or domain the evidence does not show — not "financial',
+  '  services", not "healthcare", not "e-commerce", not "trading". The posting\'s',
+  '  industry is NOT the candidate\'s experience. Describing the KIND of work',
+  '  ("distributed systems", "high-volume data processing") is fine.',
+  '- Do not name a technology, product, cloud, language or framework absent from',
+  '  the evidence, however loudly the posting asks for it.',
+  '- Copy every figure EXACTLY as the evidence writes it. Never compute one,',
+  '  never round one, never re-express one: "0.930" is not "93.0%", a 90% cut is',
+  '  not "87.5%", and 0.815 to 0.930 is not "improved by 14.1%". A figure the',
+  '  evidence does not literally contain is a fabrication, even if your arithmetic',
+  '  is right.',
+  '- NEVER join two entries with "and". Each entry owns its own figures, and a',
+  '  sentence that names one entry may only carry that entry\'s numbers. WRONG:',
+  '  "Delivered a Zero Trust dashboard handling 3M+ events and 85%+ test coverage"',
+  '  — the 3M+ is the dashboard\'s, the 85%+ belongs to a different entry, and the',
+  '  sentence hands both to the dashboard. RIGHT: pick one entry and stop.',
+  '- Do not state a number of years of experience, and do not label a seniority',
+  '  level. The evidence contains neither.',
+  '- Use ONE job title. Never invent a hybrid or dual title.',
   '- Never name the target company, and never claim to have worked for them.',
   '- BE SPECIFIC. Name the actual systems, technologies and figures that appear',
   '  in the evidence. A summary that could describe any engineer is a failed',
@@ -268,31 +612,35 @@ const SUMMARY_SYSTEM = [
 ].join('\n');
 
 /**
- * The role title is the only JD-derived input, and even that is only a target.
+ * Posting first, evidence second, so the instruction to take every fact from the
+ * evidence sits next to the evidence itself.
  *
- * The Block B requirement list used to be passed here as "emphasis context",
- * and the 7B copied it wholesale — for an HFT posting it produced "expertise in
- * networking, HFT, and financial markets" and "over a decade of experience"
- * against a CV showing none of those. Handing a weak model the posting's
- * vocabulary and asking it not to use it does not work.
- *
- * The requirements are also redundant: `cv-select` has already ranked and
- * trimmed these bullets against Block B, so the JD signal is encoded in *which*
- * evidence is here. Describing the evidence faithfully is the tailoring.
+ * The requirements are capped because Block B runs to a dozen on some reports and
+ * the tail is the part a posting cares least about — the same cap `goldset.mjs`
+ * uses when it shows requirements to a human.
  *
  * @param {string[]} bullets the selected CV bullets — the ONLY source of fact
  * @param {string} role
+ * @param {string[]} reqs Block B requirements, in the posting's own wording
  */
-export function summaryUser(bullets, role) {
+export function summaryUser(bullets, role, reqs = []) {
   const ev = bullets.length ? bullets.map(b => `- ${b}`).join('\n') : '(none)';
+  const req = reqs.length
+    ? reqs.slice(0, 8).map(r => `- ${r}`).join('\n')
+    : '(none listed — describe the evidence)';
   return [
-    '## Evidence — the bullets that will appear on this CV',
+    '## What the posting asks for — use this WORDING, never as a claim',
+    '',
+    req,
+    '',
+    '## Evidence — the bullets that will appear on this CV. The only source of fact.',
+    '## Each line starts with the entry that owns it. Figures belong to that entry.',
     '',
     ev,
     '',
     `## Target role title: ${role || 'software engineering'}`,
     '',
-    'Write the 50-70 word summary now. Every claim must come from the evidence above.',
+    'Write the three-sentence, 50-70 word summary now.',
   ].join('\n');
 }
 
@@ -364,17 +712,88 @@ export function fillerCount(text) {
 }
 
 /**
+ * Verbs a CV bullet opens with. A summary whose first sentence starts here is
+ * describing an achievement, not the candidate — it is a bullet with the bullet
+ * point removed.
+ *
+ * Same contract as NAMED_PRODUCTS: a *detector*, not a generator. A verb missing
+ * from this list understates the defect rate, it never invents one. Seeded from
+ * the openers actually observed across the shipped summaries in `output/`.
+ */
+const BULLET_VERBS = [
+  'led', 'delivered', 'built', 'designed', 'developed', 'created', 'implemented',
+  'migrated', 'raised', 'automated', 'owned', 'engineered', 'found', 'executed',
+  'managed', 'conducted', 'architected', 'improved', 're-architected', 'ran',
+  'authored', 'resolved', 'diagnosed', 'applied', 'identified', 'tracked', 'won',
+];
+
+/**
+ * Shape defects in a summary, named. Empty array means the shape is sound.
+ *
+ * The eight generation metrics all measure *falsity*, and a summary can be
+ * entirely true and still be unusable: three consecutive runs of offer 305
+ * produced an achievement list, a 75-word single-sentence run-on, and an opener
+ * reading "Experienced PM/Software Engineer with a proven track record". Every
+ * falsity metric scored those identically. `summary_jd_fit` and `summary_cv_fit`
+ * are cosines against the JD and the CV — the run-on scores *well* on both,
+ * because it names every technology in the evidence.
+ *
+ * So this is the missing direction, in the same spirit as rule 9: the suite
+ * could not see a summary that was true and shapeless. It is deliberately a
+ * *shape* metric and nothing more — it cannot tell a well-chosen fact from a
+ * badly-chosen one, and a two-word summary ("Backend engineer.") clears
+ * `no_positioning` while failing `off_band`. Read it next to the falsity
+ * metrics, never instead of them.
+ *
+ *   run_on         one sentence carrying the whole summary (>40 words). This is
+ *                  also how `clampSummaryWords` gets defeated: it splits on
+ *                  sentences and always keeps the first, so a single-sentence
+ *                  75-word summary passes a hard 70-word band untouched.
+ *   filler_open    the first sentence — the only one some readers finish —
+ *                  leads on a phrase that describes nobody.
+ *   no_positioning no sentence says what the candidate *is*; every one opens
+ *                  with a bullet verb. This is the shipped 237 shape.
+ *   off_band       outside the 50-70 words the stage claims to enforce.
+ *
+ * @param {string} summary
+ * @returns {string[]}
+ */
+export function summaryShape(summary) {
+  const s = String(summary || '').trim();
+  if (!s) return ['empty'];
+  const out = [];
+  const sentences = s.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.some(x => wordCount(x) > 40)) out.push('run_on');
+  if (fillerCount(sentences[0]) > 0) out.push('filler_open');
+  const opensAsBullet = (x) =>
+    BULLET_VERBS.includes(String(x).trim().split(/\s+/)[0]?.toLowerCase().replace(/[^a-z-]/g, ''));
+  if (sentences.every(opensAsBullet)) out.push('no_positioning');
+  const w = wordCount(s);
+  if (w < 50 || w > 70) out.push('off_band');
+  return out;
+}
+
+/**
  * Deterministic quality score for one candidate summary. Higher is better.
  * Label-free: word-count distance, fabricated products, and how much of it is
  * traceable to the evidence. Non-prose scores -Infinity — see looksLikeProse.
+ *
+ * Shape is priced at 4 a defect, which is deliberately enough to cancel half the
+ * evidence-overlap term: the 75-word run-on that shipped scored *well* on
+ * overlap precisely because it named every technology in the evidence, and
+ * nothing else in this function could see it. `off_band` is dropped because
+ * `lenPenalty` already charges for length, at a rate that scales with how far
+ * out it is.
  */
 export function scoreSummary(text, { bullets, cvText }) {
   if (!text || !looksLikeProse(text)) return -Infinity;
   const w = wordCount(text);
   const lenPenalty = w < 50 ? 50 - w : w > 70 ? w - 70 : 0;
+  const shape = summaryShape(text).filter(d => d !== 'off_band');
   return -lenPenalty
-         - 5 * productFab(text, cvText).length
+         - 5 * summaryUnsupported(text, cvText).length
          - 4 * fillerCount(text)
+         - 4 * shape.length
          + 8 * evidenceOverlap(text, bullets);
 }
 
@@ -442,6 +861,13 @@ export function stripJdProperNouns(summary, cvText, jdText) {
  * The first sentence is always kept: a summary trimmed to nothing is worse than
  * one trimmed to too-long, and the caller's <50-word pad can top it back up.
  *
+ * That guarantee is also the hole. Keeping `sentences[0]` unconditionally means a
+ * summary that *is* one sentence cannot be clamped at all, which is how a 75-word
+ * run-on passed a hard 70-word band into a 2-page-capped PDF. The band is a
+ * layout requirement rather than a preference, so the fallback cuts at the word
+ * and closes the sentence. A mid-clause cut reads badly on purpose — it is the
+ * backstop for a shape the prompt is supposed to prevent, not a repair.
+ *
  * @param {string} text
  * @param {number} max
  */
@@ -453,6 +879,10 @@ export function clampSummaryWords(text, max = 70) {
   for (const next of sentences.slice(1)) {
     if (wordCount(`${out} ${next}`) > max) break;
     out += ` ${next}`;
+  }
+  if (wordCount(out) > max) {
+    out = out.trim().split(/\s+/).slice(0, max).join(' ')
+      .replace(/[.,;:!?]+$/, '') + '.';
   }
   return out.trim();
 }
@@ -468,38 +898,130 @@ export function cleanSummary(raw) {
 }
 
 /**
- * Generate the summary from the selected evidence, and return it only if it
- * beats the candidate the main JSON call already produced.
+ * Is this candidate usable as written — true, and prose?
  *
- * Best-of-N by resampling is pointless at the benchmark's temperature 0 — greedy
- * decoding is byte-identical, so N samples are one sample N times. Using the
- * JSON field as the second candidate gives a genuinely different draft for free
- * (it is already generated and paid for) and keeps the whole thing deterministic,
- * which is what makes a single-run A/B valid on this stack.
+ * Fabrication is a *rejection* criterion here rather than a score term, because
+ * the two are not interchangeable. A score lets a fabricating candidate win on
+ * strength elsewhere; five points of penalty against eight of evidence overlap is
+ * a trade, and no amount of evidence overlap makes "production systems in Go"
+ * true. So a candidate that claims anything `cv.md` cannot support is out,
+ * whatever else it does well.
+ *
+ * `stripJdProperNouns` is asked the same question even though it runs *downstream*
+ * in `local-pdf-offer.mjs`, because a candidate this gate accepts and that guard
+ * then guts is not actually usable. Measured: with the gate blind to it, 13 of 32
+ * summaries lost a sentence downstream, fell under the 50-word floor, and had the
+ * generic "Targeting … own systems end-to-end" closer appended — against 5 of 32
+ * before. That closer is true and on-brand, but it is fifteen words of prose that
+ * describes nobody in particular, and it was replacing fifteen words of evidence.
+ * Rejecting here instead hands the slot to the grounded draft, which cannot carry
+ * a name from a posting it never saw.
+ */
+function usable(text, cvText, jdText = '') {
+  return !!text
+    && looksLikeProse(text)
+    && summaryUnsupported(text, cvText).length === 0
+    && figureAttribution(text, cvText).length === 0
+    && (!jdText || stripJdProperNouns(text, cvText, jdText) === text);
+}
+
+/**
+ * Generate the summary from the selected evidence.
+ *
+ * Two things make this different from a single call plus clause surgery:
+ *
+ * **The grounded sibling.** Showing the model Block B is what made the summary
+ * worth generating — it is how the posting's own wording reaches the page — and
+ * it is also what lets the posting's *facts* leak in. Measured across 32 offers:
+ * shape defects fell 0.844 → 0.125 per offer, and 3 of 32 summaries claimed
+ * something `cv.md` never says (a domain twice, a language once), against 0 of 32
+ * for the JD-blind control. So when the tailored draft is unusable, this asks for
+ * a second one with the requirements withheld. That candidate cannot borrow a
+ * domain or a product from the posting, because it never sees the posting — it is
+ * clean by construction rather than by inspection, which is the only kind of
+ * clean a detector with a closed vocabulary can be trusted to deliver.
+ *
+ * The second call is conditional, so the common case still costs one call. On the
+ * 32-offer bench it fires on 3.
+ *
+ * **Rejection over repair.** `stripFabricatedProducts` does clause surgery
+ * because a summary has no single source line to revert to — that was true when
+ * the alternative was nothing. It has a sibling draft now, and swapping a
+ * fabricating draft for a clean one beats amputating a clause out of it.
+ *
+ * Both calls run at the caller's temperature, and neither depends on resampling:
+ * at the benchmark's temperature 0 the two prompts still differ, so this stays
+ * deterministic and a single run remains a valid A/B on this stack.
  *
  * @param {{bullets: string[], role: string, cvText: string, incumbent?: string,
+ *          reqs?: string[], jdText?: string,
  *          call: (system: string, user: string) => Promise<string>,
  *          margin?: number}} opts
- * @returns {Promise<string|null>} the winning summary, or null if neither works
+ * @returns {Promise<string|null>} the winning summary, or null if nothing works
  */
-export async function generateSummary({ bullets, role, cvText, incumbent = '', call, margin = 1.0 }) {
-  let challenger = null;
-  try {
-    const text = cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role)));
-    if (text) challenger = stripFabricatedProducts(text, cvText);
-  } catch { /* the incumbent still stands */ }
+export async function generateSummary({ bullets, role, cvText, incumbent = '', reqs = [], jdText = '', call, margin = 1.0 }) {
+  const draft = async (rs) => {
+    try { return cleanSummary(await call(SUMMARY_SYSTEM, summaryUser(bullets, role, rs))) || null; }
+    catch { return null; }
+  };
 
-  const base = incumbent ? stripFabricatedProducts(incumbent, cvText) : null;
-  const baseScore = base ? scoreSummary(base, { bullets, cvText }) : -Infinity;
-  const chalScore = challenger ? scoreSummary(challenger, { bullets, cvText }) : -Infinity;
+  const tailored = await draft(reqs);
+  const tOk = usable(tailored, cvText, jdText);
+  // The sibling is now drafted even when the first draft is clean, because
+  // **clean is a floor and not a ranking**. `scoreSummary` existed, was tested,
+  // and only ever fired on the repair path — so a draft that merely passed the
+  // guards shipped unranked, and the guards cannot tell a summary that answers
+  // the posting from one that technically says nothing false.
+  //
+  // Two prompts rather than two samples: the sibling withholds the requirements,
+  // so the pair differs structurally instead of by decoding noise. That keeps
+  // temperature 0, which matters more than it sounds — sampling would make a
+  // single run stop being a valid A/B on this stack and every summary arm so far
+  // has needed exactly one.
+  const grounded = reqs.length ? await draft([]) : null;
+  const gOk = usable(grounded, cvText, jdText);
 
-  // The incumbent is the shipped behaviour and holds the tie. A new stage only
-  // displaces it by a clear margin, never on a rounding difference — measured
-  // on offer 182, where the challenger was blander than the JSON field and a
-  // bare `>` handed it the slot anyway.
-  const winner = chalScore > baseScore + margin ? challenger : (base ?? challenger);
-  // Enforced on the winner, not on each candidate: clamping before scoring would
-  // hand a rambling candidate a free repair and let it beat a tight one on
-  // evidence overlap it only had room for because it overran.
-  return winner === null ? null : clampSummaryWords(winner);
+  if (tOk || gOk) {
+    // Tailored first, and `margin` means the sibling has to *beat* it rather than
+    // tie it. Showing the posting is worth ats_coverage +0.029 (ledger §11) and
+    // the score's evidence-overlap term reads literal bullet text, which a
+    // tailored draft spends some of its budget paraphrasing — so a bare argmax
+    // would quietly hand the page back to the JD-blind sibling and undo §11.
+    const ok = [tOk ? tailored : null, gOk ? grounded : null].filter(Boolean);
+    const best = ok.reduce((a, b) =>
+      scoreSummary(b, { bullets, cvText }) > scoreSummary(a, { bullets, cvText }) + margin ? b : a);
+    return clampSummaryWords(best);
+  }
+
+  // Neither is clean. Fall back to repairing both and letting the score choose,
+  // so a bad pair still ships something rather than nothing. The incumbent is the
+  // shipped JSON field and holds the tie; it is empty under `--writer verbatim`,
+  // which is exactly why it cannot be the only thing standing between a bad draft
+  // and the page.
+  //
+  // Every guard that runs downstream runs here too, in the same order, because
+  // **the score has to score what actually ships**. It did not, and offer 293 is
+  // what that costs: a three-sentence draft won on the strength of two sentences
+  // that `verifySummaryFigures` and `stripJdProperNouns` then deleted in
+  // `local-pdf-offer.mjs` — an invented "87.5%" where `cv.md` says 90%, and a
+  // sentence naming Git, which the posting names and `\bGit\b` does not find in a
+  // CV that only ever writes "GitHub Actions" and "GitLab CI". What reached the
+  // page was one sentence and the generic closer. Repairing first lets the length
+  // penalty see the damage and hand the slot to the sibling.
+  const repair = (t) => {
+    if (!t) return null;
+    let s = stripFabricatedProducts(t, cvText);
+    s = stripFabricatedCredentials(s, cvText);
+    s = stripFabricatedDomains(s, cvText);
+    s = verifySummaryFigures(s, cvText);
+    s = stripMisattributedFigures(s, cvText);
+    s = stripUnsupportedTenure(s, cvText);
+    if (jdText) s = stripJdProperNouns(s, cvText, jdText);
+    return s.trim() || null;
+  };
+  const cands = [repair(tailored), repair(grounded), repair(incumbent || null)].filter(Boolean);
+  if (!cands.length) return null;
+  const best = cands.reduce((a, b) =>
+    scoreSummary(b, { bullets, cvText }) > scoreSummary(a, { bullets, cvText }) + margin ? b : a);
+  return clampSummaryWords(best);
 }
