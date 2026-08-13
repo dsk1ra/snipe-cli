@@ -230,7 +230,8 @@ async function grades({ withDistinct = false } = {}) {
  * pass and before the density loop, so it takes lines from projects exactly as a
  * production floor would.
  */
-function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'all', cut = null) {
+function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'all', cut = null,
+  projMaxLines = 0) {
   const costs = atomCosts(A);
   const idx = A.map((a, i) => ({ a, i }))
     .filter(({ a }) => a.section !== 'Projects' || keptProjects.has(a.entity));
@@ -245,10 +246,16 @@ function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'a
   const capOf = (e) => (isProj(e) ? LB_PROJ_CAP : LB_ROLE_CAP);
   const n = new Map();
   let spent = 0;
+  // Lines projects have taken, tracked separately for `projMaxLines`. The
+  // top-bullet pass counts toward it but is never blocked by it — a project that
+  // reached the page must render at least one bullet or it ships as a bare
+  // title, which is a worse page than an unbalanced one.
+  let projSpent = 0;
   for (const [e, v] of byEntity) {
     if (!v.length) continue;
     n.set(e, 1);
     spent += costs[v[0].i];
+    if (isProj(e)) projSpent += costs[v[0].i];
   }
   // The floor, before the open contest. `floorMode` decides who gets it: every
   // experience entry, or only the one this posting scores highest. The
@@ -280,8 +287,14 @@ function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'a
   for (const b of rest.sort((x, y) => (y.score / y.cost) - (x.score / x.cost))) {
     if (spent + b.cost > budget) continue;          // a cheaper bullet may still fit
     if ((n.get(b.e) ?? 0) >= capOf(b.e)) continue;
+    // The section budget. One pool lets a strongly-matching project take the
+    // page down to two one-line employers, which is what §14 measured: the
+    // starvation appeared the day experience and projects started competing.
+    // This bounds the contest instead of flooring an entry inside it.
+    if (projMaxLines && isProj(b.e) && projSpent + b.cost > projMaxLines) continue;
     n.set(b.e, (n.get(b.e) ?? 0) + 1);
     spent += b.cost;
+    if (isProj(b.e)) projSpent += b.cost;
   }
   return [...byEntity].flatMap(([e, v]) => v.slice(0, n.get(e) ?? 0).map(x => x.a.id));
 }
@@ -289,7 +302,7 @@ function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'a
 export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0,
   projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS, gateK = 1,
   projKeep = PROJ_KEEP, lineBudget = 0, minExp = 1, floorMode = 'all',
-  gradeCut = 0 } = {}) {
+  gradeCut = 0, projMaxLines = 0 } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
@@ -332,7 +345,8 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
     ? (i) => ((distinctW ? (g2[A[i].id]?.g ?? 0) : (g[A[i].id] ?? 0)) < gradeCut)
     : null;
 
-  if (lineBudget) return allocateLinesSim(A, score, keptProjects, lineBudget, minExp, floorMode, cut);
+  if (lineBudget) return allocateLinesSim(A, score, keptProjects, lineBudget, minExp, floorMode, cut,
+    projMaxLines);
 
   const quota = new Map();
   // Project bullets are drawn from one shared budget rather than a flat cap per
@@ -422,6 +436,29 @@ export function addSpike(cache) {
   return cache;
 }
 
+/**
+ * Experience entries this selection leaves at one bullet, and whether that is
+ * all of them.
+ *
+ * The sweep optimised coverage alone, and generation ledger §14 is the case that
+ * coverage cannot see a starved Experience section: a page of project bullets
+ * over two one-line employers scores perfectly. A cap or a floor is a trade —
+ * coverage for balance — and a tool that measures only one side of a trade will
+ * always report the trade as a loss.
+ */
+function starvation(cache, shipped) {
+  const byId = new Map(cache.atoms.map(a => [a.id, a]));
+  const perEntity = new Map();
+  for (const id of shipped) {
+    const a = byId.get(id);
+    if (!a || a.section === 'Projects') continue;
+    perEntity.set(a.entity, (perEntity.get(a.entity) ?? 0) + 1);
+  }
+  const expEntities = [...new Set(cache.atoms.filter(a => a.section !== 'Projects').map(a => a.entity))];
+  const starved = expEntities.filter(e => (perEntity.get(e) ?? 0) <= 1).length;
+  return { starved, all: expEntities.length && starved === expEntities.length ? 1 : 0 };
+}
+
 function evalCfg(cache, labels, offers, cfg) {
   const rows = [];
   for (const l of offers) {
@@ -430,10 +467,12 @@ function evalCfg(cache, labels, offers, cfg) {
     const shipped = simulate(cache, id, cfg);
     const cov = coverage(l, shipped), yld = yieldOf(l, shipped);
     if (cov === null) continue;
-    rows.push({ id, cov, yld: yld ?? 0 });
+    const s = starvation(cache, shipped);
+    rows.push({ id, cov, yld: yld ?? 0, starved: s.starved, allStarved: s.all });
   }
   const m = k => rows.reduce((a, r) => a + r[k], 0) / (rows.length || 1);
-  return { n: rows.length, cov: m('cov'), yld: m('yld'), rows };
+  return { n: rows.length, cov: m('cov'), yld: m('yld'),
+           starved: m('starved'), allStarved: m('allStarved'), rows };
 }
 
 // ── commands ─────────────────────────────────────────────────────────────────
@@ -605,9 +644,16 @@ function check(split, cfg, base = {}, shipped = false) {
     `variant: gradeW=${varCfg.gradeW} spikeW=${varCfg.spikeW ?? 0} lambda=${varCfg.lambda ?? 0} ` +
     `reserve=${varCfg.reserve ?? 0} distinctW=${varCfg.distinctW ?? 0} projCap=${varCfg.projCap ?? PROJ_BULLETS} `+
     `gateK=${varCfg.gateK ?? 1} projKeep=${varCfg.projKeep ?? PROJ_KEEP} gradeCut=${varCfg.gradeCut ?? 0}\n`);
+  const dStarved = got.rows.map(r => r.starved - byId.get(r.id).starved);
+  const dAll = got.rows.map(r => r.allStarved - byId.get(r.id).allStarved);
   for (const [name, before, after, d] of [
     ['differentiator_coverage', baseline.cov, got.cov, dCov],
-    ['grade_yield', baseline.yld, got.yld, dYld]]) {
+    ['grade_yield', baseline.yld, got.yld, dYld],
+    // The other side of the trade. Ledger §14: coverage scores a page of project
+    // bullets over two one-line employers perfectly, so a balance change looks
+    // like a pure loss unless what it buys is measured next to what it costs.
+    ['exp_starved', baseline.starved, got.starved, dStarved],
+    ['all_exp_starved', baseline.allStarved, got.allStarved, dAll]]) {
     const ci = bootstrapCI(d), st = signTest(d);
     console.log(`${name.padEnd(24)} ${before.toFixed(3)} -> ${after.toFixed(3)}  ` +
       `${ci.mean >= 0 ? '+' : ''}${ci.mean.toFixed(3)}  CI95 [${ci.lo.toFixed(3)}, ${ci.hi.toFixed(3)}]  ` +
@@ -704,10 +750,11 @@ function ablate(split = 'train', shipped = false) {
   console.log(`split=${split} n=${base.n}  judge ${gradeW ? 'ON' : 'OFF'}` +
     `${dropped ? ` (${dropped} ungraded dropped)` : ''}  baseline cov=${base.cov.toFixed(3)}` +
     `  funnel=${shipped ? 'SHIPPED' : 'legacy'}\n`);
-  console.log('config                        cov     delta   yield');
+  console.log('config                        cov     delta   yield   starved  all@1');
   const show = (name, cfg) => {
     const r = evalCfg(cache, labels, offers, { gradeW, ...funnel, ...cfg });
-    console.log(`${name.padEnd(29)} ${r.cov.toFixed(3)}  ${r.cov - base.cov >= 0 ? '+' : ''}${(r.cov - base.cov).toFixed(3)}  ${r.yld.toFixed(3)}`);
+    console.log(`${name.padEnd(29)} ${r.cov.toFixed(3)}  ${r.cov - base.cov >= 0 ? '+' : ''}${(r.cov - base.cov).toFixed(3)}  ` +
+      `${r.yld.toFixed(3)}   ${r.starved.toFixed(2)}     ${(100 * r.allStarved).toFixed(0)}%`);
   };
   // The grade cut, on the shipped funnel only — it acts on the surplus the
   // line budget leaves, which the legacy quotas do not have.
@@ -718,6 +765,14 @@ function ablate(split = 'train', shipped = false) {
     for (const w of [0.10, 0.20, 0.40, 0.70, 1.0]) show(`gradeW ${w} (control)`, { gradeW: w * (1 + SHIPPED_SPIKE) });
     for (const c of [1, 3]) for (const w of [0.40, 1.0])
       show(`gradeCut ${c} + gradeW ${w}`, { gradeCut: c, gradeW: w * (1 + SHIPPED_SPIKE) });
+    // Backlog item 3: bound what projects may take of the 24 lines, rather than
+    // flooring an entry inside a single contest. 24 is the whole budget, so it
+    // must print delta 0.000 — the null-safety check that says the cap is a
+    // generalisation and not a different allocator.
+    for (const L of [24, 20, 18, 16, 15, 14, 12, 10]) show(`projMaxLines ${L}`, { projMaxLines: L });
+    // Against the floor rather than beside it: the cap should make the floor
+    // redundant if it is doing the same work from the other side.
+    for (const L of [16, 14, 12]) show(`projMaxLines ${L}, no floor`, { projMaxLines: L, minExp: 1 });
     return;
   }
   for (const w of [1, 2, 3, 4, 6, 8, 12]) show(`spike ${w} only`, { spikeW: w });
@@ -770,6 +825,7 @@ else if (cmd === 'check') {
       ...opt('--reserve', 'reserve', int), ...opt('--distinct', 'distinctW', num),
       ...opt('--proj-cap', 'projCap', int), ...opt('--gate-k', 'gateK', int),
       ...opt('--proj-keep', 'projKeep', int), ...opt('--grade-cut', 'gradeCut', int),
+      ...opt('--proj-max-lines', 'projMaxLines', int), ...opt('--min-exp', 'minExp', int),
       ...opt('--grade', 'gradeW', num) },
     { ...opt('--base-spike', 'spikeW', num), ...opt('--base-cap', 'projCap', int),
       ...opt('--base-gate-k', 'gateK', int), ...opt('--base-proj-keep', 'projKeep', int) },
@@ -778,6 +834,7 @@ else if (cmd === 'check') {
 else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|attribute|check [--split train|test|all]\n' +
   '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]\n' +
   '                                   [--proj-cap N] [--gate-k N] [--proj-keep N] [--grade-cut N]\n' +
+  '                                   [--proj-max-lines N] [--min-exp N]\n' +
   '                                   [--base-spike W] [--base-cap N] [--base-gate-k N]\n' +
   '       --shipped   run BOTH arms on the funnel production runs (line budget +\n' +
   '                   experience floor). Without it, sweep/ablate/check simulate the\n' +
