@@ -358,6 +358,8 @@ is graded exemplars — a human rating a sample 0–3 rather than ticking keep/d
 | keeping all 5 projects on the same budget (`projKeep`) | −0.005 coverage, −0.009 yield |
 | graded exemplars from the Opus label corpus | −0.148 pair accuracy held out; see below |
 | expanding a ticked project into its bullets | −0.045 pair accuracy held out; the defect is load-bearing |
+| judge grade as a **cut** rather than a weight | −0.062 coverage held out, 0-18. Its zeros are 22.8% precise; see generation ledger §16 |
+| raising `gradeW` above the shipped 0.10 | saturated — grades are binary, so no reordering is possible. Not a null, an impossibility |
 
 ## Standing rules that cost time to learn
 

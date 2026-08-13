@@ -987,3 +987,86 @@ are notation rather than capability, and both are now one-character edits becaus
 `skillForms` reads the spaced slash: `AI / LLM application development` (84
 offers, 66% of the corpus) and `REST / RESTful APIs` (21, 16%). `cv.md` prose
 already proves both. Full list in `CV-GENERATION-BACKLOG.md` §9.
+
+---
+
+## 16. The judge grade as a cut — closed, −0.062 held out, and why it cannot work
+
+Backlog item 4. Offline, 0 model calls: the 30B's grades are cached for 127 of
+128 offers, so the whole question costs seconds.
+
+### The tool had to be repaired again first
+
+§13 fixed `validate` to check against the funnel production runs. It did not fix
+`sweep`, `ablate` or `check`, which never passed `lineBudget` at all — so every
+selection sweep since 2026-08-08 has described the funnel the pipeline
+abandoned. `--shipped` puts both arms on the real one; the legacy funnel stays
+the default, because the ledgers' numbers were taken there and re-pointing them
+silently is the same error in the other direction.
+
+`shippedCfg` was itself one commit stale: it carried the line budget and not the
+experience floor. With `minExp=2, floorMode=top` the simulator now reproduces
+`floor2` at **0.000** — exact, against 0.011 before.
+
+Two more traps, both this file's recurring kind. `check` built its variant config
+from `arg(flag, default)`, so every field had a value whether or not it was
+typed: `--shipped` set `spikeW=6` and the argv default set it straight back to 0.
+**Both arms ran the shipped line budget with the spike term switched off, and it
+printed a clean paired result.** An absent flag now means absent. And the summary
+line printed the *requested* config rather than the merged one, which is how it
+stayed invisible — the same shape as the two bugs before it.
+
+### The result
+
+Applied to the surplus only: the top-bullet pass and the floor run first, so a
+cut can never reduce an entry to a bare heading. Held out, 66 offers, on the
+shipped funnel:
+
+| | baseline | gradeCut 1 | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.544 | 0.482 | **−0.062** | [−0.090, −0.037] | 0-18 | <0.0001 |
+| `grade_yield` | 0.436 | 0.379 | −0.057 | [−0.075, −0.040] | 0-38 | <0.0001 |
+
+Thresholds 1, 2 and 3 are the same cut — the grades are binary (3026 zeros, 30
+mid, 1135 threes across 127 offers × 33 atoms), so any threshold in (0, 3] means
+"drop the zeros". Train agrees at −0.070 for all three.
+
+### Why, which is the part worth keeping
+
+**Raising `gradeW` is not an alternative lever either — it is already saturated.**
+Sweeping it produced byte-identical output from 0.10 upward, which is benchmark
+rule 3's signature; it is not plumbing this time. With grades in {0, 3}, once
+`gradeW·3` clears the cosine spread the ordering is "every graded atom, then
+every ungraded one", and multiplying further cannot reorder anything. Production
+ships 0.10 and is at that ceiling. Rule 4 asked for the cheap explanation to be
+controlled for, and the control turns out to be unavailable in principle.
+
+**The page needs more atoms than the judge is willing to grade.** A cut ships
+8.38 atoms where the baseline ships 9.94: 40% of what reaches the page is
+judge-graded 0, not because the ranker likes it but because the budget still has
+room after every graded atom is placed. There is nothing better to promote, so
+the cut spends the page on nothing.
+
+**And the judge's zeros are wrong three times in four.** Against the Opus label
+corpus, over the same atoms:
+
+```
+atoms the 30B graded 0        3026
+  Opus labeller also 0         689     precision 0.228
+  Opus labeller > 0           2337
+    …flagged a differentiator   368
+atoms the 30B graded > 0      1165
+  Opus labeller > 0           1106     precision 0.950
+```
+
+**The judge is a precise positive signal and a near-worthless negative one.**
+Weighting reads only the positives, which is why `+0.10 × grade` is worth
++0.115 pair accuracy. Cutting reads only the negatives, and a cut on grade 0
+deletes 368 flagged differentiators from the corpus. That asymmetry closes the
+item, and it is not a tuning result — no threshold, weight or ordering recovers
+information the grade does not carry.
+
+It also puts a number on the "judge grades binary" defect recorded in
+`PHASE3-NEXT.md`. The problem is not only that the middle of the scale is unused;
+it is that the 0 bucket is 77% false. The judge's *ordering* survives that
+(it still earns its 66 s), and any use of its absolute zeros does not.
