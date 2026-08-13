@@ -1260,3 +1260,77 @@ what prompt-level instruction achieves on this stage, which was nothing
 
 So the remaining route is a marked-evidence prompt whose prior is poor, and the
 plumbing to do it is recoverable from the reverted commits.
+
+---
+
+## 19. Best-of-two summary — SHIPPED. Five offers had no quantified achievement
+
+Backlog item 6, in a shape the backlog did not propose.
+
+`generateSummary` returned the first draft that passed the guards. `scoreSummary`
+existed, was tested, and fired only on the repair path — so **clean was acting as
+a ranking when it is only a floor.** The guards prove a draft says nothing false;
+they cannot tell a summary that answers the posting from one that technically
+says nothing at all.
+
+### Two prompts, not two samples
+
+The backlog proposed three drafts at temperature 0.3 with the score choosing, and
+noted the cost: sampling gives up the determinism choice, so a single run stops
+being a valid A/B and the arm needs repeats where every summary arm so far has
+needed one.
+
+The sibling draft already existed. `generateSummary` asks for a second draft
+**with the requirements withheld** whenever the first is unusable — a pair that
+differs *structurally* rather than by decoding noise. Drafting it unconditionally
+and letting `scoreSummary` choose keeps temperature 0, needs no repeats, and adds
+one call rather than two.
+
+Tailored wins ties by `margin`. That is load-bearing: the score's evidence-overlap
+term reads literal bullet text and a tailored draft spends some of its budget
+paraphrasing into the posting's vocabulary, so a bare argmax would hand the page
+back to the JD-blind sibling and undo the `ats_coverage` +0.029 that showing the
+posting bought (§11).
+
+### The arm
+
+`cap14` → `bestof2`, paired, n=32, 51.3 min (+4.6 over `cap14`, the extra call).
+
+| | cap14 | bestof2 |
+|---|---|---|
+| **summaries with no figure at all** | **5/32** | **1/32** |
+| **generic closer** | **4/32** | **2/32** |
+| mean words | 57.9 | 58.0 |
+| `ats_coverage` | 0.655 | 0.652 (−0.003, CI [−0.011, 0.002], ns) |
+| summaries changed | — | 9/32 |
+
+Every selection metric identically 0.000 — the check that a summary change
+touched only the summary. `grounding` 1.000, `metric_fab`, `product_fab`,
+`summary_fab_pct`, `summary_fab_raw_pct` and both attribution metrics all flat at
+zero. Pages 0.976 → 0.975.
+
+**Mean words is the load-bearing row.** The template requires one quantified
+achievement and five summaries were shipping without a single digit; that is now
+one, at the same length. This is selection between drafts, not padding.
+
+### Reading all nine
+
+Five clear wins, and all five are the same failure. Offer 219 shipped
+*"proven experience in full software development life cycle execution, including
+coding standards, code reviews, source control, testing, and operations"* — the
+posting's own words, no evidence, no number. It now names Spring Boot,
+RabbitMQ, Resilience4j and a 6-person team at Distinction. Offers 165, 205, 58
+and 54 are the same story.
+
+Three neutral (156, 231, 79 — both drafts strong, cap14 marginally more on-topic
+on 79).
+
+**One real regression, and it is the predicted one.** Offer 175 is a full-stack
+posting where the tailored draft named TypeScript, Node.js, React and Kubernetes;
+the JD-blind sibling won on score, dropped all four, and picked up a generic
+closer. That is exactly the risk `margin` exists to bound, and it bounds it to 1
+of 32 rather than to zero. The closer count still falls 4 → 2, so the change
+removes three and adds one.
+
+Shipped: five offers rescued from having no quantified achievement, against one
+that lost its targeting, with every falsity metric unmoved.

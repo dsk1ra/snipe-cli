@@ -14,7 +14,7 @@ and one item below was already closed there.
 | 3 | ~~section-level budget ratio~~ | selection | **shipped, `projMaxLines=14`** |
 | 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
-| 6 | best-of-N summary | summary | one 32-offer arm |
+| 6 | ~~best-of-N summary~~ | summary | **shipped as best-of-2, no figure 5/32 → 1/32** |
 | 7 | ~~grade-ordered evidence~~ | summary | **rejected, closer 4/32 → 8/32** |
 | 8 | ~~curated synonym alignment~~ | ATS | **closed, aims at the wrong misses** |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
@@ -137,7 +137,20 @@ The spike term already discounts a bullet that reads relevant to everything,
 which is most of what redundancy suppression would have caught. Listed here only
 so it stops being re-proposed; see `PHASE3-NEXT.md`.
 
-## 6. Best-of-N summary
+## 6. Best-of-N summary — SHIPPED, as best-of-two
+
+Not the proposed shape. Three samples at temperature 0.3 would have given up
+determinism and needed repeats; the **sibling draft already existed**, so drafting
+it unconditionally and letting `scoreSummary` choose gets the same effect from two
+structurally different prompts at temperature 0, for one extra call rather than
+two.
+
+Summaries carrying no quantified achievement at all: **5/32 → 1/32**. Generic
+closer 4/32 → 2/32, mean words unchanged, every falsity metric flat. One
+regression at offer 175, where the JD-blind sibling won and dropped the posting's
+own stack. Ledger §19.
+
+### The original proposal, for the record
 
 `generateSummary` returns the first usable draft. `scoreSummary` exists, is
 tested, and currently only breaks ties on the repair path — which fires rarely
