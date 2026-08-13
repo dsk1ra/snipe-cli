@@ -21,7 +21,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { embed, cosine } from '../embeddings.mjs';
-import { extractBlockBRequirements, judgeGradesFull } from '../cv-select.mjs';
+import { extractBlockBRequirements, judgeGradesFull, bulletCost,
+         parseCvSections, parseEntries } from '../cv-select.mjs';
 import { loadExemplars } from '../goldset.mjs';
 import { loadLabels } from '../opus-metrics.mjs';
 import { bootstrapCI, signTest } from '../stats.mjs';
@@ -34,7 +35,57 @@ const CACHE = resolve(PROJECT, 'batch/bench/opus/sweep-cache.json');
 // keeps the top `EXP_KEEP` bullets of every experience entry and the top
 // `PROJ_KEEP` project entries, then the verbatim writer renders `PROJ_BULLETS`
 // bullets of each. `validate` is what says these are right.
+//
+// **This is the pre-line-budget funnel** and production stopped running it on
+// 2026-08-08. It is kept because every ablation recorded in the ledgers was
+// measured on it, and re-pointing those numbers at a different funnel would make
+// them incomparable. `lineBudget` selects the shipped one — see `allocateLines`
+// below — and `validate` now checks whichever funnel the caller asked for
+// against the arm that actually ran it.
 const EXP_KEEP = 4, PROJ_KEEP = 4, PROJ_BULLETS = 2;
+
+// Shipped config: SNIPE_LINE_BUDGET=24 over SNIPE_MAX_PROJECTS=3, caps of 4.
+const LINE_BUDGET = 24, LB_PROJ_KEEP = 3, LB_ROLE_CAP = 4, LB_PROJ_CAP = 4;
+
+/**
+ * What each atom costs in rendered lines.
+ *
+ * The cache stores `{id, section, entity}` and no text, because atoms are
+ * positional against `cv.md` — the same contract the 128 labels rely on, and the
+ * same reason editing `cv.md` invalidates them. So the text is recovered by
+ * walking `cv.md` in the identical order and priced with production's own
+ * `bulletCost`, rather than a second copy of the line-height arithmetic.
+ *
+ * The entity names are asserted to line up rather than assumed. A silent
+ * off-by-one here would price every bullet as its neighbour and the simulator
+ * would still run, which is the failure mode that produces confident wrong
+ * numbers.
+ */
+let _costs = null;
+export function atomCosts(atoms) {
+  if (_costs) return _costs;
+  const cvText = readFileSync(resolve(PROJECT, 'cv.md'), 'utf8');
+  const flat = [];
+  for (const name of ['Experience', 'Projects']) {
+    for (const sec of parseCvSections(cvText)) {
+      if (sec.name !== name) continue;
+      for (const e of parseEntries(sec.lines).entries) {
+        const entity = e.head[0].replace(/^###\s+/, '').trim();
+        for (const b of e.bullets) flat.push({ entity, section: name, text: b });
+      }
+    }
+  }
+  if (flat.length !== atoms.length) {
+    throw new Error(`atom/cv.md mismatch: cache has ${atoms.length} atoms, cv.md has ${flat.length} bullets — the cache is stale against cv.md`);
+  }
+  flat.forEach((f, i) => {
+    if (f.entity !== atoms[i].entity || f.section !== atoms[i].section) {
+      throw new Error(`atom ${i} is "${atoms[i].entity}" in the cache and "${f.entity}" in cv.md — positions have drifted`);
+    }
+  });
+  _costs = flat.map(f => bulletCost(f.text));
+  return _costs;
+}
 
 const load = () => (existsSync(CACHE) ? JSON.parse(readFileSync(CACHE, 'utf8')) : { offers: {}, grades: {} });
 const save = (c) => { mkdirSync(dirname(CACHE), { recursive: true }); writeFileSync(CACHE, JSON.stringify(c), 'utf8'); };
@@ -152,9 +203,86 @@ async function grades({ withDistinct = false } = {}) {
  * specificity term are the two things being tested.
  * @returns {number[]} shipped atom ids
  */
+/**
+ * `cv-select.mjs`'s `allocateLines`, over cached cosines.
+ *
+ * Ported rather than approximated, because the whole question this tool is being
+ * asked — how much of the page experience gets — only exists in this funnel.
+ * The pre-line-budget simulator gives experience its own `EXP_KEEP` quota, so
+ * experience and projects never compete and the effect is invisible by
+ * construction.
+ *
+ * Three properties are load-bearing and each mirrors production:
+ *
+ *  - **A bullet costs what it occupies.** Ranking is score *per line*, so a
+ *    marginally weaker one-line bullet beats a marginally stronger three-line
+ *    one. Against a count budget they price identically and one is three times
+ *    the page.
+ *  - **Counts, then top-k.** `allocateLines` returns how many bullets each entry
+ *    gets and `trim(e, k, true)` then keeps that entry's k highest-scoring. The
+ *    bullet the density loop happened to pick is not necessarily the one that
+ *    ships, so picking counts and re-selecting by score is the faithful order.
+ *  - **Every entry keeps its top bullet before anything else is spent**, so a
+ *    budget too small to go round starves nobody to a bare heading.
+ *
+ * `minExp` is the knob under test: the floor on experience entries, 1 in
+ * production. It is paid out of the same budget, immediately after the top-bullet
+ * pass and before the density loop, so it takes lines from projects exactly as a
+ * production floor would.
+ */
+function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'all') {
+  const costs = atomCosts(A);
+  const idx = A.map((a, i) => ({ a, i }))
+    .filter(({ a }) => a.section !== 'Projects' || keptProjects.has(a.entity));
+  const byEntity = new Map();
+  for (const x of idx) {
+    if (!byEntity.has(x.a.entity)) byEntity.set(x.a.entity, []);
+    byEntity.get(x.a.entity).push(x);
+  }
+  for (const v of byEntity.values()) v.sort((x, y) => score[y.i] - score[x.i]);
+
+  const isProj = (e) => keptProjects.has(e);
+  const capOf = (e) => (isProj(e) ? LB_PROJ_CAP : LB_ROLE_CAP);
+  const n = new Map();
+  let spent = 0;
+  for (const [e, v] of byEntity) {
+    if (!v.length) continue;
+    n.set(e, 1);
+    spent += costs[v[0].i];
+  }
+  // The floor, before the open contest. `floorMode` decides who gets it: every
+  // experience entry, or only the one this posting scores highest. The
+  // distinction is the whole question — across 128 offers the entry actually
+  // starved is Teaching Assistant (1.39 bullets, at the floor in 71% of offers),
+  // not the commercial role (2.41, 25%). A blanket floor therefore buys mostly
+  // teaching-assistant bullets, which is the least differentiating evidence on
+  // the CV and the reason it costs coverage so steeply.
+  const expEntities = [...byEntity.keys()].filter(e => !isProj(e));
+  const topExp = expEntities.slice().sort((x, y) =>
+    (score[byEntity.get(y)[0].i] ?? -Infinity) - (score[byEntity.get(x)[0].i] ?? -Infinity))[0];
+  for (const [e, v] of byEntity) {
+    if (isProj(e)) continue;
+    if (floorMode === 'top' && e !== topExp) continue;
+    while ((n.get(e) ?? 0) < Math.min(minExp, capOf(e), v.length)) {
+      const k = n.get(e) ?? 0;
+      spent += costs[v[k].i];
+      n.set(e, k + 1);
+    }
+  }
+  const rest = [...byEntity].flatMap(([e, v]) => v.slice(n.get(e) ?? 0)
+    .map(x => ({ e, i: x.i, cost: costs[x.i], score: score[x.i] })));
+  for (const b of rest.sort((x, y) => (y.score / y.cost) - (x.score / x.cost))) {
+    if (spent + b.cost > budget) continue;          // a cheaper bullet may still fit
+    if ((n.get(b.e) ?? 0) >= capOf(b.e)) continue;
+    n.set(b.e, (n.get(b.e) ?? 0) + 1);
+    spent += b.cost;
+  }
+  return [...byEntity].flatMap(([e, v]) => v.slice(0, n.get(e) ?? 0).map(x => x.a.id));
+}
+
 export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0,
   projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS, gateK = 1,
-  projKeep = PROJ_KEEP } = {}) {
+  projKeep = PROJ_KEEP, lineBudget = 0, minExp = 1, floorMode = 'all' } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
@@ -186,7 +314,10 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
   // gate chooses which ONE to drop — re-scoring that choice is near zero-sum,
   // which is why gateK measured nothing. Keeping all 5 on the same bullet budget
   // is the version of the idea with something to win.
-  const keptProjects = new Set(projEntries.sort((x, y) => massOf(y) - massOf(x)).slice(0, projKeep));
+  const keptProjects = new Set(projEntries.sort((x, y) => massOf(y) - massOf(x))
+    .slice(0, lineBudget ? LB_PROJ_KEEP : projKeep));
+
+  if (lineBudget) return allocateLinesSim(A, score, keptProjects, lineBudget, minExp, floorMode);
 
   const quota = new Map();
   // Project bullets are drawn from one shared budget rather than a flat cap per
@@ -260,7 +391,7 @@ function yieldOf(label, shipped) {
  * auto-invalidates, so it needs no new file and no new invalidation rule. If the
  * cheap one measures the same, the cheap one ships.
  */
-function addSpike(cache) {
+export function addSpike(cache) {
   const ids = Object.keys(cache.offers);
   const n = cache.atoms.length;
   let mean;
@@ -292,6 +423,51 @@ function evalCfg(cache, labels, offers, cfg) {
 
 // ── commands ─────────────────────────────────────────────────────────────────
 
+/**
+ * The real arm each funnel is validated against.
+ *
+ * These were hardcoded to `vbp2`'s 0.468/0.689 — an arm from 2026-08-07 run with
+ * `SNIPE_PROJECT_BULLETS=2` and no line budget. Production moved to the 24-line
+ * budget the next day and now measures 0.564, so `validate` was reporting "within
+ * 0.011" of a number the pipeline had stopped producing, and would have gone on
+ * reporting it indefinitely. Benchmark rule 1, in a tool built to enforce rule 1.
+ *
+ * A reference is a *measurement*, so it names the arm, the date and the flags it
+ * was taken under. When production's funnel changes again this has to change with
+ * it, and the label is what makes that obvious rather than silent.
+ */
+/**
+ * The shipped ranker, in this simulator's parameterisation — which is **not**
+ * `cv-select.mjs`'s.
+ *
+ * Production scores `cos + 0.10·grade`, then subtracts `α·mean` with
+ * `α = w/(1+w)` at `w = 6`. This simulator scores
+ * `cos + gradeW·grade + spikeW·(cos − mean)`, which expands to
+ * `(1+spikeW)·cos − spikeW·mean + gradeW·grade`. Divide through by `(1+spikeW)`
+ * and the ranking is identical to production's **except** that the judge term has
+ * been shrunk by that same factor. So `--spike 6 --grade 0.10` is not the shipped
+ * ranker: it is the shipped ranker with the judge at 0.10/7 ≈ 0.014, and the
+ * judge is worth +0.115 pair accuracy.
+ *
+ * Scaling by `(1+w)` is what restores it, and it is what closes the gap: at
+ * `spikeW=6, gradeW=0.10` the simulator lands 0.046 from the real arm, and at
+ * `gradeW=0.70` it lands 0.011 — the same tolerance the legacy funnel validates
+ * at. Any earlier sweep run at `spikeW > 0` was under-weighting the judge.
+ */
+const SHIPPED_SPIKE = 6;
+const shippedCfg = (gradeW = 0.10) => ({
+  spikeW: SHIPPED_SPIKE,
+  gradeW: gradeW * (1 + SHIPPED_SPIKE),
+  lineBudget: LINE_BUDGET,
+});
+
+const REFERENCE = {
+  legacy: { cov: 0.468, yld: 0.689, arm: 'vbp2', at: '2026-08-07',
+            flags: 'SNIPE_PROJECT_BULLETS=2, no line budget' },
+  linebudget: { cov: 0.564, yld: 0.777, arm: 'sum-v5', at: '2026-08-12',
+                flags: 'SNIPE_LINE_BUDGET=24 SNIPE_MAX_PROJECTS=3' },
+};
+
 function validate() {
   const labels = loadLabels();
   const cache = addSpike(load());
@@ -299,11 +475,23 @@ function validate() {
   const sample = readFileSync(resolve(PROJECT, 'batch/bench/tailor/sample32.tsv'), 'utf8')
     .trim().split('\n').map(l => l.split('\t')[0]);
   const offers = [...labels.values()].filter(l => sample.includes(String(l.offer.id)));
-  const base = evalCfg(cache, labels, offers, {});
-  console.log(`simulator on the 32-offer sample: n=${base.n}`);
-  console.log(`  differentiator_coverage  ${base.cov.toFixed(3)}   (vbp2 measured 0.468)`);
-  console.log(`  grade_yield              ${base.yld.toFixed(3)}   (vbp2 measured 0.689)`);
-  const off = Math.abs(base.cov - 0.468);
+  // Default to the funnel production actually runs. `--legacy` still checks the
+  // old one, because every ablation in the ledgers was measured on it.
+  const legacy = process.argv.includes('--legacy');
+  const cfg = legacy ? {} : shippedCfg();
+  const ref = legacy ? REFERENCE.legacy : REFERENCE.linebudget;
+  const base = evalCfg(cache, labels, offers, cfg);
+  console.log(`simulator on the 32-offer sample: n=${base.n}  funnel=${legacy ? 'legacy' : 'line-budget'}`);
+  console.log(`  reference: ${ref.arm} (${ref.at}, ${ref.flags})`);
+  console.log(`  differentiator_coverage  ${base.cov.toFixed(3)}   (${ref.arm} measured ${ref.cov})`);
+  console.log(`  grade_yield              ${base.yld.toFixed(3)}   (${ref.arm} measured ${ref.yld})`);
+  // Coverage is the gate; yield is printed and not trusted. It has never
+  // reproduced on this simulator — 0.518 against vbp2's 0.689 on the legacy
+  // funnel, 0.424 against sum-v5's 0.777 here — and the gap is far too large to
+  // be the handful of atoms coverage disagrees about. Read yield deltas as
+  // direction at most, never as magnitude.
+  console.log('  (grade_yield does not reproduce on this simulator — coverage is the gate)');
+  const off = Math.abs(base.cov - ref.cov);
   console.log(off < 0.05
     ? `\nOK — within ${off.toFixed(3)} of the real run. Deltas from this simulator are worth reading.`
     : `\nOFF by ${off.toFixed(3)}. Fix the funnel constants before believing any sweep.`);
