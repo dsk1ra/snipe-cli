@@ -559,6 +559,170 @@ try {
     // short summary, so an empty one would be padded into shapelessness.
     eq(stripJdProperNouns('Built tooling for Joybuy Systems.', scv, jd),
       'Built tooling for Joybuy Systems.', 'the guard never empties the summary');
+
+    // Shape. Every case below is a real summary from offer 305 (Trustpilot), and
+    // every one of them scores clean on all eight falsity metrics.
+    const { summaryShape } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const w = n => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+
+    // Shipped 237: three bullets with the bullet points removed. 56 words, so
+    // the band is fine — it is the missing positioning clause that makes it a
+    // list rather than a summary.
+    deepEq(summaryShape('Led a team to build a membership platform with bi-weekly releases. '
+      + `Designed an event-driven microservices system ${w(30)}. Built a resilience layer.`),
+      ['no_positioning'], 'a summary whose every sentence opens with a bullet verb has no positioning clause');
+
+    // One positioning clause is enough — the rest may be achievements, and
+    // should be.
+    deepEq(summaryShape(`Backend and platform engineer who builds the automation ${w(28)}. `
+      + `Led a team to build a membership platform ${w(20)}.`),
+      [], 'an opening identity clause clears the shape check, achievements after it and all');
+
+    // The run-on. clampSummaryWords kept sentences[0] unconditionally, so a
+    // summary with no second sentence walked through a hard 70-word band
+    // untouched — which is how a 75-word one shipped into a 2-page-capped PDF.
+    const runOn = `Delivered technical instruction to over 800 students, ${w(70)}.`;
+    eq(summaryShape(runOn).includes('run_on'), true,
+      'a single sentence carrying the whole summary is flagged as a run-on');
+    const { clampSummaryWords } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    eq(clampSummaryWords(runOn, 70).split(/\s+/).length, 70,
+      'and the word-level fallback clamps it — the band is layout, not preference');
+    eq(clampSummaryWords(runOn, 70).endsWith('.'), true,
+      'a mid-clause cut still closes its sentence');
+    // The sentence-level path is still preferred where it can do the job: it is
+    // the one that produces readable output.
+    eq(clampSummaryWords(`Backend engineer. ${w(80)}.`, 70), 'Backend engineer.',
+      'a clean sentence boundary is taken in preference to cutting mid-clause');
+
+    // The opener is the only sentence some readers finish.
+    eq(summaryShape('Experienced software engineer with a proven track record in billing. '
+      + `Led a team ${w(45)}.`).includes('filler_open'), true,
+      'filler in the first sentence is flagged even when the rest is specific');
+    eq(summaryShape(`Software engineer who ships billing systems ${w(40)}. `
+      + 'Holds a proven track record.').includes('filler_open'), false,
+      'filler after the opener is fillerCount\'s business, not the shape check\'s');
+
+    deepEq(summaryShape(''), ['empty'], 'an empty summary is a shape defect, not a clean score');
+    eq(summaryShape('Backend engineer.').includes('off_band'), true,
+      'a two-word summary clears no_positioning and still fails the band — shape is not quality');
+
+    // The posting's requirements are in the prompt as vocabulary, and are
+    // labelled as such. This is the reversal the 7B could not be trusted with:
+    // the requirement text must reach the model, and the evidence must still be
+    // named as the only source of fact.
+    const { summaryUser, scoreSummary } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const up = summaryUser(['Snipe: built an LLM pipeline'], 'Software Engineer',
+      ['Solid understanding of backend development with Node.js', 'Hands-on experience with AWS or GCP']);
+    eq(up.includes('Node.js') && up.includes('AWS or GCP'), true,
+      'the posting\'s own wording reaches the writer');
+    eq(up.includes('only source of fact'), true,
+      'and is framed against the evidence rather than as material to claim');
+    eq(up.includes('Snipe: built an LLM pipeline'), true, 'the evidence is still there');
+    eq(summaryUser(['x'], 'Engineer').includes('(none listed'), true,
+      'a report with no parseable Block B degrades to the evidence-only prompt');
+    // Ranked below the cap so a twelve-requirement report cannot crowd out the
+    // evidence.
+    eq(summaryUser(['x'], 'Engineer', Array.from({ length: 12 }, (_, i) => `req${i}`)).includes('req8'),
+      false, 'the requirement list is capped');
+
+    // Domain, cased-product and figure fabrication — the three classes that
+    // opened the moment the summary started reading the posting. Each case below
+    // is a real shipped summary from the 32-offer bench, and every one of them
+    // was reported clean by `product_fab`.
+    const { domainFab, casedFab, summaryUnsupported } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const cvNoFin = 'Built a membership platform. Languages: Rust, Java, Python, TypeScript.';
+    deepEq(domainFab('Python Software Engineer with deep expertise in financial services IT systems.', cvNoFin).sort(),
+      ['financial', 'financial services'],
+      'an industry the CV never claims is caught, in both the bare and qualified form');
+    // The bare forms exist because the qualifier was doing the work: "clinical
+    // trials" did not catch "building and improving clinical AI agents".
+    deepEq(domainFab('Builds clinical AI agents.', cvNoFin), ['clinical'],
+      'a domain named without its usual qualifier is still a domain');
+    deepEq(domainFab('Engineer who builds retail operations tooling.', 'Designed a system for retail operations'),
+      [], 'a domain the CV does state is not flagged');
+    // The 3-char floor in stripJdProperNouns cannot see "Go"; case is what
+    // separates the language from the verb.
+    deepEq(casedFab('Delivers production systems in Go and Rust.', cvNoFin), ['Go'],
+      'a two-letter language name is caught even though the proper-noun guard skips it');
+    deepEq(casedFab('Ready to go live with the platform.', cvNoFin), [],
+      'the lowercase verb is not the language');
+    deepEq(casedFab('Builds systems in Rust.', cvNoFin), [],
+      'a cased name the CV does claim is not flagged');
+
+    // The gate and the metric are one function, so a class the metric grew
+    // cannot be one the gate ignores.
+    const { summaryFab } = await import(pathToFileURL(join(ROOT, 'batch/tailor-harness.mjs')).href);
+    eq(summaryFab === summaryUnsupported, true,
+      'the harness metric IS the generation gate — no second detector to drift');
+    eq(summaryUnsupported('Engineer in financial services delivering systems in Go.', cvNoFin).sort().join('+'),
+      'cased_product+domain', 'both new classes are named');
+    deepEq(summaryUnsupported('', cvNoFin), [], 'an empty summary claims nothing');
+
+    // Figure attribution — a real figure handed to the wrong entry. Every case
+    // is from the 32-offer bench, and every one is reported clean by
+    // summaryUnsupported, because each number genuinely appears in cv.md.
+    const { figureAttribution, namingPhrases, cvEntries } = await import(pathToFileURL(join(ROOT, 'batch/summary-stage.mjs')).href);
+    const attribCv = [
+      '## Experience', '',
+      '### PM / Software Engineer',
+      '**UBWIS** — Edinburgh | Oct 2024 – Sep 2025', '',
+      '- Built the admin console backed by Redis caching and 85%+ test coverage',
+      '- Owned production security, maintaining 99.9% average uptime', '',
+      '## Projects', '',
+      '### Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System',
+      '**Honours Dissertation** | Rust, Flutter, WebRTC | 2025 – 2026', '',
+      '- Designed a blind rendezvous protocol with end-to-end encryption', '',
+      '### Post-Quantum Signature Benchmarking',
+      '**Personal research** | Rust, Python | 2025 – 2026', '',
+      '- Executed 63,000+ benchmark runs across 7 signature schemes', '',
+    ].join('\n');
+
+    // The shipped Sophos defect: both figures real, both UBWIS's, sentence names Re:Link.
+    deepEq(figureAttribution(
+      'Delivered a privacy-preserving peer-to-peer system with 85%+ test coverage and maintained 99.9% uptime.',
+      attribCv).map(x => x.figure).sort(), ['85%+', '99.9%'],
+      'figures welded onto an entry that does not own them are caught');
+
+    // A clause that names no entry asserts no owner, so it cannot have one wrong.
+    // Flagging it would measure vagueness, not falsity.
+    deepEq(figureAttribution('Achieved 99.9% uptime by resolving critical SSL/DNS failures.', attribCv), [],
+      'a figure with no entity named is not an attribution error');
+    deepEq(figureAttribution('Executed 63,000+ benchmark runs across 7 signature schemes.', attribCv), [],
+      'a correctly attributed figure is clean');
+
+    // Clause granularity, not sentence: two entries reported in one sentence,
+    // each correctly, must not read as one claiming the other's figure.
+    deepEq(figureAttribution(
+      'Achieved sub-500ms load times through cache warming, and executed 63,000+ benchmark runs in the post-quantum signature testbed.',
+      attribCv), [],
+      'two correctly-attributed clauses in one sentence stay clean');
+
+    // A figure absent from the CV is a fabrication, not a misattribution —
+    // summaryUnsupported owns that, and double-charging it would inflate both.
+    deepEq(figureAttribution('Shipped a privacy-preserving peer-to-peer system serving 970%+ growth.', attribCv), [],
+      'an invented figure is summaryUnsupported\'s job, not this metric\'s');
+
+    // Naming is read off entry heads, never bullets. Built over bullet text, any
+    // summary reusing a bullet's wording names its entry — which is most of them.
+    const ph = namingPhrases(cvEntries(attribCv));
+    eq(ph.get('privacy-preserving peer-to-peer'), 'Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System',
+      'a title phrase identifies its entry');
+    eq(ph.has('admin console'), false, 'a bullet phrase does not');
+    deepEq(figureAttribution('Anything at all with 85%+ coverage.', 'no entries here'), [],
+      'a CV with under two entries yields no attribution rather than throwing');
+
+    // Shape is priced into the score, or a well-overlapping list beats a
+    // well-shaped summary. Both candidates carry the same tail, so evidence
+    // overlap is near-identical and the shape term is what separates them — and
+    // the posed one is a word *longer*, so it pays more length penalty and still
+    // wins.
+    const tail = 'Delivered technical instruction to over 800 students across a range of '
+      + 'courses and formats, and built a membership platform with bi-weekly releases '
+      + 'for the teams that depended on it.';
+    const opts = { bullets: [`Teaching: ${tail}`], cvText: tail };
+    eq(scoreSummary(`Backend engineer who delivers teaching and platforms. ${tail}`, opts)
+       > scoreSummary(`Delivered teaching and platforms as a backend engineer. ${tail}`, opts), true,
+      'a summary with a positioning clause beats the same content as a bullet list');
   }
 
   // A tenure the CV never states. verifyBulletNumbers cannot catch this: "2+"

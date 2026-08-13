@@ -595,3 +595,183 @@ On the experience side the blast radius is 0.8 % of bullets and the single hit
 is a true positive that reverts to a *longer* source bullet, which moves
 `num_retention` and `ats_coverage` the same direction §9 already measured. A
 40-minute arm to resolve one bullet would not be measuring anything.
+
+---
+
+## 11. The summary reads the posting — and what that cost before it paid
+
+Measured on `sample32.tsv` (32 offers, not the 24 of §0–§10), `--temperature 0`,
+`--writer verbatim`, `SNIPE_LINE_BUDGET=24 SNIPE_MAX_PROJECTS=3`, selection
+frozen across every arm with `SNIPE_SELECT_CACHE` — legitimate here and only
+here, because nothing in this section touches `cv-select`, and every selection
+metric reading identically 0.000 in all four arms is the check that it held.
+
+### The defect
+
+The shipped summary was three achievements with the bullet points removed. On
+offer 305 (Trustpilot, asking for TypeScript/Node/AWS) it spent two of its three
+sentences on a Java coursework project, and the evidence set *contained* the
+Stripe/Node/Next.js bullet it ignored. Two further runs of the same offer
+produced a 75-word single-sentence run-on and a "proven track record" opener, so
+there was no stable format to critique — which is itself the finding.
+
+**No metric could see any of it.** All eight punish falsity; the three shapes
+scored identically. `summaryShape` is the answer to that (rule 9 again) and is
+deliberately *only* a shape metric — a two-word summary clears `no_positioning`.
+
+### The arms
+
+| arm | what it is |
+|---|---|
+| `sum-ctl` | pre-`5ec5a44`: 7B writer, no requirements in the prompt |
+| `sum-new` | `5ec5a44`: 30B, Block B in the prompt, industry template |
+| `sum-v2` | `bfc51aa`: + domain/cased/figure rejection with a grounded retry |
+| `sum-v3` | shipped: + reject what `stripJdProperNouns` would gut |
+
+| arm | fab raw | fab shipped | shape defects | clean | generic closer |
+|---|---|---|---|---|---|
+| `sum-ctl` | 0.031 (1) | 0.000 | 0.844 | 19% | 5/32 |
+| `sum-new` | **0.250 (8)** | **0.063 (2)** | 0.125 | 88% | 14/32 |
+| `sum-v2` | 0.031 (1) | 0.000 | 0.125 | 88% | 13/32 |
+| `sum-v3` | 0.031 (1) | 0.000 | **0.063** | **94%** | 9/32 |
+
+`sum-ctl` → `sum-v3`, paired, n=32: **`ats_coverage` +0.029, CI [0.018, 0.041],
+21-3, p<0.001** — 15× its ±0.002 A/A floor. `summary_jd_fit` +0.138 (30-2).
+Every selection metric, `grounding`, `num_retention`, `metric_fab` and
+`product_fab` at 0.000 delta.
+
+### Rule 7 caught this, and the table would not have
+
+`sum-new` reads as a clean win — shape 0.844 → 0.125, `ats_coverage` +0.028,
+`product_fab` a flat 0. It was fabricating on **8 of 32 offers**. The tell was
+`summary_cv_fit` −0.087 next to `summary_jd_fit` +0.151, which is rule 7's
+signature exactly, and the only way to confirm it was reading the output:
+
+- *"deep expertise in **financial services** IT systems"* — JPMorganChase posting,
+  CV contains "financial" zero times
+- *"production systems in **Go** and Rust"* — CV contains standalone "Go" zero times
+- *"reduced configuration time by **87.5%**"* — `cv.md` says 90%
+- *"improved accuracy by **14.1%**"* — computed from 0.815 → 0.930, never stated
+- *"**C++17/20**"* — `cv.md` says "C/C++"
+
+Three classes, none visible to any guard. Domains because `productFab` matches
+products; `Go` because `stripJdProperNouns` skips words under three characters —
+**the same 3-char floor this repo already recorded zeroing `C#` and `CI/CD` in
+`tokenize`**, found twice now in unrelated code; derived figures because nothing
+asked whether a *correct* calculation was a *stated* one.
+
+`summary_cv_fit` −0.082 survives into `sum-v3` and is no longer evidence of
+falsity: fabrication is measured directly and sits at the control's level. It is
+the summary using the posting's vocabulary for things `cv.md` genuinely contains,
+which is the entire point of showing it the posting.
+
+### What actually fixed it
+
+**Rejection, not repair.** Clause surgery had no sibling to fall back on when it
+was written; it does now. One repair had shipped *"Linux systems programming, and
+advanced concurrency patterns."* as a sentence. When a draft is unusable the
+stage asks for a second one with the requirements withheld — clean *by
+construction*, since it never sees the posting, which is the only kind of clean a
+closed-vocabulary detector can be trusted to deliver. The second call fires on 3
+of 32.
+
+**One function for the gate and the metric.** `summaryUnsupported` is now both.
+They were separate and drifted: the harness copy grew `tenure` and `figure` while
+the gate still checked only products, so the stage believed it had rejected
+everything while 8 offers shipped a fabrication. Same failure `normPhrase` was
+shared to prevent.
+
+**The gate must know about guards that run after it.** `stripJdProperNouns` runs
+downstream in `local-pdf-offer.mjs`; a candidate the gate passed and that guard
+then gutted fell under the 50-word floor and picked up the generic closer — 13 of
+32. Asking it up front moved that to 9 and shape defects 0.125 → 0.063.
+
+### Two things not claimed
+
+`sum-ctl` ran 36.7 min against `sum-new`'s 3.5, but the control built the select
+cache cold — **confounded, not a speedup.** And the summary call dropping to
+temperature 0 is a determinism choice for production, invisible to a bench where
+every arm was already greedy.
+
+---
+
+## 12. Figure attribution — the defect §10 fixed everywhere except here
+
+Same setup as §11 (`sample32.tsv`, temp 0, `--writer verbatim`, frozen selection).
+
+§10 replaced the CV-global figure allow-set with an entry-scoped one for
+experience bullets and project blurbs: *"does this number exist in the document"
+is not the question, "does it belong to the entry claiming it" is.* The summary
+never got that fix, and it is the surface most able to blend entries, because it
+is the only one that draws on all of them at once.
+
+Shipped example, Sophos: *"Delivered a privacy-preserving peer-to-peer system
+with 85%+ test coverage and maintained 99.9% uptime"*. Both figures are real,
+both are UBWIS's, the sentence names Re:Link. `summaryUnsupported` reports clean
+by construction, because each number genuinely appears in `cv.md`.
+
+| arm | misattributed | fab raw | fab shipped | shape defects | clean |
+|---|---|---|---|---|---|
+| `sum-ctl` | 0/32 | 0.031 | 0.000 | 0.844 | 19% |
+| `sum-new` | 2/32 | 0.313 | 0.125 | 0.125 | 88% |
+| `sum-v3` | 3/32 | 0.063 | 0.031 | 0.063 | 94% |
+| `sum-v4` prompt only | 3/32 | 0.031 | 0.031 | 0.031 | 97% |
+| `sum-v5` shipped | **0/32** | **0.000** | **0.000** | **0.031** | **97%** |
+
+`sum-ctl` → `sum-v5`, paired, n=32: `ats_coverage` **+0.023**, CI [0.013, 0.033],
+19-4, p=0.003. Every selection metric, `grounding`, `num_retention`,
+`metric_fab` and `product_fab` at 0.000 delta.
+
+**The `sum-new`/`sum-v3`/`sum-v4` fabrication figures here are higher than §11
+reports them.** The detector grew bare domain forms while measuring `sum-v4`, and
+every arm is rescored by current code. §11's numbers were the truth the detector
+could see at the time; these are the truth it can see now. `sum-v4` in particular
+was reported as fabrication-free and is not — it claims "clinical AI agents" on a
+clinical-AI posting, which `clinical trials` did not match. The qualifier the list
+happened to carry was doing the work rather than the domain word.
+
+### Asking the model to attribute does not make it attribute
+
+`sum-v4` is the prompt-only arm: the proof sentence must name the entry it
+credits, with the wrong/right pair from offer 70 in the rules. **Attribution did
+not move — 3 of 32 before, 3 of 32 after.** Offer 50 is why:
+
+> "Achieved **85%+ test coverage** and reduced fabricated job requirements by 9x
+> **in the Snipe — Fully Local LLM Job-Application Pipeline**."
+
+The entry is named, exactly as instructed, and UBWIS's figure is welded into the
+same clause anyway. All three survivors were the same figure, `85%+`, attached to
+three different entries. Naming makes the error explicit and detectable; it does
+not prevent it.
+
+It was worth keeping regardless — shape 0.063 → 0.031 and 94% → 97% clean — and
+it is what makes the guard's job easy, because the entry is now stated rather
+than inferred. But as a fix for the thing it targeted it is a null, and the
+entry-scoped guard is what actually closed it: attribution joins the rejection
+gate, so a draft crediting the wrong entry is re-requested with the requirements
+withheld, and `stripMisattributedFigures` is §10's clause surgery on the repair
+path and in the production chain.
+
+`sum-v4` → `sum-v5` costs `summary_jd_fit` −0.033 (CI [−0.056, −0.012], 9-23,
+p=0.020) with `ats_coverage` flat at −0.003 (CI crosses 0). Rule 7 is explicit
+that `jd_fit` is the gameable one and `ats_coverage` is the breadth signal that
+matters, so a fabrication-free, attribution-clean arm at the same ATS breadth is
+the trade taken.
+
+### Two false starts, both pinned in tests
+
+**Naming read off bullets names everything.** The first index was built over
+entry *text*, so any summary reusing a bullet's wording named its entry — which
+is most summaries, since the evidence is where their vocabulary comes from. The
+Sophos error then reads as correctly attributed: it echoes UBWIS's "test
+coverage" while naming Re:Link by title, and any-match declares the figure fine.
+Titles identify; bullets repeat. Index the head, check ownership against
+everything.
+
+**Sentence granularity conflates two true clauses.** *"Achieved sub-500ms
+dashboard load times through cache warming, and improved job-application pipeline
+accuracy from 0.815 to 0.930"* names Snipe and carries Zero Trust's latency, and
+both halves are true. Judged whole it reads as Snipe claiming 500ms. Clause
+granularity is the same level `stripUnsupportedClauses` repairs at, and it errs
+toward silence — a name in one clause and its figure in the next is missed rather
+than invented.
