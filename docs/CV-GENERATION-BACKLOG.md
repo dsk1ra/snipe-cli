@@ -20,7 +20,7 @@ and one item below was already closed there.
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
 | 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
-| 12 | regenerate 240–243 | hygiene | ~20 min of machine time |
+| 12 | ~~regenerate 240–243~~ | hygiene | **done, `output/2026-08-13_*`** |
 
 ---
 
@@ -330,10 +330,26 @@ partly in Experience section and nothing could read the invoice at the time.
 Full account and the two comparability traps in
 `PHASE3-GENERATION-LEDGER.md` §14.
 
-## 12. Regenerate reports 240–243
+## 12. Regenerate reports 240–243 — DONE
 
-They were rebuilt against the pre-floor selection and are stale. Report 239 has
-been redone; these have not.
+Rebuilt against the shipped selector (section cap + experience floor + best-of-two
+summary). Offer ids are 293–296; the command is
+`bash batch/local-runner.sh --skip-phase1 --skip-phase2 --only-id <id> --retry-failed`
+— `--retry-failed` is what bypasses the `p3_status == completed` gate, and without
+it the runner reports success and re-runs nothing.
+
+Output lands in a **new dated directory**, `output/2026-08-13_*`, rather than
+overwriting `output/2026-08-12_*`. Both now exist; the 08-12 pair is the stale
+one. They are user-layer files, so deleting them is your call.
+
+The tracker was not touched — `merge-tracker` matched each row by report number
+and skipped it, so there are no duplicate application rows.
+
+The cap fired on two of the four: report 241 lifted an employer 1 → 2 bullets and
+gave up a project bullet, and 242 did the same. Report 242's summary also dropped
+a stale *"85%+ test coverage"* claim, which is the §12 misattribution class.
+
+**All twelve items in this document are now closed.**
 
 ---
 

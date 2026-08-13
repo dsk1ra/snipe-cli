@@ -4,14 +4,17 @@ Paste this whole file as the opening prompt of a new session. It is written to b
 read cold: everything it asserts is either in the ledgers or reproducible from a
 command given here.
 
-Branch `develop`, working tree clean, 20 commits ahead of `801539f`. Suite 1358
-checks green, `npm run typecheck` clean.
+Branch `develop`, working tree clean. Suite 1361 checks green, `npm run
+typecheck` clean.
+
+**All twelve backlog items are closed.** What remains is two user-layer edits
+that only you can make, and whatever the next round of ideas turns out to be.
 
 ## Read these first, in order
 
-1. `docs/CV-GENERATION-BACKLOG.md` — the pick-list. Items 1, 2, 3, 4, 5, 7, 8, 9,
-   10 and 11 are now struck through with results. **Open: 6 and 12.**
-2. `docs/PHASE3-GENERATION-LEDGER.md` §14–§18 — everything measured this session.
+1. `docs/CV-GENERATION-BACKLOG.md` — the pick-list, all twelve items struck
+   through with results. Nothing in it is open.
+2. `docs/PHASE3-GENERATION-LEDGER.md` §14–§19 — everything measured this session.
 3. `docs/PHASE3-NEXT.md` — the closed-idea table, now four entries longer.
 4. `batch/CLAUDE.md` — benchmark rules. Rules 4 and 7 both bit this session.
 
@@ -28,10 +31,17 @@ Shipped and measured, in order:
   3.5 skills a posting out of a 105-item taxonomy.
 - **`select-sweep --shipped`** (§16) — `sweep`/`ablate`/`check` had been
   simulating the funnel production abandoned on 2026-08-08.
+- **Best-of-two summary** (§19) — `generateSummary` ranked the two drafts it
+  already had instead of shipping the first clean one. Summaries carrying no
+  quantified achievement at all: **5/32 → 1/32**.
 - **Dead-pin warning** moved to `local-runner.sh` preflight.
+- **Reports 240–243 regenerated** against all of the above, into
+  `output/2026-08-13_*`. The `output/2026-08-12_*` pair is the stale one and is
+  yours to delete.
 
-Current bench arms, newest last: `sum-v5` → `floor2` → **`cap14`** (the shipped
-state). `gradeord` exists and was rejected; do not use it as a control.
+Current bench arms, newest last: `sum-v5` → `floor2` → `cap14` → **`bestof2`**
+(the shipped state, and the control for anything next). `gradeord` exists and was
+rejected — do not use it as a control.
 
 | | coverage | exp_starved | commercial role at 1 bullet |
 |---|---|---|---|
@@ -60,14 +70,20 @@ together, re-baseline once, and only then do item 12.
 
 ## What is left
 
-- **Item 6, best-of-N summary** — the last untried idea, and the weakest
-  remaining. It costs three summary calls per offer, gives up temperature-0
-  determinism, and therefore needs repeats where every summary arm so far has
-  needed one. §18 is a reason to doubt it: the summary stage's output is steered
-  by what it is *handed*, and best-of-N changes only which sample survives.
-  Judge whether it is worth the arms before spending them.
-- **Item 12, regenerate reports 240–243** — stale again as of `cap14`. Do it
-  after the two user-layer edits above, not before, or it will need doing twice.
+Nothing on the list. The two user-layer edits above are the only outstanding
+work, and both are the user's.
+
+When they land, re-baseline once against `bestof2` and regenerate 240–243 again —
+`bash batch/local-runner.sh --skip-phase1 --skip-phase2 --only-id <293|294|295|296>
+--retry-failed`. **`--retry-failed` is the flag that matters**: without it the
+runner reports success and re-runs nothing, because `p3_status` is already
+`completed`.
+
+If new ideas are wanted, the largest measured gap is still retention:
+`differentiator_coverage` sits at 0.530 against an oracle ceiling of 1.000, and
+`node batch/bench-tools/select-sweep.mjs attribute` says where it goes. Read
+`PHASE3-NEXT.md`'s Experiment B first — targeted `cv.md` rephrasing is the one
+large bucket with a mechanism behind it and it has never been tried.
 
 ## Closed this session — do not re-open without new information
 
@@ -77,7 +93,9 @@ together, re-baseline once, and only then do item 12.
   0.10** — the grades are binary, so raising it cannot reorder anything, and the
   control benchmark rule 4 demands does not exist.
 - **Item 7, grade-ordered summary evidence.** Generic closer 4/32 → 8/32.
-  Evidence order steers the opener, not the achievement sentence.
+  Evidence order steers the opener, not the achievement sentence. Note this sits
+  next to item 6, which shipped: ranking *whole drafts* works, reordering the
+  evidence *inside* one does not.
 - **Item 2, blanket experience floor.** Subsumed by item 3, which fixes 83% of
   the complaint for free. The last 3% costs 0.024 more coverage.
 - **Item 8, synonym alignment.** 189 missed ATS terms across 32 offers, none
