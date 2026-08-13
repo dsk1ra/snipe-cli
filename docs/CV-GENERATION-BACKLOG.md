@@ -9,10 +9,10 @@ and one item below was already closed there.
 
 | # | item | area | cost to answer |
 |---|---|---|---|
-| 1 | dead pin in `profile.yml` | selection | minutes |
+| 1 | ~~dead pin in `profile.yml`~~ | selection | **code done, your string edit** |
 | 2 | blanket experience floor | selection | one 45-min arm |
 | 3 | section-level budget ratio | selection | offline sweep, then one arm |
-| 4 | judge grade as a cut | selection | offline sweep, then one arm |
+| 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
 | 6 | best-of-N summary | summary | one 32-offer arm |
 | 7 | grade-ordered evidence | summary | one 32-offer arm |
@@ -24,17 +24,23 @@ and one item below was already closed there.
 
 ---
 
-## 1. The pin in `config/profile.yml` has never fired
+## 1. The pin in `config/profile.yml` has never fired — code done
 
 `cv.pinned_projects` holds `"Zero Trust SIEM"`. The match is a case-insensitive
 substring of the `### ` title, and the title in `cv.md` is `Zero Trust Security
 Analytics Dashboard`. No substring, no pin. Every run since the feature landed
 has selected as if the list were empty.
 
-Two separate fixes, and only one of them is mine to make. The string lives in the
-user layer. The silence does not: a pin that matches nothing should fail loudly
-at load, because the failure mode here is a feature that appears to work and
-quietly does nothing for months.
+**Correction to the premise above: it was never silent.** `cv-select` has warned
+since the feature's first commit and warned on every run —
+`batch/logs/pdf-NNN-<id>.log` carries the line in 16 of 202 logs. That file is
+opened only when an offer fails, so the warning was loud in the wrong room.
+
+Fixed: the runner asks `unmatchedPins` once at preflight, beside the other config
+validation, and prints a warning rather than exiting — a stale pin must not stop
+a run. The per-offer warning stays for callers that are not the runner.
+
+The string itself is still yours.
 
 Worth knowing before you correct the string: a pin spends one of the three
 project slots and moves the benchmark for every arm, so any comparison against a
@@ -69,7 +75,23 @@ a ratio splits it into two. `select-sweep.mjs` can simulate it for free, and the
 simulator now agrees with reality to within 0.011 (§13), so an offline sweep is
 worth trusting before spending an arm.
 
-## 4. Use the judge grade as a cut, not only as a weight
+## 4. Judge grade as a cut — CLOSED, do not re-open
+
+**−0.062 differentiator coverage held out, 0 wins 18 losses, p<0.0001.** Answered
+offline for nothing; the grades were already cached. Ledger §16 has the account.
+
+The mechanism is the part that matters, because it also closes the neighbouring
+ideas. The judge's grades are binary, so every threshold is the same cut. Its
+zeros are **22.8% precise** against the Opus corpus — cutting them deletes 368
+flagged differentiators. And `gradeW` cannot be the control rule 4 demands
+because it is **already saturated at the shipped 0.10**: with grades in {0, 3},
+raising it cannot reorder anything.
+
+The judge is a precise positive signal (0.950) and a near-worthless negative one
+(0.228). Weighting uses the positives; cutting uses the negatives. That is the
+whole result.
+
+### The original proposal, for the record
 
 `noise_rate` is 0.178 — close to a fifth of what ships gets called padding by the
 same judge that graded it. The rank is `cos − α·corpus_mean + 0.10 × grade`, so a
