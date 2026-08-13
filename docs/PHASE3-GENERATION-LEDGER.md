@@ -928,3 +928,62 @@ proof that reallocating *project* bullets did not grow the page, and that number
 could not see a project bullet. The conclusion holds (`proj_bullets` is 8.00 in
 both arms, measured now), but the evidence offered for it did not support it.
 Use `exp_bullets` + `proj_bullets` for anything about page size.
+
+---
+
+## 15. `skill_coverage` was scoring 3.5 skills a posting
+
+Found while producing the item 9 taxonomy report, which is the only reason it was
+found at all: the metric reads 1.000 and has read 1.000 since the skills work
+landed, so nothing about it looked worth opening.
+
+`cv.md` writes some taxonomy items as alternatives — `TypeScript / JavaScript`,
+`Agile / Scrum`, `MongoDB / Atlas`, `Unit / Integration / E2E Testing` — and some
+compound names with a slash inside them: `CI/CD`, `C/C++`, `STUN/TURN`. The
+spaced slash means "either of these" and the tight one does not, consistently
+across all nine such items. That is the file's own notation.
+
+`skillCoverage` matched an item as one whole phrase, so a posting asking for
+TypeScript did not match `TypeScript / JavaScript`. **Those postings were not
+counted as misses. They left the denominator.** 31 of 128 offers name TypeScript;
+31 name Agile; 14 name a form of `Unit / Integration / E2E Testing`.
+
+| | before | after |
+|---|---|---|
+| `skills_asked` (mean per offer) | 3.5 | **4.2** |
+| `skill_coverage`, `sum-v5` / `floor2` | 1.000 | **1.000** |
+| `skill_coverage`, `spike32` / `alloc32` | 1.000 | 0.929 |
+
+So the pipeline passes the harder test — every skill a posting names under the
+wider match still reaches the page. The 0.929 on the two pre-skills-work arms is
+the metric recovering a real historical miss, and it agrees with the 0.932 the
+skills work recorded as its own starting point.
+
+**The selector was never affected.** `selectSkills` scores `hits()` as token
+overlap plus phrase, so `TypeScript / JavaScript` already ranked first and
+shipped on every TypeScript posting — verified by reading the rendered skills
+block on three offers rather than by reasoning about it. Only the metric matched
+on the phrase alone.
+
+That is the third time a gate and its metric have drifted apart in this
+codebase: `normPhrase` was exported to stop the selector and the harness
+disagreeing, `summaryUnsupported` was made one function after the harness copy
+grew `tenure` and `figure` while the gate checked only products, and this. The
+pattern is worth naming — when a metric scores a decision some other code makes,
+it must call that code, not re-implement its predicate.
+
+### Rejected as marginal, measured first
+
+`Express.js` and `Node.js` against postings writing bare `Express` / `Node`: real
+(all three occurrences are genuine framework references, read individually) but 3
+offers of 128. The same rule applied to `Next.js` and `.NET` would match ordinary
+English — 45 offers contain the word "next", 40 contain "net" — so an alias rule
+loses more than it wins. Left alone deliberately.
+
+### What the report says to do
+
+`node batch/bench-tools/skills-gap.mjs --min 4 --shaped`. The two largest gaps
+are notation rather than capability, and both are now one-character edits because
+`skillForms` reads the spaced slash: `AI / LLM application development` (84
+offers, 66% of the corpus) and `REST / RESTful APIs` (21, 16%). `cv.md` prose
+already proves both. Full list in `CV-GENERATION-BACKLOG.md` §9.

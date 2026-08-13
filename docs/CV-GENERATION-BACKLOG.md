@@ -17,7 +17,7 @@ and one item below was already closed there.
 | 6 | best-of-N summary | summary | one 32-offer arm |
 | 7 | grade-ordered evidence | summary | one 32-offer arm |
 | 8 | curated synonym alignment | ATS | offline, then one arm |
-| 9 | wider skills taxonomy | ATS | offline report, then your edit |
+| 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
 | 10 | generic proper-noun detector | fabrication | offline against 32 shipped |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
 | 12 | regenerate 240–243 | hygiene | ~20 min of machine time |
@@ -136,15 +136,52 @@ Distinct from Experiment B (`PHASE3-NEXT.md`), which rewrites `cv.md` itself to
 lower a bullet's corpus mean. That one attacks ranking; this one attacks the
 keyword surface, and they can ship independently.
 
-## 9. Widen the skills taxonomy in `profile.yml`
+## 9. Widen the skills taxonomy — ANSWERED, your edit next
 
-The cheapest ATS lever available. `filterSkillItems` grounds every rendered tag
-against `cv.md`, so adding source vocabulary carries no fabrication risk by
-construction — anything unsupported is dropped before it renders.
+The taxonomy lives in `cv.md`'s `## Skills` block, not `profile.yml` —
+`selectSkills(cvText, …)` parses the CV. Both are the user layer, so it does not
+change whose edit it is, but it changes which file to open.
 
-What I can produce without touching your layer: the list of JD terms across the
-128-offer corpus that currently match nothing, ranked by how often they appear.
-You decide which of them describe things you can actually do.
+Report: `node batch/bench-tools/skills-gap.mjs --min 4 [--shaped]`. Two passes,
+because they fail in opposite directions — a curated-vocabulary pass that is
+precise and blind to anything nobody wrote down, and a shape-only pass that is
+complete and noisy. The shape pass is what found the two entries at the top of
+this table, so it earned its noise.
+
+**The top two are notation, not capability.** `cv.md` already proves both, and
+the taxonomy simply has no string that matches what postings write. Since
+`skillForms` now reads a spaced slash as "either of these", each is a
+one-character edit:
+
+| write it as | instead of | offers naming it |
+|---|---|---|
+| `AI / LLM application development` | `LLM application development` | **84 (66%)** |
+| `REST / RESTful APIs` | `RESTful APIs` | **21 (16%)** |
+
+Then a genuine gap that is safe to claim: **Git** (10 offers, 8%) — the CV lists
+GitHub Actions and GitLab CI but never Git itself.
+
+Everything below is a capability question the corpus cannot answer. Nothing here
+carries fabrication risk either way: `filterSkillItems` grounds every rendered
+tag against `cv.md`, so an unsupported item is dropped before it renders.
+
+| term | offers | term | offers |
+|---|---|---|---|
+| Azure | 22 (17%) | Golang | 8 |
+| GCP / Google Cloud | 17 (13%) | Copilot | 8 |
+| Terraform | 11 (9%) | Angular | 6 |
+| SRE | 9 (7%) | Flask, Databricks | 4 each |
+
+Tail below 3 offers: Elasticsearch, Datadog, Snowflake, PHP, Kotlin, Scala,
+Ansible, Cassandra, Airflow, Hibernate, Pytest.
+
+**What this cost to find, and what it turned up on the way:** `skill_coverage`
+was scoring 3.5 skills a posting out of a 105-item taxonomy, because it matched
+the CV's exact string and `cv.md` writes several items as alternatives. Fixed —
+see the ledger. Also measured and **rejected as marginal**: bare `Express` /
+`Node` against the CV's `Express.js` / `Node.js`, which is real but 3 offers of
+128, and the bare forms of `Next.js` and `.NET` collide with ordinary English
+("next steps", "net salary"), so an alias rule would invent more than it fixes.
 
 ## 10. A generic proper-noun fabrication detector
 
