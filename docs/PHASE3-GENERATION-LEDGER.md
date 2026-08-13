@@ -1070,3 +1070,64 @@ It also puts a number on the "judge grades binary" defect recorded in
 `PHASE3-NEXT.md`. The problem is not only that the middle of the scale is unused;
 it is that the 0 bucket is 77% false. The judge's *ordering* survives that
 (it still earns its 66 s), and any use of its absolute zeros does not.
+
+---
+
+## 17. The section cap — bounding the contest instead of flooring an entry
+
+Backlog item 3, and the direct consequence of §14. If the starvation arrived the
+day experience and projects started sharing one pool, the obvious fix is not to
+protect an entry inside that contest but to bound it: cap the lines Projects may
+take of the 24.
+
+It needs no rule about *which* entry deserves the floor, which is the awkward
+question §13 had to answer with a sweep and still only half-answered — the floor
+deliberately lifts the teaching assistantship and leaves the commercial role at
+one line on most offers.
+
+### The sweep had to learn to see the trade first
+
+`evalCfg` scored coverage and yield. §14 is the case that coverage cannot see a
+starved Experience section, so a tool measuring only coverage reports every
+balance change as a pure loss — which is exactly what the first run of this
+sweep did. `exp_starved` and `all_exp_starved` now come back with every config.
+
+### Held out, 66 offers, shipped funnel, floor already on
+
+| cap | Δ coverage | CI95 | Δ exp_starved | CI95 | w-l |
+|---|---|---|---|---|---|
+| 16 | −0.001 | [−0.009, 0.007] | −0.061 | [−0.121, −0.015] | 0-4 |
+| **14** | **−0.011** | **[−0.029, 0.008]** | **−0.242** | **[−0.348, −0.152]** | **0-16** |
+| 12 | −0.052 | [−0.082, −0.023] * | −0.424 | [−0.545, −0.303] | 0-28 |
+| 10 | −0.088 (train) | — | −0.70 (train) | — | — |
+
+14 is where the trade turns: starvation falls 0.242 per offer with a CI clear of
+zero and 16 losses to 0 wins, while the coverage CI still contains zero. At 12
+coverage starts costing for real. Caps of 18 and above never bind — projects do
+not take more than 18 lines even unconstrained, which is the null-safety check
+that says the knob is a generalisation rather than a second allocator.
+
+**It is not a smaller page.** Total lines move 23.17 → 23.29 of 24 and shipped
+atoms 9.94 → 10.01, because experience bullets are cheaper per line than project
+bullets, so the same budget buys slightly more of them.
+
+Compare what the floor bought in §13: 0.28 starvation for a real −0.018. The cap
+buys 0.242 for a cost indistinguishable from zero, on top of the floor rather
+than instead of it — capped-without-floor measured worse on train (0.43 starved
+against 0.33 with both).
+
+### The smoke test, read rather than tabulated
+
+Three offers before spending the arm. Offer 111 is the case §13 recorded as
+*not* fixed:
+
+```
+floor2     exp 2/1   proj 4/2/1
+cap14      exp 2/2   proj 3/2/1
+```
+
+The bullet the cap bought back is the strongest commercial evidence on the CV —
+*"Led a two-developer team building a membership platform … MVP delivered in 4
+weeks"* — against a project bullet the posting scored marginally higher. Offer 4
+lifted Napier 1 → 2 the same way; offer 56 was unchanged because the cap did not
+bind. That is the shape the sweep predicted, on the offers the sweep never saw.
