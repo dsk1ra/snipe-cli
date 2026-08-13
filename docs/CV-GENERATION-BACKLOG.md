@@ -14,13 +14,13 @@ and one item below was already closed there.
 | 3 | ~~section-level budget ratio~~ | selection | **shipped, `projMaxLines=14`** |
 | 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
-| 6 | best-of-N summary | summary | one 32-offer arm |
+| 6 | ~~best-of-N summary~~ | summary | **shipped as best-of-2, no figure 5/32 → 1/32** |
 | 7 | ~~grade-ordered evidence~~ | summary | **rejected, closer 4/32 → 8/32** |
 | 8 | ~~curated synonym alignment~~ | ATS | **closed, aims at the wrong misses** |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
 | 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
-| 12 | regenerate 240–243 | hygiene | ~20 min of machine time |
+| 12 | ~~regenerate 240–243~~ | hygiene | **done, `output/2026-08-13_*`** |
 
 ---
 
@@ -137,7 +137,20 @@ The spike term already discounts a bullet that reads relevant to everything,
 which is most of what redundancy suppression would have caught. Listed here only
 so it stops being re-proposed; see `PHASE3-NEXT.md`.
 
-## 6. Best-of-N summary
+## 6. Best-of-N summary — SHIPPED, as best-of-two
+
+Not the proposed shape. Three samples at temperature 0.3 would have given up
+determinism and needed repeats; the **sibling draft already existed**, so drafting
+it unconditionally and letting `scoreSummary` choose gets the same effect from two
+structurally different prompts at temperature 0, for one extra call rather than
+two.
+
+Summaries carrying no quantified achievement at all: **5/32 → 1/32**. Generic
+closer 4/32 → 2/32, mean words unchanged, every falsity metric flat. One
+regression at offer 175, where the JD-blind sibling won and dropped the posting's
+own stack. Ledger §19.
+
+### The original proposal, for the record
 
 `generateSummary` returns the first usable draft. `scoreSummary` exists, is
 tested, and currently only breaks ties on the repair path — which fires rarely
@@ -317,10 +330,26 @@ partly in Experience section and nothing could read the invoice at the time.
 Full account and the two comparability traps in
 `PHASE3-GENERATION-LEDGER.md` §14.
 
-## 12. Regenerate reports 240–243
+## 12. Regenerate reports 240–243 — DONE
 
-They were rebuilt against the pre-floor selection and are stale. Report 239 has
-been redone; these have not.
+Rebuilt against the shipped selector (section cap + experience floor + best-of-two
+summary). Offer ids are 293–296; the command is
+`bash batch/local-runner.sh --skip-phase1 --skip-phase2 --only-id <id> --retry-failed`
+— `--retry-failed` is what bypasses the `p3_status == completed` gate, and without
+it the runner reports success and re-runs nothing.
+
+Output lands in a **new dated directory**, `output/2026-08-13_*`, rather than
+overwriting `output/2026-08-12_*`. Both now exist; the 08-12 pair is the stale
+one. They are user-layer files, so deleting them is your call.
+
+The tracker was not touched — `merge-tracker` matched each row by report number
+and skipped it, so there are no duplicate application rows.
+
+The cap fired on two of the four: report 241 lifted an employer 1 → 2 bullets and
+gave up a project bullet, and 242 did the same. Report 242's summary also dropped
+a stale *"85%+ test coverage"* claim, which is the §12 misattribution class.
+
+**All twelve items in this document are now closed.**
 
 ---
 

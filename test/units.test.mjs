@@ -312,6 +312,46 @@ try {
   deepEq(w.skillForms('Agile / Scrum'), ['Agile', 'Scrum'], 'a spaced slash lists alternatives');
   deepEq(w.skillForms('CI/CD'), ['CI/CD'], 'a tight slash is part of the name');
 
+  // ── generateSummary: clean is a floor, not a ranking ──
+  // Both drafts pass every guard, so the old code shipped whichever came first.
+  // `scoreSummary` existed and only ever fired on the repair path.
+  {
+    const sumCv = [
+      '## Experience', '',
+      '### Engineer', '**Acme** | 2024', '',
+      '- Built a payment service in Rust handling 900 requests per second with 99.9% uptime',
+      '- Shipped a Postgres migration tool cutting deploy time from 40 minutes to 6 minutes',
+    ].join('\n');
+    const bullets = ['Engineer: Built a payment service in Rust handling 900 requests per second with 99.9% uptime',
+                     'Engineer: Shipped a Postgres migration tool cutting deploy time from 40 minutes to 6 minutes'];
+    // 50-80 words, prose, every claim in the CV. The first is thin on evidence
+    // overlap; the second reuses the bullets' own wording, which is what
+    // scoreSummary rewards.
+    const thin = 'Engineer with experience across backend work and a steady record of delivery in '
+      + 'production settings. Comfortable owning services end to end, working with relational stores, '
+      + 'and keeping systems available for the people who depend on them day to day across a range of '
+      + 'teams, projects and reporting lines over several years of steady practice.';
+    const rich = 'Engineer with proven expertise in Rust backend services and database tooling. '
+      + 'Built a payment service in Rust handling 900 requests per second with 99.9% uptime, and '
+      + 'shipped a Postgres migration tool cutting deploy time from 40 minutes to 6 minutes. '
+      + 'Comfortable owning production services end to end across the whole delivery cycle.';
+    const calls = [];
+    // The tailored call carries the requirements; the sibling withholds them.
+    const call = async (_sys, usr) => { calls.push(usr); return /REQUIREMENT-MARKER/.test(usr) ? thin : rich; };
+    const got = await g.generateSummary({ bullets, role: 'Engineer', cvText: sumCv,
+      reqs: ['REQUIREMENT-MARKER'], jdText: '', call });
+    eq(calls.length, 2, 'the sibling is drafted even when the first draft is clean');
+    eq(/900 requests per second/.test(String(got)), true,
+      'and the better-scoring draft ships, not merely the first usable one');
+
+    // Reversed: the tailored draft is the strong one and must keep the page.
+    const call2 = async (_sys, usr) => (/REQUIREMENT-MARKER/.test(usr) ? rich : thin);
+    const got2 = await g.generateSummary({ bullets, role: 'Engineer', cvText: sumCv,
+      reqs: ['REQUIREMENT-MARKER'], jdText: '', call: call2 });
+    eq(/900 requests per second/.test(String(got2)), true,
+      'and a tie or near-tie keeps the tailored draft, so showing the posting is not undone');
+  }
+
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
   deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),

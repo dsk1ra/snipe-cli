@@ -966,11 +966,32 @@ export async function generateSummary({ bullets, role, cvText, incumbent = '', r
   };
 
   const tailored = await draft(reqs);
-  // Only paid for when the tailored draft cannot ship as written.
-  const grounded = (reqs.length && !usable(tailored, cvText, jdText)) ? await draft([]) : null;
+  const tOk = usable(tailored, cvText, jdText);
+  // The sibling is now drafted even when the first draft is clean, because
+  // **clean is a floor and not a ranking**. `scoreSummary` existed, was tested,
+  // and only ever fired on the repair path — so a draft that merely passed the
+  // guards shipped unranked, and the guards cannot tell a summary that answers
+  // the posting from one that technically says nothing false.
+  //
+  // Two prompts rather than two samples: the sibling withholds the requirements,
+  // so the pair differs structurally instead of by decoding noise. That keeps
+  // temperature 0, which matters more than it sounds — sampling would make a
+  // single run stop being a valid A/B on this stack and every summary arm so far
+  // has needed exactly one.
+  const grounded = reqs.length ? await draft([]) : null;
+  const gOk = usable(grounded, cvText, jdText);
 
-  if (usable(tailored, cvText, jdText)) return clampSummaryWords(tailored);
-  if (usable(grounded, cvText, jdText)) return clampSummaryWords(grounded);
+  if (tOk || gOk) {
+    // Tailored first, and `margin` means the sibling has to *beat* it rather than
+    // tie it. Showing the posting is worth ats_coverage +0.029 (ledger §11) and
+    // the score's evidence-overlap term reads literal bullet text, which a
+    // tailored draft spends some of its budget paraphrasing — so a bare argmax
+    // would quietly hand the page back to the JD-blind sibling and undo §11.
+    const ok = [tOk ? tailored : null, gOk ? grounded : null].filter(Boolean);
+    const best = ok.reduce((a, b) =>
+      scoreSummary(b, { bullets, cvText }) > scoreSummary(a, { bullets, cvText }) + margin ? b : a);
+    return clampSummaryWords(best);
+  }
 
   // Neither is clean. Fall back to repairing both and letting the score choose,
   // so a bad pair still ships something rather than nothing. The incumbent is the
