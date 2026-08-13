@@ -43,16 +43,21 @@ Current bench arms, newest last: `sum-v5` → `floor2` → `cap14` → **`bestof
 (the shipped state, and the control for anything next). `gradeord` exists and was
 rejected — do not use it as a control.
 
-| | coverage | exp_starved | commercial role at 1 bullet |
-|---|---|---|---|
-| `sum-v5` | 0.564 | 1.03 | 22% |
-| `floor2` | 0.552 | 0.75 | 19% |
-| **`cap14`** | **0.530** | **0.469** | **3%** |
+| | coverage | exp_starved | commercial role at 1 bullet | no figure in summary |
+|---|---|---|---|---|
+| `sum-v5` | 0.564 | 1.03 | 22% | — |
+| `floor2` | 0.552 | 0.75 | 19% | 5/32 |
+| `cap14` | 0.530 | 0.469 | 3% | 5/32 |
+| **`bestof2`** | **0.530** | **0.469** | **3%** | **1/32** |
+
+`cap14` → `bestof2` moves nothing in selection by construction; it is a summary
+change, and every selection metric reads a delta of exactly 0.000, which is the
+check that it stayed in its lane.
 
 ## Two things waiting on the user — do not do these yourself
 
-Both are user-layer files, and **both invalidate `cap14` as a control**. Land them
-together, re-baseline once, and only then do item 12.
+Both are user-layer files, and **both invalidate `bestof2` as a control**. Land
+them together and re-baseline once, then regenerate 240–243 again.
 
 1. **`config/profile.yml`** — `cv.pinned_projects` says `"Zero Trust SIEM"`; the
    title in `cv.md` is `Zero Trust Security Analytics Dashboard`. The pin has done
