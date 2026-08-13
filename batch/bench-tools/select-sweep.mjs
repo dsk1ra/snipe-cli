@@ -230,7 +230,7 @@ async function grades({ withDistinct = false } = {}) {
  * pass and before the density loop, so it takes lines from projects exactly as a
  * production floor would.
  */
-function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'all') {
+function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'all', cut = null) {
   const costs = atomCosts(A);
   const idx = A.map((a, i) => ({ a, i }))
     .filter(({ a }) => a.section !== 'Projects' || keptProjects.has(a.entity));
@@ -269,7 +269,13 @@ function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'a
       n.set(e, k + 1);
     }
   }
+  // The grade cut, applied to the surplus only. Everything above ran first on
+  // purpose: an entry keeps its top bullet and the floor is paid before the open
+  // contest, so a cut can never leave an entry as a bare heading. That ordering
+  // is the whole design — the judge grades 72% of atoms 0, so a cut applied
+  // before those passes would empty most entries outright.
   const rest = [...byEntity].flatMap(([e, v]) => v.slice(n.get(e) ?? 0)
+    .filter(x => !cut || !cut(x.i))
     .map(x => ({ e, i: x.i, cost: costs[x.i], score: score[x.i] })));
   for (const b of rest.sort((x, y) => (y.score / y.cost) - (x.score / x.cost))) {
     if (spent + b.cost > budget) continue;          // a cheaper bullet may still fit
@@ -282,7 +288,8 @@ function allocateLinesSim(A, score, keptProjects, budget, minExp, floorMode = 'a
 
 export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, reserve = 0, distinctW = 0,
   projCap = PROJ_BULLETS, projBudget = PROJ_KEEP * PROJ_BULLETS, gateK = 1,
-  projKeep = PROJ_KEEP, lineBudget = 0, minExp = 1, floorMode = 'all' } = {}) {
+  projKeep = PROJ_KEEP, lineBudget = 0, minExp = 1, floorMode = 'all',
+  gradeCut = 0 } = {}) {
   const off = cache.offers[id];
   if (!off) return [];
   const g = cache.grades[id] || {};
@@ -317,7 +324,15 @@ export function simulate(cache, id, { gradeW = 0.10, spikeW = 0, lambda = 0, res
   const keptProjects = new Set(projEntries.sort((x, y) => massOf(y) - massOf(x))
     .slice(0, lineBudget ? LB_PROJ_KEEP : projKeep));
 
-  if (lineBudget) return allocateLinesSim(A, score, keptProjects, lineBudget, minExp, floorMode);
+  // Drop an atom the judge graded below `gradeCut` from the open contest. There
+  // is effectively one setting: the grades are binary — 3026 zeros, 30 mid, 1135
+  // threes over 127 offers x 33 atoms — so any threshold in (0, 3] is "drop the
+  // zeros" and thresholds above 0 differ only in whether they also take the 30.
+  const cut = gradeCut
+    ? (i) => ((distinctW ? (g2[A[i].id]?.g ?? 0) : (g[A[i].id] ?? 0)) < gradeCut)
+    : null;
+
+  if (lineBudget) return allocateLinesSim(A, score, keptProjects, lineBudget, minExp, floorMode, cut);
 
   const quota = new Map();
   // Project bullets are drawn from one shared budget rather than a flat cap per
@@ -455,17 +470,24 @@ function evalCfg(cache, labels, offers, cfg) {
  * at. Any earlier sweep run at `spikeW > 0` was under-weighting the judge.
  */
 const SHIPPED_SPIKE = 6;
+// Every field production runs, including the floor. It was omitted when the
+// floor shipped, so `validate` went on describing the pre-floor pipeline against
+// the pre-floor arm — self-consistent, and one commit stale, which is the same
+// failure §13 was written about. Anything added to the shipped funnel belongs
+// here on the way in, not after the next tool discovers it.
 const shippedCfg = (gradeW = 0.10) => ({
   spikeW: SHIPPED_SPIKE,
   gradeW: gradeW * (1 + SHIPPED_SPIKE),
   lineBudget: LINE_BUDGET,
+  minExp: 2,
+  floorMode: 'top',
 });
 
 const REFERENCE = {
   legacy: { cov: 0.468, yld: 0.689, arm: 'vbp2', at: '2026-08-07',
             flags: 'SNIPE_PROJECT_BULLETS=2, no line budget' },
-  linebudget: { cov: 0.564, yld: 0.777, arm: 'sum-v5', at: '2026-08-12',
-                flags: 'SNIPE_LINE_BUDGET=24 SNIPE_MAX_PROJECTS=3' },
+  linebudget: { cov: 0.552, yld: 0.767, arm: 'floor2', at: '2026-08-13',
+                flags: 'SNIPE_LINE_BUDGET=24 SNIPE_MAX_PROJECTS=3, minTopExpBullets=2' },
 };
 
 function validate() {
@@ -550,25 +572,39 @@ function sweep(split = 'train') {
  * the ledger was taken that way; pass --base-spike / --base-cap / --base-gate-k
  * to measure the next change against what is shipped by then.
  */
-function check(split, cfg, base = {}) {
+function check(split, cfg, base = {}, shipped = false) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW: defaultGradeW, dropped } = scorable(cache, labels, split);
   // The baseline is always the shipped ranker; only the variant may move gradeW,
   // so "delete the judge" is measured against what production actually does.
   const gradeW = cfg.gradeW ?? defaultGradeW;
-  const baseCfg = { gradeW: defaultGradeW, spikeW: 0, projCap: PROJ_BULLETS, gateK: 1, projKeep: PROJ_KEEP, ...base };
+  // `--shipped` puts BOTH arms on the funnel production runs. It has to be both:
+  // a legacy baseline against a line-budget variant measures the funnel change
+  // and calls it the variant's gain. Without the flag this stays on the legacy
+  // funnel, because every number already in the ledgers was taken there and
+  // silently re-pointing them at a different funnel makes them incomparable —
+  // the same trap from the other side.
+  const funnel = shipped ? shippedCfg(cfg.gradeW ?? 0.10) : {};
+  const baseCfg = { gradeW: defaultGradeW, spikeW: 0, projCap: PROJ_BULLETS, gateK: 1, projKeep: PROJ_KEEP,
+                    ...funnel, ...base };
+  const varCfg = { ...funnel, ...cfg, gradeW: cfg.gradeW ?? funnel.gradeW ?? gradeW };
   const baseline = evalCfg(cache, labels, offers, baseCfg);
-  const got = evalCfg(cache, labels, offers, { ...cfg, gradeW });
+  const got = evalCfg(cache, labels, offers, varCfg);
   const byId = new Map(baseline.rows.map(r => [r.id, r]));
   const dCov = got.rows.map(r => r.cov - byId.get(r.id).cov);
   const dYld = got.rows.map(r => r.yld - byId.get(r.id).yld);
   console.log(`split=${split} n=${got.n} · judge term ${gradeW ? 'ON (0.10)' : 'OFF (cosine-only)'}` +
     `${dropped ? ` · ${dropped} ungraded offer(s) dropped` : ''}\n` +
-    `baseline: spikeW=${baseCfg.spikeW} projCap=${baseCfg.projCap} gateK=${baseCfg.gateK}\n` +
-    `variant: gradeW=${gradeW} spikeW=${cfg.spikeW ?? 0} lambda=${cfg.lambda ?? 0} ` +
-    `reserve=${cfg.reserve ?? 0} distinctW=${cfg.distinctW ?? 0} projCap=${cfg.projCap ?? PROJ_BULLETS} `+
-    `gateK=${cfg.gateK ?? 1} projKeep=${cfg.projKeep ?? PROJ_KEEP}\n`);
+    `funnel: ${shipped ? `SHIPPED (lineBudget=${LINE_BUDGET} minExp=2 floorMode=top)` : 'legacy (pre-2026-08-08)'}\n` +
+    `baseline: spikeW=${baseCfg.spikeW} projCap=${baseCfg.projCap} gateK=${baseCfg.gateK} gradeCut=${baseCfg.gradeCut ?? 0}\n` +
+    // Printed off the MERGED config, not the flags. Printing `cfg` showed
+    // spikeW=0 while the run used the funnel's 6, which is precisely how the two
+    // previous bugs in this file stayed invisible: the display described the
+    // request rather than the run.
+    `variant: gradeW=${varCfg.gradeW} spikeW=${varCfg.spikeW ?? 0} lambda=${varCfg.lambda ?? 0} ` +
+    `reserve=${varCfg.reserve ?? 0} distinctW=${varCfg.distinctW ?? 0} projCap=${varCfg.projCap ?? PROJ_BULLETS} `+
+    `gateK=${varCfg.gateK ?? 1} projKeep=${varCfg.projKeep ?? PROJ_KEEP} gradeCut=${varCfg.gradeCut ?? 0}\n`);
   for (const [name, before, after, d] of [
     ['differentiator_coverage', baseline.cov, got.cov, dCov],
     ['grade_yield', baseline.yld, got.yld, dYld]]) {
@@ -657,18 +693,33 @@ function attribute(split = 'all', projCap = PROJ_BULLETS, gateK = 1) {
       `${((100 * r.shipped) / r.seen).toFixed(0).padStart(4)}%  ${r.generic.toFixed(3).padStart(7)}  ${r.where}`);
 }
 
-function ablate(split = 'train') {
+function ablate(split = 'train', shipped = false) {
   const labels = loadLabels();
   const cache = addSpike(load());
   const { offers, gradeW, dropped } = scorable(cache, labels, split);
-  const base = evalCfg(cache, labels, offers, { gradeW });
+  // Same rule as `check`: the funnel is part of the baseline or every delta
+  // below is the funnel's and not the variant's.
+  const funnel = shipped ? shippedCfg() : {};
+  const base = evalCfg(cache, labels, offers, { gradeW, ...funnel });
   console.log(`split=${split} n=${base.n}  judge ${gradeW ? 'ON' : 'OFF'}` +
-    `${dropped ? ` (${dropped} ungraded dropped)` : ''}  baseline cov=${base.cov.toFixed(3)}\n`);
+    `${dropped ? ` (${dropped} ungraded dropped)` : ''}  baseline cov=${base.cov.toFixed(3)}` +
+    `  funnel=${shipped ? 'SHIPPED' : 'legacy'}\n`);
   console.log('config                        cov     delta   yield');
   const show = (name, cfg) => {
-    const r = evalCfg(cache, labels, offers, { gradeW, ...cfg });
+    const r = evalCfg(cache, labels, offers, { gradeW, ...funnel, ...cfg });
     console.log(`${name.padEnd(29)} ${r.cov.toFixed(3)}  ${r.cov - base.cov >= 0 ? '+' : ''}${(r.cov - base.cov).toFixed(3)}  ${r.yld.toFixed(3)}`);
   };
+  // The grade cut, on the shipped funnel only — it acts on the surplus the
+  // line budget leaves, which the legacy quotas do not have.
+  if (shipped) {
+    for (const c of [1, 2, 3]) show(`gradeCut ${c}`, { gradeCut: c });
+    // Rule 4: the cheap explanation for anything the cut wins is simply
+    // weighting the judge higher, which is what beat the distinctiveness rating.
+    for (const w of [0.10, 0.20, 0.40, 0.70, 1.0]) show(`gradeW ${w} (control)`, { gradeW: w * (1 + SHIPPED_SPIKE) });
+    for (const c of [1, 3]) for (const w of [0.40, 1.0])
+      show(`gradeCut ${c} + gradeW ${w}`, { gradeCut: c, gradeW: w * (1 + SHIPPED_SPIKE) });
+    return;
+  }
   for (const w of [1, 2, 3, 4, 6, 8, 12]) show(`spike ${w} only`, { spikeW: w });
   for (const l of [0.1, 0.2, 0.3, 0.5, 0.8]) show(`mmr ${l} only`, { lambda: l });
   for (const r of [2, 4, 6]) show(`reserve ${r} only`, { reserve: r });
@@ -701,23 +752,33 @@ if (cmd === 'prep') await prep();
 else if (cmd === 'grades') await grades({ withDistinct: process.argv.includes('--distinct') });
 else if (cmd === 'validate') validate();
 else if (cmd === 'sweep') sweep(arg('--split', 'train'));
-else if (cmd === 'ablate') ablate(arg('--split', 'train'));
+else if (cmd === 'ablate') ablate(arg('--split', 'train'), process.argv.includes('--shipped'));
 else if (cmd === 'attribute') attribute(arg('--split', 'all'), parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10),
   parseInt(arg('--gate-k', '1'), 10));
-else if (cmd === 'check') check(arg('--split', 'test'), {
-  spikeW: parseFloat(arg('--spike', '0')),
-  lambda: parseFloat(arg('--lambda', '0')),
-  reserve: parseInt(arg('--reserve', '0'), 10),
-  distinctW: parseFloat(arg('--distinct', '0')),
-  projCap: parseInt(arg('--proj-cap', String(PROJ_BULLETS)), 10),
-  gateK: parseInt(arg('--gate-k', '1'), 10),
-  projKeep: parseInt(arg('--proj-keep', String(PROJ_KEEP)), 10),
-  ...(process.argv.includes('--grade') ? { gradeW: parseFloat(arg('--grade', '0.10')) } : {}) },
-  { spikeW: parseFloat(arg('--base-spike', '0')),
-    projCap: parseInt(arg('--base-cap', String(PROJ_BULLETS)), 10),
-    gateK: parseInt(arg('--base-gate-k', '1'), 10),
-    projKeep: parseInt(arg('--base-proj-keep', String(PROJ_KEEP)), 10) });
+else if (cmd === 'check') {
+  // Only flags actually passed may override the funnel. Building these from
+  // `arg(f, default)` gave every field a value whether or not it was typed, so
+  // `--shipped` set spikeW=6 and the argv default immediately set it back to 0 —
+  // both arms then ran the shipped line budget with the spike term switched off,
+  // and the run still printed a clean paired result. An absent flag has to mean
+  // absent, not zero.
+  const has = (f) => process.argv.includes(f);
+  const opt = (f, key, parse) => (has(f) ? { [key]: parse(arg(f, '0')) } : {});
+  const num = (x) => parseFloat(x), int = (x) => parseInt(x, 10);
+  check(arg('--split', 'test'),
+    { ...opt('--spike', 'spikeW', num), ...opt('--lambda', 'lambda', num),
+      ...opt('--reserve', 'reserve', int), ...opt('--distinct', 'distinctW', num),
+      ...opt('--proj-cap', 'projCap', int), ...opt('--gate-k', 'gateK', int),
+      ...opt('--proj-keep', 'projKeep', int), ...opt('--grade-cut', 'gradeCut', int),
+      ...opt('--grade', 'gradeW', num) },
+    { ...opt('--base-spike', 'spikeW', num), ...opt('--base-cap', 'projCap', int),
+      ...opt('--base-gate-k', 'gateK', int), ...opt('--base-proj-keep', 'projKeep', int) },
+    has('--shipped'));
+}
 else console.log('usage: select-sweep.mjs prep|grades|validate|sweep|ablate|attribute|check [--split train|test|all]\n' +
   '       grades [--distinct]   check [--spike W] [--lambda L] [--reserve N] [--grade W] [--distinct W]\n' +
-  '                                   [--proj-cap N] [--gate-k N] [--proj-keep N]\n' +
-  '                                   [--base-spike W] [--base-cap N] [--base-gate-k N]');
+  '                                   [--proj-cap N] [--gate-k N] [--proj-keep N] [--grade-cut N]\n' +
+  '                                   [--base-spike W] [--base-cap N] [--base-gate-k N]\n' +
+  '       --shipped   run BOTH arms on the funnel production runs (line budget +\n' +
+  '                   experience floor). Without it, sweep/ablate/check simulate the\n' +
+  '                   pre-2026-08-08 funnel, which is where every ledger number was taken.');
