@@ -1070,3 +1070,123 @@ It also puts a number on the "judge grades binary" defect recorded in
 `PHASE3-NEXT.md`. The problem is not only that the middle of the scale is unused;
 it is that the 0 bucket is 77% false. The judge's *ordering* survives that
 (it still earns its 66 s), and any use of its absolute zeros does not.
+
+---
+
+## 17. The section cap — bounding the contest instead of flooring an entry
+
+Backlog item 3, and the direct consequence of §14. If the starvation arrived the
+day experience and projects started sharing one pool, the obvious fix is not to
+protect an entry inside that contest but to bound it: cap the lines Projects may
+take of the 24.
+
+It needs no rule about *which* entry deserves the floor, which is the awkward
+question §13 had to answer with a sweep and still only half-answered — the floor
+deliberately lifts the teaching assistantship and leaves the commercial role at
+one line on most offers.
+
+### The sweep had to learn to see the trade first
+
+`evalCfg` scored coverage and yield. §14 is the case that coverage cannot see a
+starved Experience section, so a tool measuring only coverage reports every
+balance change as a pure loss — which is exactly what the first run of this
+sweep did. `exp_starved` and `all_exp_starved` now come back with every config.
+
+### Held out, 66 offers, shipped funnel, floor already on
+
+| cap | Δ coverage | CI95 | Δ exp_starved | CI95 | w-l |
+|---|---|---|---|---|---|
+| 16 | −0.001 | [−0.009, 0.007] | −0.061 | [−0.121, −0.015] | 0-4 |
+| **14** | **−0.011** | **[−0.029, 0.008]** | **−0.242** | **[−0.348, −0.152]** | **0-16** |
+| 12 | −0.052 | [−0.082, −0.023] * | −0.424 | [−0.545, −0.303] | 0-28 |
+| 10 | −0.088 (train) | — | −0.70 (train) | — | — |
+
+14 is where the trade turns: starvation falls 0.242 per offer with a CI clear of
+zero and 16 losses to 0 wins, while the coverage CI still contains zero. At 12
+coverage starts costing for real. Caps of 18 and above never bind — projects do
+not take more than 18 lines even unconstrained, which is the null-safety check
+that says the knob is a generalisation rather than a second allocator.
+
+**It is not a smaller page.** Total lines move 23.17 → 23.29 of 24 and shipped
+atoms 9.94 → 10.01, because experience bullets are cheaper per line than project
+bullets, so the same budget buys slightly more of them.
+
+Compare what the floor bought in §13: 0.28 starvation for a real −0.018. The cap
+buys 0.242 for a cost indistinguishable from zero, on top of the floor rather
+than instead of it — capped-without-floor measured worse on train (0.43 starved
+against 0.33 with both).
+
+### The smoke test, read rather than tabulated
+
+Three offers before spending the arm. Offer 111 is the case §13 recorded as
+*not* fixed:
+
+```
+floor2     exp 2/1   proj 4/2/1
+cap14      exp 2/2   proj 3/2/1
+```
+
+The bullet the cap bought back is the strongest commercial evidence on the CV —
+*"Led a two-developer team building a membership platform … MVP delivered in 4
+weeks"* — against a project bullet the posting scored marginally higher. Offer 4
+lifted Napier 1 → 2 the same way; offer 56 was unchanged because the cap did not
+bind. That is the shape the sweep predicted, on the offers the sweep never saw.
+
+### The arm
+
+`floor2` → `cap14`, paired, n=32, fresh selection in both (a selection change may
+not reuse a select cache), 46.7 min:
+
+| metric | floor2 | cap14 | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.552 | 0.530 | **−0.022** | [−0.044, −0.006] | 0-4 | 0.125 |
+| `exp_starved` | 0.750 | 0.469 | **−0.281** | [−0.438, −0.125] | 0-9 | 0.004 |
+| `section_balance` | 0.387 | 0.444 | +0.056 | [0.038, 0.075] | 17-0 | <0.001 |
+| `mean_bullets` (experience) | 3.844 | 4.406 | +0.563 | [0.375, 0.750] | 17-0 | <0.001 |
+| `noise_rate` | 0.178 | 0.180 | +0.002 | [−0.012, 0.016] | 4-5 | ns |
+| `ats_coverage` | 0.659 | 0.655 | −0.004 | [−0.012, 0.003] | 5-6 | ns |
+
+`skill_coverage` 1.000, `grounding` 1.000, `num_retention` 1.000, `metric_fab`,
+`product_fab` and `num_lost` all 0.000 delta. Page geometry unmoved: 0.977 →
+0.976 pages, 1013 → 1011 px, and the 2-page cap is nowhere near binding.
+
+**And the thing the work was actually for.** Per employer, at one bullet:
+
+| | Teaching Assistant | **commercial role (UBWIS)** |
+|---|---|---|
+| `sum-v5` (pre-floor) | 81% | 22% |
+| `floor2` (floor only) | 56% | 19% |
+| **`cap14`** | 44% | **3%** |
+
+Six offers rendering the commercial role as a single line becomes one. That is
+the complaint that started §13, and the floor did not fix it — §13 said so
+explicitly and could not do better without a blanket floor costing −0.035.
+
+### The simulator was right about the benefit and half-right about the cost
+
+Predicted −0.011 coverage and −0.242 starvation; measured −0.022 and −0.281. The
+starvation prediction is good and the **cost prediction is out by 2×, in the
+direction that matters** — the sim's coverage CI contained zero and the arm's
+does not. Its per-entity prediction was exact (3% for the commercial role, 3%
+measured).
+
+So the sweep is trustworthy for ranking configurations and optimistic about what
+they cost. Prior calibration points were +0.096 vs +0.101 (Experiment A) and
+−0.018 vs −0.012 (§13); this is the first where the sign of the conclusion
+depends on the gap, and it did not change it.
+
+### What the trade actually looks like
+
+Offer 151, a full-stack posting: gained *"Automated manual billing and onboarding
+with Stripe subscription management and Google OAuth 2.0 (Next.js, Node.js/
+Express, MongoDB)"*, lost a bullet about auditing a benchmark and retiring two
+metrics. Clearly right.
+
+Offer 111: gained the membership-platform bullet, lost *"Designed a blind
+rendezvous protocol with full client-side end-to-end encryption (AES-256-GCM)"* —
+a real differentiator, and where the −0.022 comes from.
+
+The cap trades project differentiators for commercial-role evidence. Whether
+that is the right trade is a judgement about what a CV reader wants rather than
+something the corpus decides — but it is now priced: 0.022 coverage for five
+offers' worth of an employer that reads as a single line.

@@ -10,15 +10,15 @@ and one item below was already closed there.
 | # | item | area | cost to answer |
 |---|---|---|---|
 | 1 | ~~dead pin in `profile.yml`~~ | selection | **code done, your string edit** |
-| 2 | blanket experience floor | selection | one 45-min arm |
-| 3 | section-level budget ratio | selection | offline sweep, then one arm |
+| 2 | ~~blanket experience floor~~ | selection | **subsumed by item 3, quantified** |
+| 3 | ~~section-level budget ratio~~ | selection | **shipped, `projMaxLines=14`** |
 | 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
 | 6 | best-of-N summary | summary | one 32-offer arm |
 | 7 | grade-ordered evidence | summary | one 32-offer arm |
-| 8 | curated synonym alignment | ATS | offline, then one arm |
+| 8 | ~~curated synonym alignment~~ | ATS | **closed, aims at the wrong misses** |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
-| 10 | generic proper-noun detector | fabrication | offline against 32 shipped |
+| 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
 | 12 | regenerate 240–243 | hygiene | ~20 min of machine time |
 
@@ -46,7 +46,29 @@ Worth knowing before you correct the string: a pin spends one of the three
 project slots and moves the benchmark for every arm, so any comparison against a
 run made before the pin fires needs saying out loud.
 
-## 2. Blanket experience floor instead of top-entry only
+## 2. Blanket experience floor — SUBSUMED by item 3
+
+The section cap answers this without a blanket floor, because it attacks the
+same imbalance from the budget side. Per-entity, over the 128-offer corpus,
+measured on the entity the complaint was actually about:
+
+| config | Teaching Assistant at 1 bullet | **commercial role at 1 bullet** | Δ coverage held out |
+|---|---|---|---|
+| floor only (what shipped) | 53% | **18%** | — |
+| **floor + cap 14 (ships now)** | 37% | **3%** | −0.011, CI contains 0 |
+| blanket floor | 0% | 0% | −0.035, CI excludes 0 |
+| blanket floor + cap 14 | 0% | 0% | −0.037, CI excludes 0 |
+
+The cap removes **83% of the complaint for free** — the commercial role goes
+from one bullet on 18% of postings to 3%. A blanket floor closes the last 3% and
+charges 0.024 more coverage for it, and stacking it on top of the cap buys
+nothing further (−0.037 against −0.035 alone).
+
+Still your judgement rather than the corpus's, but it is now a much smaller
+question: 3% of postings against 0.024 coverage. The original framing below
+priced it at 0.037 for the whole gap, which was before the cap existed.
+
+### The original proposal, for the record
 
 The shipped floor lifts the highest-scoring experience entry to two bullets. On
 the 128-offer corpus that entry is usually the teaching assistantship, which is
@@ -141,7 +163,30 @@ Sorting the evidence by grade points the model at the strongest claim rather tha
 the first plausible one. No extra model call — the grades are already in memory
 at that point in the run.
 
-## 8. Curated synonym alignment for ATS terms
+## 8. Curated synonym alignment — CLOSED, it cannot move the metric it targets
+
+Aggregated the `ats_coverage` misses across all 32 offers of `floor2`: **189
+distinct terms the CV supports and the page did not carry, and not one of them
+is a technology.** The leaders are `complex` (15 offers), `location` (15),
+`comfortable` (11), `engineers` (11), `first` (10), `projects` (10).
+
+The proposal's own examples do not appear, and the reason is structural.
+`atsCoverage` scores only the terms `cv.md` already contains — that is what makes
+it ungameable by inventing. So "RDBMS" is not a miss: `cv.md` never says RDBMS,
+so the term is not supportable, so it is not counted. **A synonym for a term the
+CV lacks cannot raise this metric by construction**, and a synonym for a term the
+CV has is already covered.
+
+Being fair to the idea: real ATS keyword matching is not `ats_coverage`, and a
+recruiter's search for "RDBMS" is a real thing this harness cannot see. But that
+makes the intervention unmeasurable here rather than promising, and there is
+already a supported way to do it — item 9's route. `skillForms` reads a spaced
+slash as alternatives, and the taxonomy renders verbatim, so writing
+`PostgreSQL / RDBMS` in `cv.md` surfaces the term on the page today with no code
+and no fabrication surface. That is the same edit item 9 recommends, and it is
+where any synonym work belongs.
+
+### The original proposal, for the record
 
 `ats_coverage` sits at 0.659 and is structurally capped. `--writer verbatim`
 means every bullet is literal `cv.md` text, so a posting asking for "RDBMS" finds
@@ -205,7 +250,36 @@ see the ledger. Also measured and **rejected as marginal**: bare `Express` /
 128, and the bare forms of `Next.js` and `.NET` collide with ordinary English
 ("next steps", "net salary"), so an alias rule would invent more than it fixes.
 
-## 10. A generic proper-noun fabrication detector
+## 10. Generic proper-noun detector — CLOSED, measured against the arm that fabricated
+
+Run as proposed — "a capitalised token appearing in neither `cv.md` nor the
+posting" — over the pre-guard summaries of `sum-new`, the arm that fabricated on
+8 of 32 offers, and of `sum-v4`:
+
+| | `sum-new` | `sum-v4` |
+|---|---|---|
+| caught by `summaryUnsupported` only | **9** | 1 |
+| caught by both | 1 | 0 |
+| caught by the generic rule only | 5 | 2 |
+| …of those, real fabrications | **0** | **0** |
+
+Every generic-only hit is a compound or hyphenated form of a term `cv.md`
+genuinely claims: `C#-Python`, `React-based`, `Rust-based`, `Kafka-based`,
+`P2P`, `Python-based`, `Kafka/RabbitMQ`. A 16% false-positive rate on `sum-new`
+for nothing.
+
+**And it cannot catch the miss that motivated it.** §12's example is `sum-v4`
+claiming *"clinical AI agents"* on a clinical-AI posting. The rule keys on
+capitalisation; "clinical" is lowercase. The one documented gap in the hand
+lists is invisible to the proposed replacement for them.
+
+Fixing the false positives means morphological normalisation — splitting
+hyphens, stripping `-based`, matching compounds — which is real code for a
+measured yield of zero. The hand-maintained lists stay. Their weakness is real
+and this is not the fix for it; a lowercase-domain rule would be, and that is
+what `NAMED_DOMAINS` already is.
+
+### The original proposal, for the record
 
 `NAMED_DOMAINS` and `CASED_PRODUCTS` are hand-maintained word lists, and every
 entry in them was added *after* a fabrication got through. The clinical-AI miss

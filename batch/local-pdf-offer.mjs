@@ -655,6 +655,8 @@ if (!cached) try {
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
       maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
+      // 0 restores the single pool, which is the pre-cap arm's selector.
+      projMaxLines: parseInt(process.env.SNIPE_PROJ_MAX_LINES ?? '14', 10) || 0,
       projectBulletBudget: num('SNIPE_PROJ_BUDGET', 8),
       maxProjects:         num('SNIPE_MAX_PROJECTS', 3) });
   storeSelection(cvForPrompt);

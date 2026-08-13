@@ -409,6 +409,10 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     // Floor on the highest-scoring experience entry. 1 restores the pre-floor
     // allocation exactly, which is what makes this measurable as one change.
     minTopExpBullets = 2,
+    // Lines the Projects section may take of `lineBudget`. 0 disables it and
+    // restores the single pool. 14 of 24 is the swept optimum — see
+    // `allocateLines` for the trade it makes and why it is not a smaller page.
+    projMaxLines = 14,
     // Project bullets are drawn from one shared budget rather than a flat cap
     // per project: a posting that is mostly about what one project did should
     // spend more of the page on that project. The budget is exactly what 4
@@ -585,9 +589,18 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
    * result is over budget rather than an entry rendered as a bare heading.
    * `caps` bounds how lopsided one entry can get, as before.
    */
-  function allocateLines(entries, budget, caps, floorSet = null, floorMin = 1) {
+  function allocateLines(entries, budget, caps, floorSet = null, floorMin = 1, projMax = 0) {
     const n = new Map(entries.map(e => [e, 1]));
+    const isProj = (e) => !floorSet || !floorSet.has(e);
     let spent = entries.reduce((a, e) => {
+      const top = [...e.scored].sort((x, y) => y.score - x.score)[0];
+      return a + (top ? bulletCost(top.text) : 0);
+    }, 0);
+    // Lines projects have taken. The one-bullet-each pass above counts toward the
+    // section cap but is never blocked by it — a project on the page has to
+    // render a bullet or it ships as a bare title.
+    let projSpent = entries.reduce((a, e) => {
+      if (!isProj(e)) return a;
       const top = [...e.scored].sort((x, y) => y.score - x.score)[0];
       return a + (top ? bulletCost(top.text) : 0);
     }, 0);
@@ -632,8 +645,23 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     for (const b of rest.sort((x, y) => (y.score / y.cost) - (x.score / x.cost))) {
       if (spent + b.cost > budget) continue; // a cheaper bullet may still fit
       if ((n.get(b.e) ?? 0) >= (caps.get(b.e) ?? Infinity)) continue;
+      // The section cap. One pool lets a strongly-matching posting spend the page
+      // on projects and leave both employers at a single line — which is what the
+      // 24-line budget did the day it landed, invisibly, because no metric read
+      // section balance until `all_exp_starved_pct` existed.
+      //
+      // This bounds the contest rather than flooring an entry inside it, so it
+      // needs no rule about *which* entry deserves protection. Swept over the
+      // 128-offer corpus it is the better half of that trade: at 14 lines,
+      // experience entries left at one bullet fall 0.242 per offer (0-16,
+      // p<0.0001) for a coverage cost of 0.011 whose CI contains zero, against
+      // the floor's 0.28 for a real 0.018. It is not a bigger page — total lines
+      // move 23.17 -> 23.29 of 24 and atoms 9.94 -> 10.01, because experience
+      // bullets are cheaper than project bullets.
+      if (projMax && isProj(b.e) && projSpent + b.cost > projMax) continue;
       n.set(b.e, (n.get(b.e) ?? 0) + 1);
       spent += b.cost;
+      if (isProj(b.e)) projSpent += b.cost;
     }
     return n;
   }
@@ -675,7 +703,7 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     ]);
     const all = [...(expParsed?.entries ?? []), ...(projParsed?.entries ?? [])];
     const expSet = new Set(expParsed?.entries ?? []);
-    for (const [e, k] of allocateLines(all, lineBudget, caps, expSet, minTopExpBullets)) {
+    for (const [e, k] of allocateLines(all, lineBudget, caps, expSet, minTopExpBullets, projMaxLines)) {
       trim(e, k, true);
     }
   } else {
@@ -1622,6 +1650,27 @@ Text.
     .split(/^### /m).slice(1).map(b => b.split('\n').filter(l => l.startsWith('- ')).length);
   assert(perEntry(floored).filter(k => k >= 2).length <= 1 + perEntry(noFloor).filter(k => k >= 2).length,
     'the floor lifts one experience entry, not every one');
+
+  // The section cap. `projMaxLines: 0` must reproduce the uncapped allocation
+  // byte for byte — the same null-safety `projCap 2` had, and the thing that
+  // makes this a generalisation rather than a second allocator wearing a flag.
+  const capArgs = { maxProjects: 3, maxBulletsPerRole: 4, maxBulletsPerProject: 4,
+                    lineBudget: 16, _embed: stub };
+  const uncapped = await selectCvForJd(fakeCv, reqs, '', { ...capArgs, projMaxLines: 0 });
+  const capped   = await selectCvForJd(fakeCv, reqs, '', { ...capArgs, projMaxLines: 4 });
+  const capProjBullets = (t) => (t.split('## Projects')[1] ?? '')
+    .split('\n').filter(l => l.startsWith('- ')).length;
+  assert(capProjBullets(capped) <= capProjBullets(uncapped),
+    'a project line cap never renders more project bullets than no cap');
+  assert(expBullets(capped) >= expBullets(uncapped),
+    'and the lines it takes from projects go to experience, not off the page');
+  // Never at the cost of a bare heading: the one-bullet-each pass counts toward
+  // the cap and is not blocked by it.
+  for (const heading of ['### Crypto Tool', '### Java Batch']) {
+    if (!capped.includes(heading)) continue;
+    const after = capped.slice(capped.indexOf(heading));
+    assert(/^- /m.test(after.split('###')[1] ?? after), `${heading} keeps a bullet under a tight cap`);
+  }
 
   // lineBudget null is the old path, untouched.
   const counted = await selectCvForJd(fakeCv, reqs, '', {
