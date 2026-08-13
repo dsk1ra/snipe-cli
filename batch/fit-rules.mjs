@@ -206,6 +206,106 @@ export function languageMismatchCap(jdText, cvText) {
   return { cvCap: 5, nsCap: 5, missing: null };
 }
 
+// ── Location policy ──────────────────────────────────────────────────────────
+// Same shape, and the same reason, as languageMismatchCap: a commute the profile
+// calls a hard no is one requirement among forty, so it barely moves the coverage
+// average and the model scores the role on its merits. Measured over the stored
+// evals: 8 offers scored >= 4.0 on a London hybrid/on-site posting, and Phase 2
+// printed the deal-breaker verbatim in `hard_stops` on two of them while still
+// returning "Apply" and generating a tailored PDF — `hard_stops` never feeds
+// `final_decision` (staged-evaluator.mjs), so a detected hard stop is decoration.
+//
+// A named city list, not "any capitalised word": a JD names a dozen places it is
+// not hiring in — the HQ, the customers, the last funding round's office — and
+// every one of them would cap an otherwise remote role.
+const UK_CITIES = [
+  'london', 'manchester', 'leeds', 'liverpool', 'sheffield', 'nottingham',
+  'leicester', 'bristol', 'cardiff', 'newcastle', 'york', 'cambridge', 'oxford',
+  'reading', 'brighton', 'southampton', 'portsmouth', 'edinburgh', 'glasgow',
+  'aberdeen', 'dundee', 'belfast', 'dublin', 'milton keynes', 'swindon',
+  'derby', 'norwich', 'exeter', 'bath',
+];
+
+const ONSITE_SIGNAL = /\bon-?site\b|\bhybrid\b|\bin[- ]office\b|\boffice[- ]based\b|\d\s*days?\s*(?:a|per)\s*week\s*(?:in|at|from)\b/i;
+const FULLY_REMOTE  = /\b(?:fully|100%|entirely|permanently)\s+remote\b|\bremote[- ]first\b|\bwork\s+from\s+anywhere\b/i;
+const MONTHLY_CADENCE = /\d+\s*days?\s*(?:a|per)\s*month|\bmonthly\s+(?:travel|visit|on-?site)/i;
+const WEEKLY_CADENCE  = /\d+\s*days?\s*(?:a|per)\s*week|\bweekly\s+(?:travel|visit|on-?site)/i;
+
+/**
+ * Places the candidate will physically attend an office, from `config/profile.yml`:
+ * `location.city`, plus any `search_locations` entry that is NOT remote-only.
+ * That is the whole policy — one commutable base, everywhere else remote — so it
+ * is read from the user layer rather than hardcoded here.
+ *
+ * @param {string} profileText  raw config/profile.yml
+ * @returns {string[]} lowercase place names, [] when the profile says nothing
+ */
+export function commutableTerms(profileText) {
+  const text = String(profileText || '');
+  const terms = [];
+  const city = text.match(/^\s*city:\s*["']?([^"'\n]+)/m)?.[1];
+  if (city) terms.push(city.trim().toLowerCase());
+  const block = text.match(/^\s*search_locations:\s*\n([\s\S]*?)(?=\n\s*\w+:|$)/m)?.[1] || '';
+  for (const line of block.split('\n')) {
+    if (!/^\s*-\s/.test(line) || /remote\s+only/i.test(line)) continue;
+    const place = line.replace(/^\s*-\s*["']?/, '').split(/[—–]|"|'/)[0];
+    for (const part of place.split('/')) {
+      const t = part.trim().toLowerCase();
+      if (t) terms.push(t);
+    }
+  }
+  return [...new Set(terms.filter(Boolean))];
+}
+
+/**
+ * Hard cap when the JD requires office presence somewhere the candidate will not
+ * commute to. Caps both dimensions at 2 — the same 2/2 languageMismatchCap uses,
+ * which lands the composite at 2.0: under Phase 1's 2.5 gate and under Phase 2's
+ * `score < 3 => Skip`, so a hard-no role stops before Phase 3 tailors a CV for it.
+ *
+ * Deliberately conservative, because a false positive deletes a good offer while
+ * a false negative only leaves noise the human discards. The two signals must be
+ * NEAR each other, which is how these ads are actually written ("Location:
+ * Glasgow … Work Setup: Hybrid - 3 days in the office", "an on-site role based in
+ * either our London or Frankfurt office"). Testing them independently capped
+ * a vendor's remote-friendly posting at 2.0 — it says "there is no minimum
+ * in-office qualification requirement" and names London in a list of global
+ * offices, 1.7k characters apart.
+ *
+ * ponytail: a JD saying both "hybrid" and "fully remote" is left uncapped. The
+ * profile calls that on-site ("remote, two days a week in the office"); telling
+ * the two apart needs more than proximity, and no such offer has shown up yet.
+ *
+ * @param {string} jdText
+ * @param {string} profileText  raw config/profile.yml
+ * @returns {{cvCap: number, nsCap: number, city: string|null}}
+ */
+const PROXIMITY = 160;  // chars either side of the city name
+
+export function locationMismatchCap(jdText, profileText) {
+  const jd = String(jdText || '').toLowerCase();
+  const commutable = commutableTerms(profileText);
+  const none = { cvCap: 5, nsCap: 5, city: null };
+  if (!commutable.length) return none;              // no stated policy — no gate
+  if (!ONSITE_SIGNAL.test(jd)) return none;         // nothing demands attendance
+  if (commutable.some(t => jd.includes(t))) return none;
+  if (FULLY_REMOTE.test(jd)) return none;
+  for (const city of UK_CITIES) {
+    const re = new RegExp(`\\b${city}\\b`, 'g');
+    let m;
+    while ((m = re.exec(jd))) {
+      const window = jd.slice(Math.max(0, m.index - PROXIMITY), m.index + city.length + PROXIMITY);
+      if (!ONSITE_SIGNAL.test(window)) continue;
+      // The policy allows a monthly cadence ("a few days a month") and refuses a
+      // weekly one, so an ad offering "6 days a month travel to office" is a
+      // yes and must not be capped for saying "hybrid" in the same breath.
+      if (MONTHLY_CADENCE.test(window) && !WEEKLY_CADENCE.test(window)) continue;
+      return { cvCap: 2, nsCap: 2, city };
+    }
+  }
+  return none;
+}
+
 export function stackMismatchCap(jdText, cvText, { cap = 3, minMentions = 2 } = {}) {
   const have = candidateEcosystems(cvText);
   const present = [];
@@ -319,6 +419,39 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(r.missing === null, 'nice-to-have german not capped');
   r = languageMismatchCap('We serve the German market from our Berlin office.', cv);
   assert(r.missing === null, 'market mention not capped');
+
+  // locationMismatchCap. Fictional policy, same as the languages above — the
+  // assertions need only "one commutable base" and "somewhere they will not go".
+  const profileYml = 'location:\n  city: "Ashcombe"\n  search_locations:\n' +
+    '    - "Ashcombe / Mereside — on-site, hybrid or remote"\n' +
+    '    - "United Kingdom — fully remote only"\n    - "London — fully remote only"\n';
+  assert(commutableTerms(profileYml).join(',') === 'ashcombe,mereside',
+    'remote-only search locations are not commutable bases');
+  const loc = jd => locationMismatchCap(jd, profileYml);
+  assert(loc('Location: London (Hybrid Working). Rust as a main language.').city === 'london',
+    'London hybrid capped');
+  assert(loc('Location & Work Model: London, UK | Hybrid (3 days per week in the office)').cvCap === 2,
+    'weekly commute caps both dimensions at 2');
+  assert(loc('Location: Glasgow. Work Setup: Hybrid - 3 days in the office').city === 'glasgow',
+    'any non-commutable city counts, not just London');
+  assert(loc('Backend Engineer, Ashcombe. Hybrid, 3 days a week in the office.').city === null,
+    'the commutable base is never capped');
+  assert(loc('Fully remote (UK). The team meets in London twice a year.').city === null,
+    'a fully-remote role naming London is not capped');
+  assert(loc('Locations: London, Essex | Hybrid: 6 days a month travel to office').city === null,
+    'a monthly cadence is inside the travel policy');
+  assert(loc('Backend Engineer. Hybrid working available.').city === null,
+    'an on-site signal naming no city is not capped');
+  // The proximity rule. One vendor posting says it has no in-office requirement
+  // and names London 1.7k characters away in a list of global offices; testing the
+  // two signals independently capped it at 2.0 from a score of 5.0.
+  assert(loc(`There is no minimum in-office qualification requirement. ${'x'.repeat(400)} `
+    + 'Headquartered overseas with key offices in London, New York and Paris.').city === null,
+    'city and on-site signal must be near each other');
+  assert(loc('Location: London. Hybrid working, 2 days a week in the office.').city === 'london',
+    'near-adjacent signals still cap');
+  assert(locationMismatchCap('Location: London (Hybrid)', '').city === null,
+    'no stated policy means no gate');
 
   // candidateEcosystems reads work, not the skills catalogue: a technology named
   // only in the taxonomy has no bullet behind it anywhere on the CV.
