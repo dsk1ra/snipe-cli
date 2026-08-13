@@ -100,6 +100,35 @@ export const normPhrase = (s) => ` ${String(s || '').toLowerCase()
 const norm = normPhrase;
 
 /**
+ * The forms a posting may legitimately use to name one taxonomy item.
+ *
+ * `cv.md` writes alternatives with a **spaced** slash and compound names with a
+ * **tight** one, consistently across the whole taxonomy: "TypeScript /
+ * JavaScript", "Agile / Scrum" and "MongoDB / Atlas" are two names for one
+ * thing, while "CI/CD", "C/C++" and "STUN/TURN" are single names that happen to
+ * contain a slash. Reading that is not guessing at the user's intent — it is the
+ * notation the file already uses.
+ *
+ * `selectSkills` never needed this because `hits()` scores token overlap, so a
+ * posting naming TypeScript already ranks "TypeScript / JavaScript" first and
+ * ships it. `skillCoverage` matches whole phrases, so it asked whether the
+ * posting had written the CV's exact string — and 31 postings naming TypeScript
+ * were not counted as misses but were not counted at all. That is how
+ * `skill_coverage` reported 1.000 over 3.5 scored skills a posting.
+ *
+ * Exported for the same reason `normPhrase` is: the harness must score the thing
+ * the selector selected, and the two drifting apart is the failure this repo has
+ * now hit three times.
+ *
+ * @param {string} item one taxonomy item as `cv.md` writes it
+ * @returns {string[]} the item, or its alternatives if it lists any
+ */
+export function skillForms(item) {
+  const s = String(item || '').trim();
+  return /\s\/\s/.test(s) ? s.split(/\s+\/\s+/).map(x => x.trim()).filter(Boolean) : [s];
+}
+
+/**
  * Which skill items the CV itself ties to the ones the posting named.
  *
  * A posting asking for Java is also asking, in every way that matters, about

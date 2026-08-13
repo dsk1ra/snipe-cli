@@ -66,7 +66,7 @@ import { parseCvSections, parseEntries, entryCompany,
 import { embed, cosine } from './embeddings.mjs';
 import { summaryUnsupported as summaryFab, productFab,
          summaryShape, figureAttribution } from './summary-stage.mjs';
-import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
+import { parseSkillCategories, normPhrase, skillForms } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
@@ -421,8 +421,14 @@ export function skillCoverage(jdText, cvText, outputText) {
   const norm = normPhrase;
   const items = [...new Set(parseSkillCategories(cvText).flatMap(c => c.items))];
   const jd = norm(jdText), out = norm(outputText);
-  const asked = items.filter(s => jd.includes(norm(s)));
-  const missed = asked.filter(s => !out.includes(norm(s)));
+  // Matched through `skillForms`, so an item the CV writes as a list of
+  // alternatives is asked when the posting names any one of them. Scoring the
+  // CV's exact string instead did not count those postings as misses — it
+  // dropped them from the denominator entirely, which is why this read 1.000
+  // over 3.5 skills a posting while 31 postings named TypeScript against a CV
+  // that writes "TypeScript / JavaScript".
+  const asked = items.filter(s => skillForms(s).some(f => jd.includes(norm(f))));
+  const missed = asked.filter(s => !skillForms(s).some(f => out.includes(norm(f))));
   return {
     coverage: asked.length ? (asked.length - missed.length) / asked.length : null,
     asked: asked.length,
@@ -535,6 +541,26 @@ function metricsFor(label, paths = {}) {
       (c.skills || []).map(s => `${s.category || ''} ${s.items || ''}`).join(' '),
       exp.map(e => (e.bullets || []).join(' ')).join(' '),
     ].join('\n');
+    // How the page's evidence budget was split between the two sections that
+    // compete for it. The imbalance the experience floor was built to fix was
+    // invisible to every metric in this file — nine project bullets over two
+    // one-line employers scores full marks on all of them, which is standing
+    // rule 9's question asked of the sections rather than of an empty output.
+    // `mean_bullets` counts the page; it cannot say who holds it.
+    //
+    // Two numbers, because the obvious one alone does not work. `section_balance`
+    // catches the catastrophic shape and misses the real one: across the floor arm
+    // it moved 0.354 → 0.387, which reads as noise. What actually moved is the
+    // starvation count — offers with every employer at a single bullet went
+    // 7/32 → 0/32, and that had to be counted by hand off rendered PDFs because
+    // nothing here could see it (ledger §13).
+    //
+    // Scored off cv-content.json like everything else, which for a bench arm IS
+    // the rendered document: local-pdf-offer.mjs exits before the density ladder
+    // under --bench-dir, so no post-ladder page exists to disagree with it.
+    const expB = exp.reduce((a, e) => a + (e.bullets || []).length, 0);
+    const projB = (c.projects || []).reduce((a, p) => a + (p.bullets || []).length, 0);
+    const starved = exp.filter(e => (e.bullets || []).length <= 1).length;
     const jdText = readSafe(join(dir, d, 'job-description.txt'));
     const fabProducts = productFab(outputText, cvText);
     const ats = atsCoverage(jdText, cvText, outputText);
@@ -548,6 +574,15 @@ function metricsFor(label, paths = {}) {
       dir: d,
       role: roleById.get(d.split('_')[0]) || '',
       roles: exp.length,
+      exp_bullets: expB,
+      proj_bullets: projB,
+      section_balance: expB + projB ? expB / (expB + projB) : null,
+      exp_starved: starved,
+      // null, not 0, when there is no Experience section at all. "every entry is
+      // at the floor" is not satisfied by having no entries, and a 0 would put
+      // that case at the healthy end of the scale. `role_retention` is the metric
+      // that catches a vanished section; this one must not claim to.
+      all_exp_starved: exp.length ? (starved === exp.length ? 1 : 0) : null,
       products: fabProducts,
       product_fab: fabProducts.length,
       ats_coverage: ats.coverage,
@@ -598,6 +633,14 @@ function metricsFor(label, paths = {}) {
       fabList: [...new Set(fabNums)],
       copied,
       grounding: groundN ? groundSum / groundN : 0,
+      // `mean_bullets` once averaged — and it counts **matched experience bullets
+      // only**, because it is grounding's denominator rather than a page census.
+      // The name says otherwise and the ledgers have read it as the page: Experiment
+      // A's "mean_bullets identical to three decimals, so this is redistribution
+      // not a bigger page" was quoted about an allocation change to *project*
+      // bullets, which this number cannot see. The conclusion survived — measured
+      // now, `proj_bullets` is 8.00 in both arms — but the evidence did not support
+      // it. Use `exp_bullets` + `proj_bullets` for anything about page size.
       bullets: groundN,
       // ponytail: a CV whose source bullets carry no figures scores 1 — nothing
       // to lose. num_lost is the absolute counterpart, immune to that.
@@ -657,6 +700,14 @@ function metricsFor(label, paths = {}) {
     skill_coverage_n: rows.filter(r => typeof r.skill_coverage === 'number').length,
     skills_asked: +mean('skills_asked').toFixed(1),
     mean_bullets: +mean('bullets').toFixed(2),
+    exp_bullets: +mean('exp_bullets').toFixed(2),
+    proj_bullets: +mean('proj_bullets').toFixed(2),
+    // A share, not a score — there is no correct value, and projects legitimately
+    // take more of the page. Read it as drift, and read `all_exp_starved_pct` as
+    // the gate.
+    section_balance: meanOf('section_balance') === null ? null : +meanOf('section_balance').toFixed(3),
+    exp_starved: +mean('exp_starved').toFixed(2),
+    all_exp_starved_pct: meanOf('all_exp_starved') === null ? null : +meanOf('all_exp_starved').toFixed(3),
     rows,
   };
 }
@@ -981,7 +1032,7 @@ if (!isMain) {
   // Pages first: during the one-page work it is the gate, and a row that does not
   // fit is not improved by whatever its other columns say.
   const pgCol = (r) => (typeof r.pages === 'number' ? `${r.pages.toFixed(2)}${r.fits_one_page ? '' : '!'}` : '-');
-  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'} attrib=${r.summary_attrib_kinds || '-'}  ${r.products.join(',') || ''}`);
+  if (rest.includes('--rows')) for (const r of rows) console.log(`  ${r.dir}  pg=${pgCol(r)} bal=${r.exp_bullets}/${r.proj_bullets}${r.all_exp_starved ? '!' : ''} diff=${diffCol(r)} noise=${pct(r.noise_rate)} yield=${pct(r.grade_yield)} roles=${r.roles} fab=${r.fab} copied=${r.copied} g=${r.grounding.toFixed(2)} num=${r.num_retention.toFixed(2)}(-${r.num_lost}) pfab=${r.product_fab} skill=${r.skill_coverage == null ? '-' : r.skill_coverage.toFixed(2)} ats=${r.ats_coverage.toFixed(2)} reg=${r.selection_regret == null ? '-' : r.selection_regret.toFixed(2)} sfab=${r.summary_fab}/${r.summary_fab_raw}${r.summary_fab_kinds ? `(${r.summary_fab_kinds})` : ''} shape=${r.summary_shape_kinds || '-'} attrib=${r.summary_attrib_kinds || '-'}  ${r.products.join(',') || ''}`);
 } else if (cmd === 'paired') {
   // `compare` prints two means and their difference, which is exactly the shape
   // of evidence the retrieval work had to stop trusting: a dozen variants against
@@ -1013,6 +1064,11 @@ if (!isMain) {
     ['metric_fab', 'fab'], ['product_fab', 'product_fab'],
     ['summary_cv_fit', 'summary_cv_fit'], ['summary_jd_fit', 'summary_jd_fit'],
     ['selection_regret', 'selection_regret'], ['mean_bullets', 'bullets'],
+    // Paired like everything else: a balance shift on 2 of 32 offers must not
+    // read as a win. `all_exp_starved` is 0/1 per offer, so its sign test is a
+    // paired proportion — which is exactly the 7/32 → 0/32 claim, with a p.
+    ['section_balance', 'section_balance'], ['exp_starved', 'exp_starved'],
+    ['all_exp_starved', 'all_exp_starved'],
   ];
   console.log(`paired on ${common.length} offers · ${a} → ${b}\n`);
   console.log(`${'metric'.padEnd(24)}${a.padEnd(10)}${b.padEnd(10)}${'delta'.padEnd(9)}${'CI95'.padEnd(20)}w-l    p`);
@@ -1059,6 +1115,8 @@ if (!isMain) {
                 'summary_fab_pct', 'summary_fab_raw_pct', 'summary_fab_raw_n',
                 'summary_attrib_pct', 'summary_attrib_shipped_pct',
                 'summary_jd_fit', 'summary_cv_fit', 'selection_regret', 'mean_bullets',
+                'exp_bullets', 'proj_bullets', 'section_balance', 'exp_starved',
+                'all_exp_starved_pct',
                 'labelled_n', 'differentiator_coverage', 'differentiators_lost',
                 'noise_rate', 'grade_yield', 'mean_grade'];
   const pad = (s, w) => String(s).padEnd(w);

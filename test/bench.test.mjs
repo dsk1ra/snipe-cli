@@ -679,7 +679,7 @@ try {
     eq(summary.meta.label, 'A', "the run's meta.json is carried into the metrics");
     ok(typeof summary.grounding === 'number' && typeof summary.num_retention === 'number',
       'every headline metric comes back as a number');
-    ok(/1_acme\s+pg=\S+ diff=\S+ noise=\S+ yield=\S+ roles=1 fab=/.test(metrics.out),
+    ok(/1_acme\s+pg=\S+ bal=\d+\/\d+!? diff=\S+ noise=\S+ yield=\S+ roles=1 fab=/.test(metrics.out),
       '--rows prints one line per offer, pages first then the label metrics');
     // The fixture has no labels in batch/bench/opus/labels for these ids, so the
     // label columns must degrade to a dash rather than to a number that would

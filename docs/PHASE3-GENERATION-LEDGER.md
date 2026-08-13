@@ -852,3 +852,138 @@ promoted by floor rather than by score is expected to look like.
 design and worth stating plainly, because it looks like a failure — the floor
 deliberately does not lift the teaching assistantship, which is the entry starved
 in most of those offers and the one the sweep says is not worth the page.
+
+---
+
+## 14. `section_balance` — and what it says about how the starvation got there
+
+§13 confirmed the experience floor by counting bullets by hand in rendered PDFs,
+because no metric in the suite could see the thing it fixed. All eight punish
+falsity, so a page carrying nine project bullets over two one-line employers is
+perfect on every one of them — standing rule 9, asked of the sections rather than
+of an empty output.
+
+Four fields now, scored off `cv-content.json` like everything else. That file *is*
+the rendered document for a bench arm: `local-pdf-offer.mjs` exits before the
+density ladder under `--bench-dir`, so there is no post-ladder page to disagree
+with (benchmark rule 11 asked and answered, not assumed).
+
+| field | what it is |
+|---|---|
+| `exp_bullets` / `proj_bullets` | the page census, per section |
+| `section_balance` | experience ÷ total. A share, not a score — there is no correct value |
+| `exp_starved` | experience entries at ≤1 bullet, per offer |
+| `all_exp_starved_pct` | offers where *every* employer is at one bullet — the gate |
+
+**The share alone would not have worked.** Across the floor arm it moves 0.355 →
+0.387, which reads as noise next to any A/A floor. The starvation count is what
+carries the result, and it reproduces §13's hand count to the offer: 7/32 → 0/32.
+That agreement is the only reason to trust the field — a metric with no
+independently-known answer to hit is just another number.
+
+### The whole series, rescored
+
+Free, because every arm's `cv-content.json` is committed:
+
+| arm | funnel | exp | proj | starved | every employer at 1 | cov |
+|---|---|---|---|---|---|---|
+| `e2ctl` | counts (`LINE_BUDGET=0`) | 4.00 | 3.00 | 0.00 | **0/32** | — |
+| `vbp2` | `PROJECT_BULLETS=2` | 8.00 | 8.00 | 0.00 | **0/32** | 0.468 |
+| `spike32` | " | 8.00 | 8.00 | 0.00 | **0/32** | 0.548 |
+| `alloc32` | " | 8.00 | 8.00 | 0.00 | **0/32** | 0.649 |
+| `e2knap` | `LINE_BUDGET=21` | 2.69 | 5.22 | 1.50 | **16/32** | — |
+| `e5` | `LINE_BUDGET=24` | 3.44 | 5.81 | 1.25 | **9/32** | — |
+| `sum-ctl` / `sum-v3` / `sum-v5` | `LINE_BUDGET=24` | 3.53 | 6.44 | 1.03 | **7/32** | 0.564 |
+| `floor2` | + top-entry floor | 3.84 | 6.09 | 0.75 | **0/32** | 0.552 |
+
+**The starvation is not old. It arrived with the line budget on 2026-08-08.**
+Every count-based funnel starves nobody, because experience held its own
+`EXP_KEEP` quota and never competed with projects. Sharing one budget is what
+created the failure, and the dose-response is monotone: 21 lines starved every
+employer on half the corpus, 24 on 7 of 32, and the floor closes it.
+
+So the +0.116 differentiator coverage the 24-line budget bought was paid for
+partly in Experience section, and the invoice was not readable at the time. The
+trade may well still be right — `floor2` gives back 0.012 coverage to buy the
+section back, which is cheap. But it was made blind, and for four days the
+strongest-scoring configuration on record was also the one that rendered two
+one-line employers.
+
+The three summary arms reading identically (3.53 / 6.44 / 1.03 / 0.219) is the
+control that says the field is not noise: §11 and §12 froze selection with
+`SNIPE_SELECT_CACHE` and changed only the summary, so a balance metric that moved
+across them would have been measuring itself.
+
+### Two things it cannot do
+
+**It does not survive the writer change.** `ctl32`, `vb32`, `floors*` and
+`baseline-floors` render projects as a prose blurb, so `proj_bullets` is 0 by
+construction and `section_balance` reads a flattering 1.000. That is an absent
+field, not a balanced page. Do not compare balance across `--writer model`.
+
+**`mean_bullets` was never the page.** It is `grounding`'s denominator —
+matched *experience* bullets only — and the name has been read as the whole
+document. Experiment A cites `mean_bullets` 8.000 → 8.000 as the load-bearing
+proof that reallocating *project* bullets did not grow the page, and that number
+could not see a project bullet. The conclusion holds (`proj_bullets` is 8.00 in
+both arms, measured now), but the evidence offered for it did not support it.
+Use `exp_bullets` + `proj_bullets` for anything about page size.
+
+---
+
+## 15. `skill_coverage` was scoring 3.5 skills a posting
+
+Found while producing the item 9 taxonomy report, which is the only reason it was
+found at all: the metric reads 1.000 and has read 1.000 since the skills work
+landed, so nothing about it looked worth opening.
+
+`cv.md` writes some taxonomy items as alternatives — `TypeScript / JavaScript`,
+`Agile / Scrum`, `MongoDB / Atlas`, `Unit / Integration / E2E Testing` — and some
+compound names with a slash inside them: `CI/CD`, `C/C++`, `STUN/TURN`. The
+spaced slash means "either of these" and the tight one does not, consistently
+across all nine such items. That is the file's own notation.
+
+`skillCoverage` matched an item as one whole phrase, so a posting asking for
+TypeScript did not match `TypeScript / JavaScript`. **Those postings were not
+counted as misses. They left the denominator.** 31 of 128 offers name TypeScript;
+31 name Agile; 14 name a form of `Unit / Integration / E2E Testing`.
+
+| | before | after |
+|---|---|---|
+| `skills_asked` (mean per offer) | 3.5 | **4.2** |
+| `skill_coverage`, `sum-v5` / `floor2` | 1.000 | **1.000** |
+| `skill_coverage`, `spike32` / `alloc32` | 1.000 | 0.929 |
+
+So the pipeline passes the harder test — every skill a posting names under the
+wider match still reaches the page. The 0.929 on the two pre-skills-work arms is
+the metric recovering a real historical miss, and it agrees with the 0.932 the
+skills work recorded as its own starting point.
+
+**The selector was never affected.** `selectSkills` scores `hits()` as token
+overlap plus phrase, so `TypeScript / JavaScript` already ranked first and
+shipped on every TypeScript posting — verified by reading the rendered skills
+block on three offers rather than by reasoning about it. Only the metric matched
+on the phrase alone.
+
+That is the third time a gate and its metric have drifted apart in this
+codebase: `normPhrase` was exported to stop the selector and the harness
+disagreeing, `summaryUnsupported` was made one function after the harness copy
+grew `tenure` and `figure` while the gate checked only products, and this. The
+pattern is worth naming — when a metric scores a decision some other code makes,
+it must call that code, not re-implement its predicate.
+
+### Rejected as marginal, measured first
+
+`Express.js` and `Node.js` against postings writing bare `Express` / `Node`: real
+(all three occurrences are genuine framework references, read individually) but 3
+offers of 128. The same rule applied to `Next.js` and `.NET` would match ordinary
+English — 45 offers contain the word "next", 40 contain "net" — so an alias rule
+loses more than it wins. Left alone deliberately.
+
+### What the report says to do
+
+`node batch/bench-tools/skills-gap.mjs --min 4 --shaped`. The two largest gaps
+are notation rather than capability, and both are now one-character edits because
+`skillForms` reads the spaced slash: `AI / LLM application development` (84
+offers, 66% of the corpus) and `REST / RESTful APIs` (21, 16%). `cv.md` prose
+already proves both. Full list in `CV-GENERATION-BACKLOG.md` §9.

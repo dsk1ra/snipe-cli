@@ -42,6 +42,7 @@ trusting a number in one.
 | file | status |
 |---|---|
 | `PHASE3-NEXT.md` | current attribution, open experiments, and ideas already closed — **read before re-opening any Phase 3 idea** |
+| `CV-GENERATION-BACKLOG.md` | candidate improvements to CV generation, each with what it would cost to answer — the pick-list, unimplemented |
 | `TAILORING-QUALITY-PLAN.md` | execution plan for the tailoring campaign |
 | `PHASE3-TAILORING-STRATEGY.md` | proposed, awaiting verification — nothing here is implemented |
 

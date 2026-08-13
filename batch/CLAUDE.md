@@ -322,6 +322,20 @@ that posting, and the differentiators marked):
 | `noise_rate` | fraction of shipped content the labeller graded 0 for this posting |
 | `grade_yield` | shipped grade mass ÷ available grade mass |
 
+The same hole in the other direction — a page that keeps the differentiators and
+spends the whole budget on projects — is `section_balance` and its three
+siblings. Nine project bullets over two one-line employers scores perfectly on
+all eight falsity metrics, which is why confirming the experience floor meant
+counting bullets by hand in a PDF. `all_exp_starved_pct` is the gate (offers with
+*every* employer at one bullet); `section_balance` is a share with no target,
+read as drift. **The starvation arrived with the line budget**: count-based
+funnels starve nobody, `LINE_BUDGET=21` starved every employer on 16 of 32
+offers and 24 on 7 of 32. Two traps — balance is meaningless under
+`--writer model`, where projects render as prose and `proj_bullets` is 0 by
+construction; and `mean_bullets` is **matched experience bullets only**
+(it is `grounding`'s denominator), so use `exp_bullets` + `proj_bullets` for
+anything about page size. `docs/PHASE3-GENERATION-LEDGER.md` §14.
+
 Coverage is measured **atom→output** (does this atom appear anywhere), the
 opposite direction from `shippedAtomIndices` — an atom split across two bullets
 still counts. Relabelling is `batch/bench-tools/opus-label.mjs`; the labels are
