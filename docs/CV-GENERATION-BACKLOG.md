@@ -16,7 +16,7 @@ and one item below was already closed there.
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
 | 6 | best-of-N summary | summary | one 32-offer arm |
 | 7 | grade-ordered evidence | summary | one 32-offer arm |
-| 8 | curated synonym alignment | ATS | offline, then one arm |
+| 8 | ~~curated synonym alignment~~ | ATS | **closed, aims at the wrong misses** |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
 | 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
 | 11 | ~~`section_balance` metric~~ | measurement | **shipped, see below** |
@@ -163,7 +163,30 @@ Sorting the evidence by grade points the model at the strongest claim rather tha
 the first plausible one. No extra model call — the grades are already in memory
 at that point in the run.
 
-## 8. Curated synonym alignment for ATS terms
+## 8. Curated synonym alignment — CLOSED, it cannot move the metric it targets
+
+Aggregated the `ats_coverage` misses across all 32 offers of `floor2`: **189
+distinct terms the CV supports and the page did not carry, and not one of them
+is a technology.** The leaders are `complex` (15 offers), `location` (15),
+`comfortable` (11), `engineers` (11), `first` (10), `projects` (10).
+
+The proposal's own examples do not appear, and the reason is structural.
+`atsCoverage` scores only the terms `cv.md` already contains — that is what makes
+it ungameable by inventing. So "RDBMS" is not a miss: `cv.md` never says RDBMS,
+so the term is not supportable, so it is not counted. **A synonym for a term the
+CV lacks cannot raise this metric by construction**, and a synonym for a term the
+CV has is already covered.
+
+Being fair to the idea: real ATS keyword matching is not `ats_coverage`, and a
+recruiter's search for "RDBMS" is a real thing this harness cannot see. But that
+makes the intervention unmeasurable here rather than promising, and there is
+already a supported way to do it — item 9's route. `skillForms` reads a spaced
+slash as alternatives, and the taxonomy renders verbatim, so writing
+`PostgreSQL / RDBMS` in `cv.md` surfaces the term on the page today with no code
+and no fabrication surface. That is the same edit item 9 recommends, and it is
+where any synonym work belongs.
+
+### The original proposal, for the record
 
 `ats_coverage` sits at 0.659 and is structurally capped. `--writer verbatim`
 means every bullet is literal `cv.md` text, so a posting asking for "RDBMS" finds
