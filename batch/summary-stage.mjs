@@ -533,7 +533,7 @@ export function selectedBullets(selectedCv, grades = null) {
       if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
       for (const e of parseEntries(sec.lines).entries) {
         const name = e.head[0].replace(/^###\s+/, '').trim();
-        for (const b of e.bullets) out.push({ line: `${name}: ${b}`, text: b });
+        for (const b of e.bullets) out.push({ line: `${name}: ${b}`, text: b, section: sec.name });
       }
     }
   } catch { /* odd CV shape — caller falls back */ }
@@ -547,10 +547,27 @@ export function selectedBullets(selectedCv, grades = null) {
   // Opus corpus and its zeros at 0.228, so "which of these is strong" is a
   // question it answers well even though "which is worthless" is not.
   //
-  // Stable within a grade — `sort` is stable in V8 and the input order is the
+  // **Within each section, never across them.** Sorting the whole list by grade
+  // put project bullets above experience — projects hold 24 of the CV's 33 atoms
+  // and most of the high grades — and the summary stopped opening with a
+  // positioning line, because the model leads with whatever it is handed first.
+  // On the JPMorgan offer that turned "Python Software Engineer with advanced
+  // proficiency in system design…" into a bare skills list that also leaked the
+  // phrase "in the Re:Link — … Remote Access System entry".
+  //
+  // No metric caught it: fabrication 0, grounding 1.000, shipped shape clean,
+  // `ats_coverage` up. Benchmark rule 7, and `summaryShape`'s `no_positioning`
+  // check is evidently too weak to see a missing opener.
+  //
+  // Stable within a section — `sort` is stable in V8 and the input order is the
   // selection order the previous prompt shipped, so an ungraded run is
   // byte-identical to the old behaviour rather than merely similar.
-  if (grades) out.sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0));
+  if (grades) {
+    const order = ['Experience', 'Projects'];
+    const bySection = order.map(s => out.filter(x => x.section === s)
+      .sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0)));
+    return bySection.flat().map(x => x.line);
+  }
   return out.map(x => x.line);
 }
 
