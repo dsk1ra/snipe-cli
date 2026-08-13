@@ -66,7 +66,7 @@ import { parseCvSections, parseEntries, entryCompany,
 import { embed, cosine } from './embeddings.mjs';
 import { summaryUnsupported as summaryFab, productFab,
          summaryShape, figureAttribution } from './summary-stage.mjs';
-import { parseSkillCategories, normPhrase } from './cv-writers.mjs';
+import { parseSkillCategories, normPhrase, skillForms } from './cv-writers.mjs';
 import { loadLabels, scoreOffer } from './opus-metrics.mjs';
 
 /**
@@ -421,8 +421,14 @@ export function skillCoverage(jdText, cvText, outputText) {
   const norm = normPhrase;
   const items = [...new Set(parseSkillCategories(cvText).flatMap(c => c.items))];
   const jd = norm(jdText), out = norm(outputText);
-  const asked = items.filter(s => jd.includes(norm(s)));
-  const missed = asked.filter(s => !out.includes(norm(s)));
+  // Matched through `skillForms`, so an item the CV writes as a list of
+  // alternatives is asked when the posting names any one of them. Scoring the
+  // CV's exact string instead did not count those postings as misses — it
+  // dropped them from the denominator entirely, which is why this read 1.000
+  // over 3.5 skills a posting while 31 postings named TypeScript against a CV
+  // that writes "TypeScript / JavaScript".
+  const asked = items.filter(s => skillForms(s).some(f => jd.includes(norm(f))));
+  const missed = asked.filter(s => !skillForms(s).some(f => out.includes(norm(f))));
   return {
     coverage: asked.length ? (asked.length - missed.length) / asked.length : null,
     asked: asked.length,

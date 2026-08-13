@@ -292,6 +292,26 @@ try {
   eq(sc('Experience with RabbitMQ.', 'Ran RabbitMQ in production').coverage, 1,
     'names promoted out of a parenthesis count as claimed skills');
 
+  // An item cv.md writes as alternatives. Postings write one of them, never the
+  // CV's exact string, and matching the whole phrase dropped them from the
+  // denominator rather than counting them as misses — 31 postings named
+  // TypeScript against a CV that writes "TypeScript / JavaScript".
+  const altCv = ['## Skills', '', '**Languages:** TypeScript / JavaScript, C/C++'].join('\n');
+  const alt = (jd, out) => h.skillCoverage(jd, altCv, out);
+  eq(alt('Strong TypeScript required.', 'Shipped TypeScript / JavaScript services').asked, 1,
+    'a posting naming one alternative asks for the item');
+  eq(alt('Strong TypeScript required.', 'Shipped TypeScript / JavaScript services').coverage, 1,
+    'and the item shipping under its full name covers it');
+  eq(alt('Strong TypeScript required.', 'Shipped Rust services').coverage, 0,
+    'and a page that dropped it scores a real miss rather than a null');
+  // The tight slash is one name, not two: splitting it would have a posting
+  // asking for the letter C match a CV that claims C/C++.
+  eq(alt('We use C for embedded work.', 'Wrote C/C++ firmware').asked, 0,
+    'a compound name containing a slash is not split into alternatives');
+  const w = await import(pathToFileURL(join(ROOT, 'batch/cv-writers.mjs')).href);
+  deepEq(w.skillForms('Agile / Scrum'), ['Agile', 'Scrum'], 'a spaced slash lists alternatives');
+  deepEq(w.skillForms('CI/CD'), ['CI/CD'], 'a tight slash is part of the name');
+
   // ── product_fab: the truth invariant behind the two-tier vocabulary rule ──
   const cvMd = 'Built services in Rust and TypeScript on AWS with PostgreSQL and Redis.';
   deepEq(g.productFab('Delivered Kotlin microservices on GCP with Terraform', cvMd),
