@@ -28,6 +28,14 @@ to avoid anchoring. Salary is parsed from the JD in code (`text-utils.mjs`),
 never guessed; when present the weights become `cv×0.50 + ns×0.30 + comp×0.20`.
 Seniority and stack-mismatch caps (`fit-rules.mjs`) are code-enforced in both phases.
 
+`candidateEcosystems` reads experience, projects and education, **never the
+`## Skills` block** — the same "a catalogue line is a claim, not a demonstration"
+rule `strengthFrom` applies to evidence rows. On this CV every ecosystem but one
+is named 3–6 times outside the taxonomy and `c#/.net` exactly 0, so the effect is
+that five C#-only postings stop reading as covered; three of them had scored
+above the Phase 3 threshold and generated a tailored CV for a stack with no
+project behind it.
+
 **Phase 3** runs only at score ≥ `auto_pdf_score_threshold` (default 3.0).
 `cv-select.mjs` ranks CV bullets against Block B requirements via embeddings
 first. PDF is hard-capped at 2 pages.

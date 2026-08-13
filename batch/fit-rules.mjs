@@ -87,11 +87,31 @@ export function verifyAgainstCv(claims, cvText) {
   return { kept, dropped };
 }
 
-/** Ecosystems the candidate clearly has, parsed from cv.md text. */
+/**
+ * cv.md minus its `## Skills` taxonomy. Same doctrine `strengthFrom` already
+ * applies to evidence rows: **a catalogue line is a claim, not a demonstration.**
+ * An ecosystem named only in the skills block has no bullet behind it anywhere
+ * on the CV, so `stackMismatchCap` must not read it as coverage.
+ */
+function evidenceText(cvText) {
+  return String(cvText || '').replace(/\n##\s*Skills\b[\s\S]*?(?=\n##\s|$)/i, '\n');
+}
+
+/**
+ * Ecosystems the candidate clearly has, parsed from cv.md text — experience,
+ * projects and education only, never the skills catalogue.
+ *
+ * Measured on this CV: every other claimed ecosystem is named 3-6 times outside
+ * the skills block (java 3, python 6, javascript 6, rust 4, c++ 1) and c#/.net
+ * exactly 0, so the whole effect of the exclusion is that five C#-only postings
+ * stop reading as covered — three of which scored above the Phase 3 threshold
+ * and generated a tailored CV for a stack with no project behind it.
+ */
 export function candidateEcosystems(cvText) {
   const have = new Set();
+  const evidence = evidenceText(cvText);
   for (const [eco, re] of Object.entries(ECOSYSTEM_PATTERNS)) {
-    if (countMatches(cvText, re) > 0) have.add(eco);
+    if (countMatches(evidence, re) > 0) have.add(eco);
   }
   return have;
 }
@@ -299,6 +319,15 @@ if (process.argv[1] && _f(import.meta.url) === process.argv[1]) {
   assert(r.missing === null, 'nice-to-have german not capped');
   r = languageMismatchCap('We serve the German market from our Berlin office.', cv);
   assert(r.missing === null, 'market mention not capped');
+
+  // candidateEcosystems reads work, not the skills catalogue: a technology named
+  // only in the taxonomy has no bullet behind it anywhere on the CV.
+  const cataloguedOnly = '## Experience\n- Built services in Java and Rust\n\n'
+    + '## Skills\n**Languages:** Java, Rust, C#\n\n## Education\n- BEng\n';
+  assert(candidateEcosystems(cataloguedOnly).has('java'), 'an ecosystem with a bullet counts');
+  assert(!candidateEcosystems(cataloguedOnly).has('c#/.net'), 'a skills-only claim does not');
+  assert(stackMismatchCap('C# developer wanted. Strong C# and .NET Core throughout.', cataloguedOnly).cap === 3,
+    'a C#-only posting is capped against a CV that only catalogues C#');
 
   let s = seniorityCaps('Senior Security Engineering Manager', '', {});
   assert(s.cvCap === 2 && s.nsCap === 3, 'manager title capped as staff-tier');
