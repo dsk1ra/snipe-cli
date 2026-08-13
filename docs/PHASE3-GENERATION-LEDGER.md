@@ -775,3 +775,80 @@ both halves are true. Judged whole it reads as Snipe claiming 500ms. Clause
 granularity is the same level `stripUnsupportedClauses` repairs at, and it errs
 toward silence — a name in one clause and its figure in the next is missed rather
 than invented.
+
+---
+
+## 13. The experience floor, and a simulator that was validating against 2026-08-07
+
+The 24-line budget lets experience and projects compete on score per line with no
+floor beyond the one bullet every entry is guaranteed (§E2). Across the 32-offer
+bench that left **26 offers with an employer at a single bullet and 7 with every
+employer at one** — an Experience section of two one-line entries, which reads as
+no experience whatever the projects say.
+
+### The tool had to be repaired before it could answer
+
+`select-sweep.mjs validate` reported "within 0.011 of the real run" against
+`vbp2`'s 0.468 — an arm from 2026-08-07 with `SNIPE_PROJECT_BULLETS=2` and no
+line budget. Production moved to the 24-line budget the next day and measures
+0.564. **The tool built to enforce benchmark rule 1 was itself comparing against
+a control the pipeline had abandoned**, and would have gone on doing so silently.
+
+Worse for this question, the simulator models the *pre*-line-budget funnel:
+experience gets its own `EXP_KEEP` quota and never competes with projects, so the
+effect under investigation could not exist in it. `allocateLines` is now ported —
+costs from `cv.md` via production's own `bulletCost`, with the atom↔bullet
+positions asserted rather than assumed.
+
+**And the spike parameterisation was wrong for every sweep ever run at
+`spikeW > 0`.** Production scores `cos + 0.10·grade` then subtracts `α·mean` with
+`α = w/(1+w)`. The simulator scores `cos + gradeW·grade + w·(cos − mean)`, which
+is the same ranking *divided by (1+w)* — so `--spike 6 --grade 0.10` is the
+shipped ranker with the judge at `0.10/7`, and the judge is worth +0.115 pair
+accuracy. Scaling `gradeW` by `(1+w)` closes the gap from 0.046 to 0.011.
+
+`grade_yield` has never reproduced on this simulator (0.518 vs 0.689 legacy,
+0.424 vs 0.777 now) and is printed as untrusted rather than quietly ungated.
+
+### The sweep
+
+Tuned on train, scored once on held-out, 128-offer label corpus:
+
+| floor | train Δcov | test Δcov |
+|---|---|---|
+| 2, every experience entry | −0.046 | −0.055 |
+| 3, every experience entry | −0.119 | −0.157 |
+| 2, **top-scoring entry only** | −0.008 (CI crosses 0) | **−0.018** |
+| 3, top-scoring entry only | −0.027 | −0.046 |
+
+The blanket floor costs three times as much, and the reason is the whole result:
+**the entry the budget starves is the teaching assistantship** — 1.39 bullets,
+at the floor in 71% of 128 offers — not the commercial role (2.41, 25%). A floor
+on everything spends the page on the least differentiating evidence on the CV.
+
+### The real arm
+
+`sum-v5` → `floor2`, paired, n=32, fresh selection in `floor2` (a selection
+change may not reuse a select cache; the control's cache predates every
+`cv-select` change, so its selection is the pre-floor one):
+
+| metric | sum-v5 | floor2 | delta | CI95 | p |
+|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.564 | 0.552 | −0.012 | [−0.036, 0.011] | 0.625 |
+| `mean_bullets` | 3.531 | 3.844 | **+0.313** | [0.156, 0.469] | 0.002 |
+| `noise_rate` | 0.163 | 0.178 | +0.015 | [0.003, 0.027] | 0.063 |
+| `ats_coverage` | 0.653 | 0.659 | +0.006 | [−0.004, 0.016] | 0.648 |
+
+**Offers where every employer renders as one bullet: 7/32 → 0/32.**
+`skill_coverage` 1.000, `grounding` 1.000, every fabrication metric 0.
+
+The predicted cost did not materialise as a significant loss — the simulator said
+−0.018 and the arm measured −0.012 with a CI containing both. That agreement is
+the corroboration the port needed; a simulator agreeing with itself is not
+evidence. The one real cost is `noise_rate` +0.015, which is what a bullet
+promoted by floor rather than by score is expected to look like.
+
+**"At least one employer at 1 bullet" barely moved: 26/32 → 24/32.** That is by
+design and worth stating plainly, because it looks like a failure — the floor
+deliberately does not lift the teaching assistantship, which is the entry starved
+in most of those offers and the one the sweep says is not worth the page.
