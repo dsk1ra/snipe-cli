@@ -15,7 +15,7 @@ and one item below was already closed there.
 | 4 | ~~judge grade as a cut~~ | selection | **closed, −0.062 held out** |
 | 5 | ~~near-duplicate suppression~~ | — | **closed, see below** |
 | 6 | best-of-N summary | summary | one 32-offer arm |
-| 7 | grade-ordered evidence | summary | one 32-offer arm |
+| 7 | ~~grade-ordered evidence~~ | summary | **rejected, closer 4/32 → 8/32** |
 | 8 | ~~curated synonym alignment~~ | ATS | **closed, aims at the wrong misses** |
 | 9 | ~~wider skills taxonomy~~ | ATS | **answered, your edit next** |
 | 10 | ~~generic proper-noun detector~~ | fabrication | **closed, 0 catches / 16% false** |
@@ -153,7 +153,18 @@ Against it — temperature 0 is a determinism choice for production, and samplin
 gives that up. A single run stops being a valid A/B on this stack, so the arm
 needs repeats where every summary arm so far has needed one.
 
-## 7. Order the evidence lines by judge grade
+## 7. Order the evidence by judge grade — REJECTED
+
+Doubles the generic closer (4/32 → 8/32) for `ats_coverage` +0.004, which is
+twice its A/A floor. 15 of 32 summaries changed and the reads are a wash.
+
+The finding worth keeping: **evidence order controls the opener, not the
+achievement sentence.** All three shapes tried — global, within-section, and
+Projects-only — moved the wrong sentence, because the model leads with whatever
+it is handed first. Two of them were caught by reading before they cost an arm.
+Ledger §18.
+
+### The original proposal, for the record
 
 The summary prompt hands the model the shipped bullets in selection order and
 asks for one achievement from one entry. The judge has already graded every one

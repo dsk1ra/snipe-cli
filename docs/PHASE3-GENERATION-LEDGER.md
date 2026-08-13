@@ -1190,3 +1190,73 @@ The cap trades project differentiators for commercial-role evidence. Whether
 that is the right trade is a judgement about what a CV reader wants rather than
 something the corpus decides — but it is now priced: 0.022 coverage for five
 offers' worth of an employer that reads as a single line.
+
+---
+
+## 18. Grade-ordered summary evidence — measured, rejected
+
+Backlog item 7. The summary prompt asks for one quantified achievement and the
+model was taking the first plausible evidence line rather than the strongest. The
+judge had already graded every one of those bullets and the summary never saw the
+grades — and §16 had just established that the judge's *positives* are 0.950
+precise, so this used the trustworthy half of its signal.
+
+It does not work, and the two failed shapes on the way are the more useful part.
+
+### Three shapes, two caught by reading before they cost an arm
+
+**Sort everything by grade.** Projects hold 24 of the CV's 33 atoms and most of
+the high grades, so this buried Experience and the summary stopped opening with a
+positioning line. On the JPMorgan offer, *"Python Software Engineer with advanced
+proficiency in system design…"* became a bare skills list that also leaked the
+phrase *"in the Re:Link — … Remote Access System entry"* and never mentioned
+Python — on a Python role.
+
+Every metric read clean through that: fabrication 0, grounding 1.000, shipped
+shape clean, `ats_coverage` up. **`summaryShape`'s `no_positioning` check does not
+see a missing opener**, which is worth knowing independently of this result.
+
+**Sort within each section.** Same failure, quieter. The first evidence line
+anchors the opener, so reordering Experience rewrites the positioning sentence
+rather than the achievement sentence.
+
+**Sort Projects only** — the version that reached an arm, since the achievement
+sentence is what the change was aimed at.
+
+### The arm
+
+`cap14` → `gradeord`, paired, n=32, 47.4 min. Every selection metric identically
+0.000, which is the check that the change touched only the summary.
+
+| | cap14 | gradeord |
+|---|---|---|
+| `ats_coverage` | 0.655 | 0.659 (+0.004, CI [0.001, 0.008], 4-0) |
+| **generic closer** | **4/32** | **8/32** |
+| summaries changed | — | 15/32 |
+| mean words | 57.9 | 58.8 |
+
+The generic closer is what ships when a draft falls under the 50-word floor, so
+doubling it means the model produced thinner summaries and the stage padded them.
+The one gain is `ats_coverage` +0.004 against a ±0.002 A/A floor — twice noise.
+
+Reading all 15 changed summaries: roughly six better, six worse, three neutral.
+Offer 210 lost a real misattribution (*"85%+ test coverage in the PM / Software
+Engineer role"*, a Re:Link figure hung on UBWIS) and offer 4 gained a cleanly
+attributed achievement. Against that, offers 54 and 93 lost their only concrete
+achievement to the generic closer, and offer 119 swapped TypeScript/React/Next.js
+evidence for Java on a full-stack posting.
+
+A wash on the reads and a real regression on the one shape symptom that is
+counted. Reverted.
+
+### What this says about the idea rather than the implementation
+
+The evidence order controls the **opener**, not the achievement sentence. That is
+why all three shapes moved the wrong sentence: the model leads with what it is
+handed first and fills the rest opportunistically. Pointing it at the strongest
+claim needs the claim *marked* rather than *moved* — and §12 already measured
+what prompt-level instruction achieves on this stage, which was nothing
+(attribution stayed at 3 of 32 before and after being told to attribute).
+
+So the remaining route is a marked-evidence prompt whose prior is poor, and the
+plumbing to do it is recoverable from the reverted commits.

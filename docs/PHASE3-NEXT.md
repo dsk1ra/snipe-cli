@@ -360,6 +360,7 @@ is graded exemplars — a human rating a sample 0–3 rather than ticking keep/d
 | expanding a ticked project into its bullets | −0.045 pair accuracy held out; the defect is load-bearing |
 | judge grade as a **cut** rather than a weight | −0.062 coverage held out, 0-18. Its zeros are 22.8% precise; see generation ledger §16 |
 | raising `gradeW` above the shipped 0.10 | saturated — grades are binary, so no reordering is possible. Not a null, an impossibility |
+| grade-ordering the summary's evidence | generic closer 4/32 → 8/32; evidence order steers the opener, not the achievement. Generation ledger §18 |
 
 ## Standing rules that cost time to learn
 
