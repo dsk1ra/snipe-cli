@@ -377,6 +377,32 @@ export function bulletCost(text) {
  * opts: { maxProjects, maxBulletsPerProject, maxBulletsPerRole, lineBudget,
  *         ollamaUrl, _embed }
  */
+/**
+ * Pins that match no `### ` title in `cv.md`.
+ *
+ * A pin is a user-layer override of the ranker and `cv.md` is a user-layer file,
+ * so a project can be renamed in one without the other knowing — and the failure
+ * mode is the worst kind, a feature that appears to work and quietly does
+ * nothing. `cv.pinned_projects` held `"Zero Trust SIEM"` against a title reading
+ * `Zero Trust Security Analytics Dashboard` for five days and 16 runs.
+ *
+ * The warning for that existed from the first commit and fired every time,
+ * straight into `batch/logs/pdf-NNN-<id>.log` — a file opened only when an offer
+ * fails. Loud in the wrong room. Exported so the runner can ask the same question
+ * once at startup, where a config error belongs, rather than 32 times where
+ * nobody is looking.
+ *
+ * @param {string} cvText
+ * @param {string[]} pins
+ * @returns {string[]} the pins that matched nothing, lowercased as compared
+ */
+export function unmatchedPins(cvText, pins) {
+  const titles = [...String(cvText || '').matchAll(/^###\s+(.+)$/gm)]
+    .map(m => m[1].trim().toLowerCase());
+  return (pins || []).map(p => String(p).toLowerCase().trim()).filter(Boolean)
+    .filter(p => !titles.some(t => t.includes(p)));
+}
+
 export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   const {
     maxProjects = 4, maxBulletsPerProject = 4, maxBulletsPerRole = 4,
@@ -623,11 +649,11 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
       const isPinned = (e) => pins.some(p => title(e).includes(p));
       // A pin that matches nothing is a typo, and silently ranking as usual is
       // the one outcome that looks like it worked. cv.md is the user's file and
-      // a project can be renamed there without the profile knowing.
-      for (const p of pins) {
-        if (!projParsed.entries.some(e => title(e).includes(p))) {
-          process.stderr.write(`cv-select: pinned project "${p}" matches no ### title in cv.md — ignoring\n`);
-        }
+      // a project can be renamed there without the profile knowing. The runner
+      // asks `unmatchedPins` the same question once at startup — this copy stays
+      // because a caller that is not the runner still deserves to be told.
+      for (const p of unmatchedPins(cvText, pins)) {
+        process.stderr.write(`cv-select: pinned project "${p}" matches no ### title in cv.md — ignoring\n`);
       }
       // Already score-sorted, so filtering preserves relevance order inside each
       // group: pins first by their own score, then the rest compete for what is

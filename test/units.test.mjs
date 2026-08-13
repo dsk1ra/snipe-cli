@@ -450,6 +450,19 @@ try {
   eq(wc(padded[0].description) <= 55, true, 'and stops at the ceiling rather than overshooting');
   eq(/frame ring|CI pipelines/.test(padded[0].description), true,
     'the padding is real CV text from that project');
+
+  // A pin naming nothing ranks as if the list were empty, which is the one
+  // failure that looks like success. The runner asks this at startup because the
+  // per-offer warning went to a log opened only when an offer failed.
+  const { unmatchedPins } = await import(pathToFileURL(join(ROOT, 'batch/cv-select.mjs')).href);
+  deepEq(unmatchedPins(pcv, ['Re:Link']), [], 'a pin matching a title is not reported');
+  deepEq(unmatchedPins(pcv, ['re:link — remote access']), [],
+    'the whole title matches, and case does not matter');
+  deepEq(unmatchedPins(pcv, ['Zero Trust SIEM']), ['zero trust siem'],
+    'a pin naming no title is reported — the shipped typo, pinned here');
+  deepEq(unmatchedPins(pcv, ['Remote Access', 'Nowhere']), ['nowhere'],
+    'a substring of a title counts as a match, so only the real miss is reported');
+  deepEq(unmatchedPins(pcv, []), [], 'no pins is not a failure');
   eq((padded[0].description.match(/AES-256-GCM/g) || []).length, 1,
     'the clause the model already rewrote is not repeated');
 
