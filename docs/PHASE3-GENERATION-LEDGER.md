@@ -1131,3 +1131,62 @@ The bullet the cap bought back is the strongest commercial evidence on the CV �
 weeks"* — against a project bullet the posting scored marginally higher. Offer 4
 lifted Napier 1 → 2 the same way; offer 56 was unchanged because the cap did not
 bind. That is the shape the sweep predicted, on the offers the sweep never saw.
+
+### The arm
+
+`floor2` → `cap14`, paired, n=32, fresh selection in both (a selection change may
+not reuse a select cache), 46.7 min:
+
+| metric | floor2 | cap14 | delta | CI95 | w-l | p |
+|---|---|---|---|---|---|---|
+| `differentiator_coverage` | 0.552 | 0.530 | **−0.022** | [−0.044, −0.006] | 0-4 | 0.125 |
+| `exp_starved` | 0.750 | 0.469 | **−0.281** | [−0.438, −0.125] | 0-9 | 0.004 |
+| `section_balance` | 0.387 | 0.444 | +0.056 | [0.038, 0.075] | 17-0 | <0.001 |
+| `mean_bullets` (experience) | 3.844 | 4.406 | +0.563 | [0.375, 0.750] | 17-0 | <0.001 |
+| `noise_rate` | 0.178 | 0.180 | +0.002 | [−0.012, 0.016] | 4-5 | ns |
+| `ats_coverage` | 0.659 | 0.655 | −0.004 | [−0.012, 0.003] | 5-6 | ns |
+
+`skill_coverage` 1.000, `grounding` 1.000, `num_retention` 1.000, `metric_fab`,
+`product_fab` and `num_lost` all 0.000 delta. Page geometry unmoved: 0.977 →
+0.976 pages, 1013 → 1011 px, and the 2-page cap is nowhere near binding.
+
+**And the thing the work was actually for.** Per employer, at one bullet:
+
+| | Teaching Assistant | **commercial role (UBWIS)** |
+|---|---|---|
+| `sum-v5` (pre-floor) | 81% | 22% |
+| `floor2` (floor only) | 56% | 19% |
+| **`cap14`** | 44% | **3%** |
+
+Six offers rendering the commercial role as a single line becomes one. That is
+the complaint that started §13, and the floor did not fix it — §13 said so
+explicitly and could not do better without a blanket floor costing −0.035.
+
+### The simulator was right about the benefit and half-right about the cost
+
+Predicted −0.011 coverage and −0.242 starvation; measured −0.022 and −0.281. The
+starvation prediction is good and the **cost prediction is out by 2×, in the
+direction that matters** — the sim's coverage CI contained zero and the arm's
+does not. Its per-entity prediction was exact (3% for the commercial role, 3%
+measured).
+
+So the sweep is trustworthy for ranking configurations and optimistic about what
+they cost. Prior calibration points were +0.096 vs +0.101 (Experiment A) and
+−0.018 vs −0.012 (§13); this is the first where the sign of the conclusion
+depends on the gap, and it did not change it.
+
+### What the trade actually looks like
+
+Offer 151, a full-stack posting: gained *"Automated manual billing and onboarding
+with Stripe subscription management and Google OAuth 2.0 (Next.js, Node.js/
+Express, MongoDB)"*, lost a bullet about auditing a benchmark and retiring two
+metrics. Clearly right.
+
+Offer 111: gained the membership-platform bullet, lost *"Designed a blind
+rendezvous protocol with full client-side end-to-end encryption (AES-256-GCM)"* —
+a real differentiator, and where the −0.022 comes from.
+
+The cap trades project differentiators for commercial-role evidence. Whether
+that is the right trade is a judgement about what a CV reader wants rather than
+something the corpus decides — but it is now priced: 0.022 coverage for five
+offers' worth of an employer that reads as a single line.

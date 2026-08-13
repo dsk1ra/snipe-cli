@@ -186,6 +186,20 @@ function headSha() {
   } catch { return ''; }
 }
 
+/**
+ * Repo-relative paths that differ between two commits.
+ *
+ * Returns `['<unknown>']` when git cannot answer, so a failure to check reads as
+ * "something changed" rather than as "nothing did" — the safe direction for a
+ * guard whose job is refusing to score.
+ */
+function changedFiles(a, b) {
+  try {
+    return execFileSync('git', ['diff', '--name-only', a, b], { cwd: PROJECT, encoding: 'utf8' })
+      .split('\n').map(s => s.trim()).filter(Boolean);
+  } catch { return ['<unknown>']; }
+}
+
 function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:11434', model = 'snipe-cv', summaryModel = 'snipe-eval', limit = 0, writer = 'model', samplePath = SAMPLE, resume = false } = {}) {
   // `limit` takes a PREFIX of the sample, never a random subset: the sample is
   // sorted by eval score, so the same prefix is the same offers every time and
@@ -235,17 +249,32 @@ function runVariant(label, { temperature = 0, ollamaUrl = 'http://localhost:1143
   const flags = Object.fromEntries(Object.entries(process.env)
     .filter(([k]) => k.startsWith('SNIPE_') && k !== 'SNIPE_TIMING'));
   const sha1 = headSha();
-  const split = !!(sha0 && sha1 && sha0 !== sha1);
+  // A moved HEAD is the symptom; the question is whether any offer ran different
+  // code. `docs/` is the one tree the pipeline never reads — the repo's own data
+  // contract makes it documentation, and nothing there is imported or prompted
+  // from. Everything else counts, and `batch/*.md` counts loudly: the Phase 2 and
+  // Phase 3 prompts live there, so "it was only markdown" is not the test.
+  //
+  // Narrowing this rather than widening it: a docs-only commit mid-run made the
+  // guard reject a run in which all 32 offers demonstrably ran identical code,
+  // and a rule that cries wolf is a rule someone eventually overrides by hand.
+  const changed = sha0 && sha1 && sha0 !== sha1 ? changedFiles(sha0, sha1) : [];
+  const split = changed.length > 0 && !changed.every(f => f.startsWith('docs/'));
   const meta = { label, temperature, model, summaryModel, writer, sample: samplePath, n: sample.length,
                  limit: limit || null, ok, failed, skipped: resume ? skipped : null,
                  commit: sha0, commit_end: sha1,
                  // Loud, and in the artifact rather than only on a terminal
                  // nobody was watching: a split run's mean is of neither version.
                  split_run: split || null,
+                 // Kept even when the run is clean: "HEAD moved and here is
+                 // exactly what moved" is the evidence for scoring it anyway,
+                 // and a later reader should not have to take that on trust.
+                 changed_files: changed.length ? changed : null,
                  flags, minutes: +((Date.now() - t0) / 60000).toFixed(1), at: new Date().toISOString() };
   writeFileSync(resolve(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   if (split) {
     process.stderr.write(`\n*** HEAD MOVED DURING THIS RUN: ${sha0.slice(0, 8)} -> ${sha1.slice(0, 8)}\n`
+      + `*** changed: ${changed.slice(0, 8).join(', ')}${changed.length > 8 ? ` (+${changed.length - 8} more)` : ''}\n`
       + `*** local-pdf-offer.mjs re-imports per offer, so offers before and after ran\n`
       + `*** different code. This run is a mongrel — do not score it. (rule 4)\n\n`);
   }
