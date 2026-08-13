@@ -6,6 +6,55 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 _Nothing yet._
 
+## [0.4.0] - 2026-08-13
+
+The tailored-summary release. Pre-release: the location cap changes what the
+pipeline recommends, and that wants real use before it is called stable.
+
+### Added
+
+- A location cap. Phase 1 and Phase 2 hold a role to 2/2 when it asks for office
+  attendance somewhere you have not said you will travel to, which lands the
+  composite under both phases' gates. The commutable base comes from
+  `location.city` and `search_locations` in `config/profile.yml`, so the policy
+  stays yours. Both signals have to appear within 160 characters of each other,
+  because a posting names every city it has an office in. It fires on 49 of the
+  310 cached postings.
+- `SNIPE_PROJ_MAX_LINES` caps the lines Projects may take of the page budget,
+  default 14. Set it to 0 for the old behaviour.
+- The top experience entry is floored at two bullets, so a page crowded with
+  projects cannot reduce your current job to a single line.
+- The generation harness measures how the page is divided between Experience and
+  Projects, and whether a summary credits a figure to the entry that earned it.
+
+### Changed
+
+- The summary follows the standard CV template: a positioning line, the
+  requirements your evidence answers in the posting's own wording, then one
+  quantified achievement.
+- The summary stage drafts twice and ships the better one. Summaries reaching
+  the page with no quantified achievement at all fell from five in 32 to one.
+- Ecosystem detection reads your experience, projects and education, and ignores
+  the `## Skills` catalogue. A technology you list and have never used no longer
+  counts as coverage, so five C#-only postings stop reading as a match.
+- The runner warns at startup when `cv.pinned_projects` names a project that no
+  longer exists in `cv.md`. The warning used to go to a log file that is opened
+  only when an offer fails.
+
+### Fixed
+
+- A summary that claims something `cv.md` cannot support is thrown away and
+  re-requested with the posting's requirements withheld. It used to be patched
+  in place, which left the claim in a shorter sentence.
+- A figure that belongs to a different entry is rejected. Both numbers in
+  "delivered a peer-to-peer system with 85%+ test coverage" can be real and the
+  sentence still credits the wrong project.
+- `skill_coverage` scored 3.5 skills per posting out of a 105-item taxonomy,
+  because it looked for the exact string and `cv.md` writes several entries as
+  alternatives. A spaced slash now reads as "either of these".
+- The selection sweep simulated a funnel the pipeline stopped using on
+  2026-08-08, so its numbers described code nobody runs.
+
 ## [0.3.0] - 2026-08-11
 
 ### Added
