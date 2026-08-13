@@ -521,6 +521,11 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
   for (const it of items) {
     it.entry.scored.push({ text: it.text, score: it.score + (grades ? 0.10 * (grades.get(it.text) ?? 0) : 0) });
   }
+  // Hand the grades back to the caller if it asked. The summary stage wants them
+  // and re-deriving them is a second 66 s judge call for numbers already in
+  // memory. An out-parameter rather than a changed return type, because this
+  // function returns the selected CV as text and three callers depend on that.
+  if (opts.out && typeof opts.out === 'object') opts.out.grades = grades ?? null;
 
   // Keep the top-N bullets per entry (relevance order — the tailor prompt asks
   // for most-relevant first anyway), guaranteeing at least one metric bullet.

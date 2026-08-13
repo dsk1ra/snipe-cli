@@ -526,18 +526,32 @@ export function filterSkillItems(skills, cvText) {
  * @param {string} selectedCv the post-selection CV handed to the tailor model
  * @returns {string[]}
  */
-export function selectedBullets(selectedCv) {
+export function selectedBullets(selectedCv, grades = null) {
   const out = [];
   try {
     for (const sec of parseCvSections(selectedCv)) {
       if (sec.name !== 'Experience' && sec.name !== 'Projects') continue;
       for (const e of parseEntries(sec.lines).entries) {
         const name = e.head[0].replace(/^###\s+/, '').trim();
-        for (const b of e.bullets) out.push(`${name}: ${b}`);
+        for (const b of e.bullets) out.push({ line: `${name}: ${b}`, text: b });
       }
     }
   } catch { /* odd CV shape — caller falls back */ }
-  return out;
+  // The prompt asks for ONE quantified achievement from the evidence, and the
+  // model has been taking the first plausible line rather than the strongest.
+  // The judge has already graded every one of these bullets for this posting and
+  // the summary never saw the grades.
+  //
+  // Sorting by grade uses the half of the judge's signal that is trustworthy:
+  // generation ledger §16 measured its positives at 0.950 precision against the
+  // Opus corpus and its zeros at 0.228, so "which of these is strong" is a
+  // question it answers well even though "which is worthless" is not.
+  //
+  // Stable within a grade — `sort` is stable in V8 and the input order is the
+  // selection order the previous prompt shipped, so an ungraded run is
+  // byte-identical to the old behaviour rather than merely similar.
+  if (grades) out.sort((a, b) => (grades.get(b.text) ?? 0) - (grades.get(a.text) ?? 0));
+  return out.map(x => x.line);
 }
 
 /**

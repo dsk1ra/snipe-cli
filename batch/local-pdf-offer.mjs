@@ -597,6 +597,10 @@ try {
 // uses to decide which evidence to foreground, so it is parsed once.
 const blockBReqs = extractBlockBRequirements(reportText);
 
+// Filled by cv-select: the judge grades it already paid for, so the summary
+// stage can order its evidence by them without a second 66 s call.
+const selectOut = /** @type {{grades?: Map<string, number>|null}} */ ({});
+
 // Selection costs one 30B judge call — measured 66 s, 80 % of Phase 3's wall
 // clock — and is identical for every writer variant, because none of them touch
 // cv-select. A generation A/B was therefore paying ~35 min per 32-offer arm to
@@ -653,7 +657,7 @@ if (!cached) try {
   const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '24', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
-    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
+    { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects, out: selectOut,
       maxBulletsPerRole:   num('SNIPE_MAX_ROLE_BULLETS', 4),
       // 0 restores the single pool, which is the pre-cap arm's selector.
       projMaxLines: parseInt(process.env.SNIPE_PROJ_MAX_LINES ?? '14', 10) || 0,
@@ -786,7 +790,9 @@ if (rankedModules.length) cvContent.education_modules = rankedModules;
 // The JSON field is still generated and still the fallback: if this call fails
 // the offer ships the old summary rather than nothing.
 try {
-  const bullets = selectedBullets(cvForPrompt);
+  // SNIPE_GRADE_ORDER=0 restores selection order — the pre-change arm.
+  const gradeOrder = (process.env.SNIPE_GRADE_ORDER ?? '1') !== '0';
+  const bullets = selectedBullets(cvForPrompt, gradeOrder ? (selectOut.grades ?? null) : null);
   if (bullets.length) {
     const generated = await generateSummary({
       bullets, role: args.role, cvText, incumbent: cvContent.summary,
