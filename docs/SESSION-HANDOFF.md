@@ -7,8 +7,8 @@ command given here.
 Branch `develop`, working tree clean. Suite 1361 checks green, `npm run
 typecheck` clean.
 
-**All twelve backlog items are closed.** What remains is two user-layer edits
-that only you can make, and whatever the next round of ideas turns out to be.
+**All twelve backlog items are closed, and both user-layer edits have landed**
+(§20). What remains is whatever the next round of ideas turns out to be.
 
 ## Read these first, in order
 
@@ -48,41 +48,51 @@ rejected — do not use it as a control.
 | `sum-v5` | 0.564 | 1.03 | 22% | — |
 | `floor2` | 0.552 | 0.75 | 19% | 5/32 |
 | `cap14` | 0.530 | 0.469 | 3% | 5/32 |
-| **`bestof2`** | **0.530** | **0.469** | **3%** | **1/32** |
+| `bestof2` | 0.530 | 0.469 | 3% | 1/32 |
+| **`userlayer`** | **0.580** | **0.469** | **3%** | **1/32** |
 
 `cap14` → `bestof2` moves nothing in selection by construction; it is a summary
 change, and every selection metric reads a delta of exactly 0.000, which is the
-check that it stayed in its lane.
+check that it stayed in its lane. `bestof2` → `userlayer` is the opposite: a
+selection change with the summary code untouched.
 
-## Two things waiting on the user — do not do these yourself
+## The two user-layer edits — landed 2026-08-13, §20
 
-Both are user-layer files, and **both invalidate `bestof2` as a control**. Land
-them together and re-baseline once, then regenerate 240–243 again.
+1. **`config/profile.yml`** — `cv.pinned_projects` now reads
+   `"Zero Trust Security Analytics"`. It had read `"Zero Trust SIEM"` and matched
+   nothing for 16 runs.
+2. **`cv.md` `## Skills`** — `REST / RESTful APIs`,
+   `AI / LLM application development`, and `Git` beside CI/CD. The first two are
+   notation: `skillForms` reads a spaced slash as alternatives.
 
-1. **`config/profile.yml`** — `cv.pinned_projects` says `"Zero Trust SIEM"`; the
-   title in `cv.md` is `Zero Trust Security Analytics Dashboard`. The pin has done
-   nothing for 16 runs. The runner now warns at startup. Correcting it spends one
-   of the three project slots and moves the benchmark for every arm.
-2. **`cv.md` `## Skills`** — run
-   `node batch/bench-tools/skills-gap.mjs --min 4 --shaped`. The two largest gaps
-   are notation rather than capability, and are one-character edits now that
-   `skillForms` reads a spaced slash as "either of these":
-   `AI / LLM application development` (84 offers, 66% of the corpus) and
-   `REST / RESTful APIs` (21, 16%). `cv.md` prose already proves both. Then
-   **Git** (10 offers) is a genuine gap that is safe to claim. Everything below
-   that — Azure 22, GCP 17, Terraform 11, SRE 9, Golang 8 — is a capability
-   question the corpus cannot answer.
+Together: `differentiator_coverage` **0.530 → 0.580** (7-0, CI [0.017, 0.089],
+p=0.016), `skill_coverage` 0.993 → 1.000, at a cost of `selection_regret` +0.018
+(17-3). Every falsity metric flat. Reports 240–243 regenerated into
+`output/2026-08-13_*`.
+
+Two things a later reader will want:
+
+- **Editing `## Skills` does not invalidate the 128 Opus labels.**
+  `selectableAtoms` takes bullets from Experience and Projects only, and
+  `outputChunks` never reads the skills block. Editing Experience or Projects
+  still invalidates every label.
+- **A pin is not just a slot.** `allocateLines` spends one shared budget, so
+  pinning redistributes bullets across the whole page. Two of the seven improved
+  offers ship an identical project set in both arms.
 
 ## What is left
 
-Nothing on the list. The two user-layer edits above are the only outstanding
-work, and both are the user's.
+Nothing on the list, and nothing waiting on the user.
 
-When they land, re-baseline once against `bestof2` and regenerate 240–243 again —
-`bash batch/local-runner.sh --skip-phase1 --skip-phase2 --only-id <293|294|295|296>
---retry-failed`. **`--retry-failed` is the flag that matters**: without it the
-runner reports success and re-runs nothing, because `p3_status` is already
-`completed`.
+`userlayer` is the control for anything next. To regenerate 240–243 after a
+change: `bash batch/local-runner.sh --skip-phase1 --skip-phase2 --only-id
+<293|294|295|296> --retry-failed`. **`--retry-failed` is the flag that matters**:
+without it the runner reports success and re-runs nothing, because `p3_status`
+is already `completed`.
+
+Four stale output directories are duplicated by today's regeneration and are the
+user's to delete: `output/2026-08-12_unknown_240`, `_241`, `sophos_242`,
+`unknown_243`.
 
 If new ideas are wanted, the largest measured gap is still retention:
 `differentiator_coverage` sits at 0.530 against an oracle ceiling of 1.000, and
