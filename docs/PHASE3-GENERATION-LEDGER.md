@@ -1401,3 +1401,48 @@ the posting, so this is the case the two metrics were built to disagree about.
 The labels win here: 7 offers gained a flagged differentiator, none lost one.
 
 `bestof2` is retired as a control. `userlayer` is the baseline for anything next.
+
+### Reading the summaries, which the table could not see
+
+Rule 7, and it paid again. Every falsity metric above reads flat, and the
+summaries still moved — the summary stage is untouched, but selection feeds it,
+so changing selection changes what it writes.
+
+Read: the six changed offers whose bench output survives, plus all four
+regenerated reports.
+
+- **Offer 185 lost its positioning line.** It now opens *"Particularly in
+  developing reliable, fully local LLM pipelines…"* — a fragment with no subject,
+  where `bestof2` opened *"Product Engineer with deep expertise in full-stack
+  product development…"*. Across all 32, openers that start mid-clause go
+  **0/32 → 1/32**. No metric moves on it.
+- **Offer 175 welds one project's attributes onto another.** *"a Zero Trust
+  Security Analytics Dashboard with end-to-end distributed tracing and resilience
+  patterns"* — the tracing and the circuit breakers belong to the Distributed
+  Store Management System, which is on the same page. `bestof2` had the same two
+  projects apart and said neither.
+- **Two of the four regenerated reports borrow a figure.** 240 gives the MongoDB
+  project 85%+ test coverage, which is UBWIS's (`cv.md:25`); the rest of that
+  sentence is right, since the Zero Trust dashboard *is* the MongoDB client
+  partnership. 243 says *"Reduced configuration time by 80%"*, welding UBWIS's
+  onboarding figure onto the Teaching Assistant's configuration guides — where
+  `cv.md` says 2+ hours to 30 minutes, and 90% is escalations. Reports 241 and
+  242 are clean, and 242 quotes the configuration figure exactly right, so the
+  stage can do it.
+
+All three are §12's class — a figure or a capability that exists in `cv.md`
+attached to an entry that did not earn it — and §12 records `sum-v5` shipping at
+0/32 on the bench sample. The class is not fixed; it was measured to zero on one
+sample and reappears when the evidence set changes underneath it.
+
+Note what this does not say. `bestof2` was not clean either — its offer 4 summary
+ends *"shipped cross-platform tools with 85%+ test coverage"*, the same borrowed
+figure under a vaguer noun. One of the three defects is a genuine regression
+(185's opener); the other two are the standing defect landing on different
+offers.
+
+**The +0.050 stands and the summaries are the open cost.** Coverage is measured
+against labels, 7-0, and none of the above touches which evidence reached the
+page. What it says is that `summaryUnsupported` cannot see attribution, so the
+next summary experiment has a target: entry-scoped figures in the summary, which
+§10 gave experience bullets and project blurbs and §12 left undone here.
