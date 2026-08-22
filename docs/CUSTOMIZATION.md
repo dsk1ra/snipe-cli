@@ -33,14 +33,20 @@ Copy from `templates/portals.example.yml` and customize:
 3. **search_queries**: WebSearch queries for job boards (Ashby, Greenhouse, Lever)
 4. **tracked_companies**: Companies to check directly
 
-## CV Template (templates/cv-template.html)
+## CV Template (templates/cv-template.tex)
 
-The HTML template uses these design tokens:
-- **Fonts**: Space Grotesk (headings) + DM Sans (body) -- self-hosted in `fonts/`
-- **Colors**: Cyan primary (`hsl(187,74%,32%)`) + Purple accent (`hsl(270,70%,45%)`)
-- **Layout**: Single-column, ATS-optimized
+[Jake's Resume](https://github.com/jakegut/resume), compiled by `pdflatex`:
+- **Font**: Latin Modern (the LaTeX default) -- no font files to manage
+- **Layout**: Single-column, A4, 0.45in margins, ruled small-caps headings
+- **Sections**: Technical Skills, Work Experience, Projects, Education
 
-To customize fonts/colors, edit the CSS in the template. Update font files in `fonts/` if switching fonts.
+To customize spacing or section order, edit `templates/cv-template.tex` directly.
+Requires TeX Live (`titlesec`, `enumitem`, `tabularx`, `marvosym`, `fancyhdr`,
+`glyphtounicode`). Colours are deliberate: there are none, because the palette
+was the least ATS-safe thing in the old template.
+
+The cover letter is still HTML (`templates/cover-letter-template.html`) and still
+uses the Space Grotesk / DM Sans pair from `fonts/`.
 
 ## Negotiation Scripts (modes/_shared.md)
 

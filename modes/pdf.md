@@ -6,25 +6,23 @@
 2. Ask the user for the JD if it is not in context (text or URL)
 3. Extract 15-20 keywords from the JD
 4. Detect JD language → CV language (EN default)
-5. Detect company location → paper format:
-   - US/Canada → `letter`
-   - Rest of the world → `a4`
+5. Always A4. Letter used to be selectable and is not: it is 66px shorter,
+   about four bullet lines on a CV fighting to stay on one page, and no ATS or
+   recruiter screens on a 6mm width difference.
 6. Detect role archetype → adapt framing
-7. Rewrite Professional Summary by injecting JD keywords + exit narrative bridge ("Built and sold a business. Now applying systems thinking to [JD domain].")
-8. Select top 3-4 most relevant projects for the job
-9. Reorder experience bullets by JD relevance
-10. Build competency grid from JD requirements (6-8 keyword phrases)
-11. Inject keywords naturally into existing achievements (NEVER invent)
-12. Generate full HTML from template + personalized content
-13. Read `name` from `config/profile.yml` and derive two forms: `{candidate}` = kebab-case lowercase for slugs (e.g. "John Doe" → "john-doe"); `{CandidateName}` = Title-Case hyphenated for the PDF filename (e.g. "John-Doe"). Also derive `{company}` and `{role}` as kebab-case slugs.
-14. **One folder per application — keep the PDF and its source together.** Let `APP_DIR = output/{YYYY-MM-DD}_{company}_{role}`. Write the filled HTML to `{APP_DIR}/source.html` (persisted, NOT /tmp — it is the editable source of the PDF).
-15. Execute: `mkdir -p "{APP_DIR}" && node generate-pdf.mjs "{APP_DIR}/source.html" "{APP_DIR}/{CandidateName}-CV.pdf"` (always A4)
-16. Report: the folder path, the PDF path (`{CandidateName}-CV.pdf` — attach as-is), number of pages, keyword coverage %. Note that `source.html` in the same folder is editable for manual tweaks + re-render.
+7. Select top 3-4 most relevant projects for the job
+8. Reorder experience bullets by JD relevance
+9. Inject keywords naturally into existing achievements (NEVER invent)
+10. Generate the full LaTeX document from the template + personalized content
+11. Read `name` from `config/profile.yml` and derive two forms: `{candidate}` = kebab-case lowercase for slugs (e.g. "John Doe" → "john-doe"); `{CandidateName}` = Title-Case hyphenated for the PDF filename (e.g. "John-Doe"). Also derive `{company}` and `{role}` as kebab-case slugs.
+12. **One folder per application — keep the PDF and its source together.** Let `APP_DIR = output/{YYYY-MM-DD}_{company}_{role}`. Write the filled LaTeX to `{APP_DIR}/source.tex` (persisted, NOT /tmp — it is the editable source of the PDF).
+13. Execute: `mkdir -p "{APP_DIR}" && node generate-pdf.mjs "{APP_DIR}/source.tex" "{APP_DIR}/{CandidateName}-CV.pdf"` (always A4)
+14. Report: the folder path, the PDF path (`{CandidateName}-CV.pdf` — attach as-is), number of pages, keyword coverage %. Note that `source.tex` in the same folder is editable for manual tweaks + re-render.
 
 ## ATS Rules (clean parsing)
 
 - Single-column layout (no sidebars, no parallel columns)
-- Standard headers: "Professional Summary", "Work Experience", "Education", "Skills", "Certifications", "Projects"
+- Standard headers: "Technical Skills", "Work Experience", "Projects", "Education"
 - No text in images/SVGs
 - No critical info in PDF headers/footers (ATS ignores them)
 - UTF-8, selectable text (not rasterized)
@@ -33,24 +31,25 @@
 
 ## PDF Design
 
-- **Fonts**: Space Grotesk (headings, 600-700) + DM Sans (body, 400-500)
-- **Fonts self-hosted**: `fonts/`
-- **Header**: name in Space Grotesk 24px bold + gradient line `linear-gradient(to right, hsl(187,74%,32%), hsl(270,70%,45%))` 2px + contact row
-- **Section headers**: Space Grotesk 13px, uppercase, letter-spacing 0.05em, color cyan primary
-- **Body**: DM Sans 11px, line-height 1.5
-- **Company names**: accent purple color `hsl(270,70%,45%)`
-- **Margins**: 0.6in
+- **Font**: Latin Modern, the LaTeX default — nothing to self-host
+- **Header**: name in `\Huge\scshape`, then the target role, then one contact row
+- **Section headers**: `\large\scshape` over a full-width `\titlerule`
+- **Body**: 11pt document, bullets set `\small` (10pt) on 12pt leading
+- **Colour**: none. The palette was the least ATS-safe thing in the old template
+- **Margins**: 0.45in, A4
 - **Background**: pure white
 
 ## Section order (optimized "6-second recruiter scan")
 
-1. Header (large name, gradient, contact, portfolio link)
-2. Professional Summary (3-4 lines, keyword-dense)
-3. Core Competencies (6-8 keyword phrases in flex-grid)
-4. Work Experience (reverse chronological)
-5. Projects (top 3-4 most relevant)
-6. Education & Certifications
-7. Skills (languages + technical)
+1. Header (large name, target role, contact row)
+2. Technical Skills (the one section a keyword scan reads first)
+3. Work Experience (reverse chronological)
+4. Projects (top 3-4 most relevant)
+5. Education & Certifications
+
+No Professional Summary and no Core Competencies. Every tag Competencies printed
+also appeared in Skills; the summary is a section Jake's Resume does not have,
+and `generate-pdf.mjs` holds every section but Skills to `cv.md`'s own order.
 
 ## Keyword injection strategy (ethical, truth-based)
 
@@ -61,36 +60,36 @@ Examples of legitimate reformulation:
 
 **NEVER add skills that the candidate does not have. Only reword real experience using the exact JD vocabulary.**
 
-## Template HTML
+## Template LaTeX
 
-Use the template in `cv-template.html`. Replace the `{{...}}` placeholders with personalized content:
+Use `templates/cv-template.tex` — [Jake's Resume](https://github.com/jakegut/resume),
+compiled by `pdflatex`. Replace the `{{...}}` placeholders with personalized
+content, all of it LaTeX-escaped (`% & _ # $ { } ~ ^` and the T1 traps `< > |`):
 
 | Placeholder | Content |
 |-------------|-----------|
-| `{{LANG}}` | `en` or `es` |
-| `{{PAGE_WIDTH}}` | `8.5in` (letter) or `210mm` (A4) |
 | `{{NAME}}` | (from profile.yml) |
-| `{{PHONE}}` | (from profile.yml — include with its separator only when `profile.yml` has a non-empty `phone` value; omit both `<span>` and `<span class="separator">` otherwise) |
-| `{{EMAIL}}` | (from profile.yml) |
-| `{{LINKEDIN_URL}}` | [from profile.yml] |
-| `{{LINKEDIN_DISPLAY}}` | [from profile.yml] |
-| `{{PORTFOLIO_URL}}` | [from profile.yml] (or /es depending on language) |
-| `{{PORTFOLIO_DISPLAY}}` | [from profile.yml] (or /es depending on language) |
-| `{{LOCATION}}` | [from profile.yml] |
-| `{{TARGET_ROLE}}` | The role being applied for, under the name (omitted when absent) |
-| `{{SECTION_SUMMARY}}` | Professional Summary |
-| `{{SUMMARY_TEXT}}` | Personalized summary with keywords |
-| `{{SECTION_SKILLS}}` | Technical Skills — renders directly under the summary |
-| `{{SKILLS}}` | Skills HTML |
+| `{{TARGET_ROLE}}` | The role applied for, under the name. Whole line including its `\\`, or empty |
+| `{{CONTACT}}` | The whole header line: `$|$`-separated `\href` calls for phone, email, LinkedIn, GitHub, then location. Built as one token because every field is optional |
+| `{{SECTION_SKILLS}}` | Technical Skills — renders directly under the header |
+| `{{SKILLS}}` | An `itemize` of `\textbf{Category}{: items}` rows |
 | `{{SECTION_EXPERIENCE}}` | Work Experience |
-| `{{EXPERIENCE}}` | HTML for each job with reordered bullets |
+| `{{EXPERIENCE}}` | One `\resumeSubheading{Company}{Period}{Role}{Location}` per job, each wrapping its bullets in `\resumeItem` |
 | `{{SECTION_PROJECTS}}` | Projects |
-| `{{PROJECTS}}` | HTML for top 3-4 projects |
-| `{{SECTION_EDUCATION}}` | Education &amp; Certifications |
-| `{{EDUCATION}}` | Education HTML, with certifications as a trailing line |
+| `{{PROJECTS}}` | One `\resumeProjectHeading{\textbf{Name} $|$ \emph{Badge}}{Period}` per project, bullets as `\resumeItem`, stack and repo as a trailing `\resumeTechLine` |
+| `{{SECTION_EDUCATION}}` | Education \& Certifications |
+| `{{EDUCATION}}` | `\resumeSubheading{Degree}{Period}{School}{}`, with modules, achievements and certifications as `\resumeItem` rows |
 
-Core Competencies is gone: every tag it printed also appeared in Skills, and it
-cost 45px to say so twice. Certifications no longer has its own section.
+There is no summary. Jake's has none, and the generation stage that used to
+write one is disconnected in `batch/local-pdf-offer.mjs`. Core Competencies is
+gone too: every tag it printed also appeared in Skills. Certifications has no
+section of its own — it trails the last education entry.
+
+**Never write a placeholder token inside a `%` comment** in the template: the
+filler is a blind `replaceAll` and will substitute into the comment.
+
+An empty `itemize` is a LaTeX error, not an empty list — an entry whose bullets
+are all trimmed must render as a bare heading, with no `\resumeItemListStart`.
 
 ## Canva CV Generation (optional)
 
@@ -121,7 +120,8 @@ c. If mapping fails, show the user what was found and ask for guidance
 
 #### Step 3 — Generate tailored content
 
-Same content generation as the HTML flow (Steps 1-11 above):
+Same content generation as the LaTeX flow (Steps 1-9 above), plus a summary,
+which the Canva design has a box for and the PDF template does not:
 - Rewrite Professional Summary with JD keywords + exit narrative
 - Reorder experience bullets by JD relevance
 - Select top competencies from JD requirements

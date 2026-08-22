@@ -6,17 +6,40 @@ System-layer template files used by snipe scripts and modes -- put user customiz
 
 | File | Used By | Purpose |
 |------|---------|---------|
-| `cv-template.html` | `generate-pdf.mjs` | HTML/CSS template for ATS-optimized CV PDFs |
+| `cv-template.tex` | `generate-pdf.mjs` | LaTeX template (Jake's Resume) for ATS-optimized CV PDFs |
+| `cover-letter-template.html` | `generate-cover-letter.mjs` | HTML/CSS template for cover letters |
 | `portals.example.yml` | Onboarding | Example portal scanner configuration (copy to `portals.yml` to activate) |
 | `states.yml` | `tracker/verify-pipeline.mjs`, `tracker/normalize-statuses.mjs`, `tracker/merge-tracker.mjs` | Canonical application states and their aliases |
 
-### cv-template.html
+### cv-template.tex
 
-The HTML template rendered by Playwright into PDF. Uses placeholder tokens (`{{NAME}}`, `{{SUMMARY_TEXT}}`, `{{EXPERIENCE}}`, etc.) that the PDF pipeline fills at generation time.
+[Jake's Resume](https://github.com/jakegut/resume) (MIT), compiled by `pdflatex`.
+`batch/fill-cv-template.mjs` substitutes the `{{...}}` placeholder tokens and
+writes `source.tex` next to the PDF, so a manual tweak plus a re-render is still
+one command.
 
-**Design:** Space Grotesk headings + DM Sans body, single-column ATS-safe layout, self-hosted fonts from `fonts/`.
+**Design:** Latin Modern, single-column, ruled small-caps section headings.
+`\input{glyphtounicode}` + `\pdfgentounicode=1` is what makes the PDF's text
+layer extract cleanly — that is the ATS guarantee, and it is why the template
+keeps them.
 
-**Customization:** Edit this file to change colors, spacing, or section order. The placeholder tokens are documented in `batch/local-tailor-prompt.md`.
+**Sections:** Technical Skills, Work Experience, Projects, Education. There is
+no summary: Jake's has none, and the pipeline's summary stage is disconnected
+(`batch/local-pdf-offer.mjs`). Skills sits directly under the header rather than
+last, which is a deliberate departure from upstream — `generate-pdf.mjs` treats
+it as template-ordered and holds every other section to `cv.md`'s order.
+
+**Two departures from upstream:** `a4paper` rather than `letterpaper` (Letter is
+66px shorter, about four bullet lines on a CV fighting to stay on one page), and
+`geometry` at 0.45in rather than the Letter-tuned `\addtolength` margin
+arithmetic.
+
+**Requires:** a TeX Live install with `titlesec`, `enumitem`, `tabularx`,
+`marvosym`, `fancyhdr` and `glyphtounicode`.
+
+**Customization:** edit this file for spacing or section order; a token name must
+never appear in a comment, because the filler is a blind `replaceAll` and will
+substitute into one.
 
 ### portals.example.yml
 

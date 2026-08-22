@@ -67,7 +67,10 @@ tightens the layout until the PDF fits one page.
 ## Setup
 
 Node ≥ 18 (≥ 22.5 for the optional SQLite tracker index) and a local
-[Ollama](https://ollama.com). Rendering the PDF needs Playwright's Chromium:
+[Ollama](https://ollama.com). The CV renders from LaTeX, so it needs `pdflatex`
+on PATH — on Debian/Ubuntu `texlive-latex-recommended`, `texlive-latex-extra`
+and `texlive-fonts-recommended`; on Fedora `texlive-scheme-medium`. Portal
+scanning and the cover letter still need Playwright's Chromium:
 `npx playwright install chromium`. A GPU helps but isn't required, see
 [Hardware](#hardware).
 

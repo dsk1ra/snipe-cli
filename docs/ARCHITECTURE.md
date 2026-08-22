@@ -78,7 +78,7 @@ article-digest.md        →  Proof points for matching
 config/profile.yml       →  Candidate identity
 portals.yml              →  Scanner configuration
 templates/states.yml     →  Canonical status values
-templates/cv-template.html → PDF generation template
+templates/cv-template.tex  → PDF generation template (Jake's Resume, pdflatex)
 ```
 
 ## File Naming Conventions

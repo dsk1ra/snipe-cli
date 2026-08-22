@@ -137,8 +137,10 @@ already spent the budget. The same is true of the density ladder's step 0 in
 `local-pdf-offer.mjs`; every tighter step still drops project bullets before
 experience bullets. All 32 bench offers render at 2 pages on step 0.
 
-**The budget is 24 lines over 3 projects** (`SNIPE_LINE_BUDGET`,
-`SNIPE_MAX_PROJECTS`), not 21 over 4. Four projects spent ~38px each on a title,
+**The budget is 22 lines over 3 projects** (`SNIPE_LINE_BUDGET`,
+`SNIPE_MAX_PROJECTS`), not 21 over 4. It was 24 lines under the HTML template —
+see the table below for what the LaTeX swap moved. The 3-projects half of the
+finding stands as measured: four projects spent ~38px each on a title,
 a badge and a tech line to deliver one bullet apiece — 43% of the largest section
 on the page was chrome, and three of the four said one thing and stopped. Trading
 a project's chrome, plus the 69px the page was simply not using, for bullets is
@@ -150,6 +152,37 @@ One page still holds for all 32, with the ladder firing on 3 and none past step 
 **`projectBulletBudget` is dead on this path** — `allocateLines` spends
 `lineBudget` and never reads it (`cv-select.mjs:579`), so setting
 `SNIPE_PROJ_BUDGET` changes nothing unless `SNIPE_LINE_BUDGET=0`.
+
+**24 → 22 came from the template swap, and every constant around it moved too.**
+Jake's Resume sets bullets `\small` in a nested `itemize` whose `\linewidth` is
+497.5pt, narrower than the HTML template's 708px box, so `bulletLines` fell
+124 → 108 chars and each bullet costs ~15% more lines. Deleting the summary
+section gave lines back; the narrower column took more than it gave. All three
+numbers are measured rather than swept, because a compile is free where a judge
+call is not:
+
+| constant | old | new | how |
+|---|---|---|---|
+| `bulletLines` divisor | 124 | **108** | all 33 real `cv.md` bullets measured with `\settototalheight` in the real list nesting — exact on 33/33 |
+| `bulletCost` overhead | `2/15.6` | **`2/12`** | 4 vs 12 identical bullets differ by 14.00pt each one-line, 26.00pt two-line ⇒ line = 12pt, fixed cost = 2pt |
+| `lineBudget` | 24 | **22** | all 220 `cv-content.json` in `output/` re-filled and compiled: capacity p10 22.9, p25 23.9, median 25.9 |
+| `projMaxLines` | 14 | **13** | the same 58% Projects share, carried over rather than re-swept |
+
+22 fits 202 of 220 on selection alone (92%), leaving the rest to the ladder —
+the same division of labour 24 had against the old page, where it fired on 3 of
+32. Passing the median would overrun the third of offers carrying the heaviest
+chrome, which is the gate ("32 of 32 fit", not "most fit").
+
+**Re-measure the budget after any change to `parseExperience`.** The first pass
+read p10 19.6 and would have shipped 19, because `cv.md` had moved to an ASCII
+hyphen on the company line and the parser only accepted `—`/`–`. That parsed to
+an empty company — no employer names or dates on the page at all — and an empty
+company matches every model entry, so each role rendered the first one's
+bullets. The capacity number was honest about a document nobody wanted. **The differentiator-coverage numbers
+throughout this file were measured against the HTML template at 24 lines and
+have not been re-measured against Jake's.** The findings they encode are about
+ranking and allocation, not about the page, so they carry; the absolute values
+do not.
 
 **Nothing may slice the skills block down to a fixed count.** `selectSkills`
 keeps a category past the sixth precisely when the posting named something inside
@@ -194,7 +227,25 @@ grades to shrink the output — that costs 0.03.
 Regenerate exemplars after editing cv.md:
 `node batch/goldset.mjs export-shots --ids 5,50`.
 
-The **summary** is a separate call (`batch/summary-stage.mjs`) on `snipe-eval`,
+**The summary is disconnected.** Jake's Resume has no summary section, so the
+stage was spending one `snipe-eval` call per offer on prose the page cannot
+print. `local-pdf-offer.mjs` no longer imports `generateSummary`, and `summary`
+is out of the tailor schema and its validation, so the `--writer model` arm
+stops writing one too. `batch/tailor-harness.mjs` reports the `summary_*` family
+as **null**, not 0 — a metric defined against a field nothing renders scores a
+perfect mark by construction, which is benchmark rule 5.
+
+`batch/summary-stage.mjs` itself stays: `verifyBulletProducts`,
+`filterSkillItems`, `stripFabricatedProducts` and the fabrication vocabularies
+they share guard bullets, projects and skills, and those still ship. Restoring a
+summary means re-adding the call and a template slot, not rewriting the stage.
+A contract test pins the import out, so it cannot come back by accident and
+quietly resume paying for it.
+
+The rest of this section documents that stage as it stands, for whoever turns it
+back on.
+
+The **summary** was a separate call (`batch/summary-stage.mjs`) on `snipe-eval`,
 fed the selected bullets *and* Block B, at temperature 0. It follows the standard
 CV template — positioning, the requirements the evidence answers in the posting's
 own wording, one quantified achievement — and **the posting supplies the wording
