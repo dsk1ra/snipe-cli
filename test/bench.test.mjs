@@ -705,15 +705,17 @@ try {
     // how tall the CV actually renders. A one-page experiment run against a
     // blind harness scores every arm identically and reads as a clean null.
     //
-    // The check that the harness is NOT blind: an arm carrying a deliberately
-    // longer summary must measure taller. The summary is the right lever
-    // because it renders straight from the content JSON — experience and
-    // project bullets are matched back to cv.md first, so a fixture company
-    // that cv.md has never heard of would render the real CV's bullets in both
-    // arms and the two would come out identical.
+    // The check that the harness is NOT blind: an arm carrying deliberately more
+    // content must measure taller. `education_modules` is the lever because it
+    // renders straight from the content JSON — experience bullets are matched
+    // back to cv.md first, so a fixture company that cv.md has never heard of
+    // renders the real CV's bullets in both arms and the two come out
+    // identical, and skill items are grounded against cv.md for the same
+    // reason. (It used to be the summary, until the template stopped having
+    // one.)
     writeRun('SHORT', '1_acme', content('Acme Corp', ['Built a Rust ingest service.']));
     writeRun('LONG', '1_acme', content('Acme Corp', ['Built a Rust ingest service.'], {
-      summary: 'A backend engineer with Rust and Postgres experience. '.repeat(40),
+      education_modules: Array.from({ length: 60 }, (_, i) => `Distributed Systems ${i}`),
     }));
     for (const l of ['SHORT', 'LONG']) {
       writeFileSync(join(TAILOR, l, 'meta.json'), JSON.stringify({ label: l, temperature: 0 }), 'utf8');

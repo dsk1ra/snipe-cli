@@ -10,7 +10,6 @@
  *   node batch/local-pdf-offer.mjs --id N --url URL --report-path PATH
  *     --report-num NNN --jd-file PATH --eval-score X.X --company CO
  *     --role ROLE --date YYYY-MM-DD [--model snipe-screen]
- *     [--summary-model snipe-eval]
  *     [--ollama-url http://localhost:11434] [--threshold 3.7] [--num-ctx 16384]
  */
 
@@ -22,12 +21,9 @@ import { cleanCvForPrompt, cleanJd } from './text-utils.mjs';
 import { selectCvForJd, extractBlockBRequirements, remapProjectNames, enforceChronoOrder,
          reconcileExperience, verifyBulletNumbers, verifyBulletFigures,
          verifyProjectFigures, cvCompanies, parseCvSections, parseEntries,
-         padProjectDescriptions, stripUnsupportedTenure,
-         verifySummaryFigures } from './cv-select.mjs';
+         padProjectDescriptions } from './cv-select.mjs';
 import { logCall } from './timing.mjs';
-import { generateSummary, selectedBullets, stripFabricatedProducts,
-         stripFabricatedCredentials, stripFabricatedDomains,
-         stripMisattributedFigures, stripJdProperNouns,
+import { stripFabricatedProducts,
          verifyBulletProducts, filterSkillItems } from './summary-stage.mjs';
 import { verbatimContent } from './cv-writers.mjs';
 import { createHash } from 'crypto';
@@ -53,24 +49,6 @@ function parseArgs(argv) {
     id: null, url: null, reportPath: null, reportNum: null, jdFile: null,
     evalScore: null, company: null, role: null, date: null, p1Score: null,
     p1Archetype: null, model: 'snipe-screen',
-    // The summary is the one piece of real prose Phase 3 still generates, and it
-    // has to read the posting's requirements to be worth generating at all — a
-    // job the 7B could not do without parroting them. It runs on the eval model
-    // by default, which under `--writer verbatim` also *saves* a model load:
-    // the 7B's only remaining call was this one, so the 30B is already resident
-    // from the bullet judge and never gets swapped out for it.
-    summaryModel: 'snipe-eval',
-    // Greedy, and deliberately not `temperature`. Production runs the tailor call
-    // at 0.15, and three consecutive runs of offer 305 at that temperature
-    // produced three unrelated summaries — an achievement list, a 75-word run-on,
-    // and a "proven track record" opener. Sampling buys diversity, and there is
-    // nothing to be diverse about: one summary is written, kept or rejected, and
-    // never compared against its own alternate takes. Greedy decoding makes the
-    // same CV and the same posting produce the same summary every time.
-    //
-    // Not visible in the benchmark, which already runs every arm at 0 — this is a
-    // determinism choice for the production path, not a measured quality claim.
-    summaryTemperature: 0,
     ollamaUrl: 'http://localhost:11434', threshold: 3.7, numCtx: 8192,
     // Benchmarking only. --bench-dir redirects the output folder and stops
     // before PDF generation (the model's work is done once cv-content.json is
@@ -98,8 +76,6 @@ function parseArgs(argv) {
       case '--p1-score':     a.p1Score      = argv[++i]; break;
       case '--p1-archetype': a.p1Archetype  = argv[++i]; break;
       case '--model':        a.model        = argv[++i]; break;
-      case '--summary-model': a.summaryModel = argv[++i]; break;
-      case '--summary-temperature': a.summaryTemperature = parseFloat(argv[++i]); break;
       case '--ollama-url':   a.ollamaUrl    = argv[++i]; break;
       case '--threshold':    a.threshold    = parseFloat(argv[++i]); break;
       case '--num-ctx':      a.numCtx       = parseInt(argv[++i], 10); break;
@@ -202,7 +178,6 @@ async function ensureUnloaded(baseUrl, model) {
 const TAILOR_SCHEMA = {
   type: 'object',
   properties: {
-    summary:      { type: 'string' },
     competencies: { type: 'array', items: { type: 'string' }, minItems: 6, maxItems: 9 },
     projects:     { type: 'array', minItems: 3, maxItems: 4, items: {
       type: 'object',
@@ -224,7 +199,7 @@ const TAILOR_SCHEMA = {
       required: ['company', 'bullets'],
     } },
   },
-  required: ['summary', 'competencies', 'projects', 'education_modules', 'skills', 'experience'],
+  required: ['competencies', 'projects', 'education_modules', 'skills', 'experience'],
 };
 
 /**
@@ -315,7 +290,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
     think: false,
     ...(format ? { format } : {}),
     // num_predict 2400: ample for the richer JSON (realistic output ~1.1-1.4k
-    // tokens — summary, 6-9 competencies, 3-4 project descriptions, 5-6 skill
+    // tokens — 6-9 competencies, 3-4 project descriptions, 5-6 skill
     // categories, experience bullets). Inputs are trimmed (Block E brief +
     // capped JD + base64-stripped CV) to keep input + output under the 8k window.
     options: { num_ctx: numCtx, temperature, num_predict: 2400 },
@@ -330,7 +305,7 @@ async function callOllama(baseUrl, model, systemPrompt, userMessage, numCtx, for
 
   if (!resp.ok) throw new Error(`Ollama HTTP ${resp.status}: ${await resp.text()}`);
   const data = await resp.json();
-  logCall(format ? 'p3-tailor' : 'p3-summary', model, data);
+  logCall('p3-tailor', model, data);
   return data.response || '';
 }
 
@@ -379,33 +354,9 @@ function extractTailoringBrief(report) {
 
 // ── Output validation + clamps ──────────────────────────────────────────────────
 
-function wordCount(s) {
-  return String(s || '').trim().split(/\s+/).filter(Boolean).length;
-}
-
-function companyRe(company) {
-  const esc = String(company || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return esc.length >= 3 ? new RegExp(`\\b${esc}\\b`, 'i') : null;
-}
-
 // Soft schema check — returns a list of human-readable problems (empty = OK).
 function validateContent(c, company) {
   const errs = [];
-  if (!c || typeof c.summary !== 'string' || !c.summary.trim()) {
-    errs.push('"summary" is missing');
-  } else {
-    const w = wordCount(c.summary);
-    if (w < 45 || w > 78) errs.push(`"summary" is ${w} words (must be 50-70)`);
-    if (/\b(he|she|they)\b\s+(has|is|was|brings|demonstrat)/i.test(c.summary)) {
-      errs.push('"summary" uses third person — write in implied first person (no name, no he/she)');
-    }
-    // Fabrication guard: naming the target company implies past work FOR them
-    // (observed: "Led development of production systems for ElevenLabs").
-    const cre = companyRe(company);
-    if (cre && cre.test(c.summary)) {
-      errs.push(`"summary" mentions ${company} — never name the target company; describe only real past work`);
-    }
-  }
   if (!Array.isArray(c.experience) || c.experience.length === 0) errs.push('"experience" is missing');
   if (Array.isArray(c.competencies) && c.competencies.length < 6) errs.push('"competencies" has fewer than 6 entries');
   return errs;
@@ -593,8 +544,8 @@ try {
 // entry and the top projects. The 7B then only rewrites — it no longer decides
 // what's relevant. Any failure (embedding model missing, odd report shape)
 // falls back to the full CV.
-// Block B is both what cv-select ranks against and what the summary stage
-// uses to decide which evidence to foreground, so it is parsed once.
+// What cv-select ranks against, and part of the selection cache key, so it is
+// parsed once.
 const blockBReqs = extractBlockBRequirements(reportText);
 
 // Selection costs one 30B judge call — measured 66 s, 80 % of Phase 3's wall
@@ -684,9 +635,9 @@ const tailorSchema = schemaWithExperienceFloor(cvForPrompt);
 let cvContent = null;
 let lastErr   = '';
 if (args.writer === 'verbatim') {
-  // No generation call. The selection is rendered as cv.md words it, and the
-  // summary stage below still runs — so this isolates the *bullet* rewrite as the
-  // single variable, rather than testing two changes at once.
+  // No generation call. The selection is rendered as cv.md words it, so this
+  // isolates the *bullet* rewrite as the single variable, rather than testing
+  // two changes at once.
   //
   // Project bullets are a separate axis, flagged separately for the same reason:
   // bundling the rendering change into the writer change would make a win
@@ -697,13 +648,12 @@ if (args.writer === 'verbatim') {
 
   // Both are overwritten unconditionally by the Tier-3 blocks further down;
   // an empty array here just keeps the shape valid until they are.
-  cvContent.summary = '';
   cvContent.competencies = [];
   cvContent.education_modules = [];
 } else for (let attempt = 1; attempt <= 2; attempt++) {
   const um = attempt === 1
     ? userMessage
-    : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema. The "summary" MUST be 50-70 words in implied first person (no name, no he/she).`;
+    : `${userMessage}\n\nYour previous JSON had these problems: ${lastErr}. Return ONLY corrected JSON in the exact schema.`;
   let parsed;
   try {
     const raw = await callOllama(args.ollamaUrl, args.model, systemPrompt, um, args.numCtx, tailorSchema, args.temperature);
@@ -719,9 +669,7 @@ if (args.writer === 'verbatim') {
 }
 
 if (!cvContent) fail(`Ollama returned no parseable JSON after 2 attempts: ${lastErr}`);
-// The non-model writers leave `summary` empty on purpose — the stage below fills
-// it — so only the model path is held to having one at this point.
-if (args.writer === 'model' && (!cvContent.summary || !Array.isArray(cvContent.experience))) {
+if (args.writer === 'model' && !Array.isArray(cvContent.experience)) {
   fail(`Ollama JSON missing required fields. Got: ${JSON.stringify(Object.keys(cvContent))}`);
 }
 cvContent = clampContent(cvContent, { clampSkills: args.writer === 'model' });
@@ -770,111 +718,24 @@ cvContent.competencies = deriveCompetencies(reportText, cvContent.competencies, 
 const rankedModules = rankModules(cvText, jdText, 5);
 if (rankedModules.length) cvContent.education_modules = rankedModules;
 
-// G4 — the summary is generated by its own call, from the bullets that will
-// actually appear on this CV. As one field in a large JSON blob it competed with
-// five other sections for attention, and its repair path built the prompt from
-// the JD and the profile narrative *without ever seeing the selected bullets* —
-// structurally guaranteed to pull the summary toward the posting.
+// The summary is no longer rendered. templates/cv-template.tex is Jake's
+// Resume, which has no summary section, so the whole stage was writing prose
+// that nothing printed — one snipe-eval call per offer, plus the guard chain
+// below it, for a field the page has no slot for.
 //
-// Block B goes in alongside the evidence. That is a reversal: the requirements
-// were pulled out when the 7B copied them wholesale, and they are back because
-// the writer is now the 30B and because a summary that cannot see what the
-// posting asked for cannot be tailored to it. The evidence is still the only
-// source of fact — see SUMMARY_SYSTEM — and every grounding guard below still
-// runs on the result.
+// Disconnected rather than deleted. `batch/summary-stage.mjs` stays: over half
+// its exports (verifyBulletProducts, filterSkillItems, stripFabricatedProducts
+// and the fabrication vocabularies they share) guard bullets, projects and
+// skills, and those still ship. Its summary half — generateSummary, the six
+// strip guards, the 50-word floor — is intact and unreferenced, so restoring a
+// summary section means re-adding the call here and a {{SUMMARY}} slot in the
+// template, not rewriting the stage.
 //
-// The JSON field is still generated and still the fallback: if this call fails
-// the offer ships the old summary rather than nothing.
-try {
-  const bullets = selectedBullets(cvForPrompt);
-  if (bullets.length) {
-    const generated = await generateSummary({
-      bullets, role: args.role, cvText, incumbent: cvContent.summary,
-      reqs: blockBReqs, jdText,
-      call: (sys, usr) => callOllama(args.ollamaUrl, args.summaryModel, sys, usr,
-                                     args.numCtx, null, args.summaryTemperature),
-    });
-    if (generated) cvContent.summary = generated;
-  }
-} catch (err) {
-  process.stderr.write(`summary stage failed (${err.message}) — keeping the JSON summary\n`);
-}
-
-const distOf = n => (n < 50 ? 50 - n : n > 70 ? n - 70 : 0);
-// Benchmark-only: the summary as the model wrote it, before any guard touches
-// it. Without this the harness can only see the summary the guards already
-// repaired, so summary_fab would read 0 by construction and score a perfect mark
-// for a model that fabricates on every offer — the example_copy_pct mistake in
-// benchmark rule 5. Gated on --bench-dir so a real run's cv-content.json keeps
-// its shape.
-if (args.benchDir && typeof cvContent.summary === 'string') {
-  cvContent._summary_pre_guard = cvContent.summary;
-}
-
-if (typeof cvContent.summary === 'string') {
-  // Sibling strip: a years-of-experience claim the CV never makes. The number
-  // guard above cannot see this one — "2+" occurs elsewhere in the CV, so the
-  // token is allowed; it is the tenure that is invented.
-  cvContent.summary = stripUnsupportedTenure(cvContent.summary, cvText);
-
-  // The summary's siblings to verifyBulletFigures / verifyProjectFigures /
-  // verifyBulletProducts. It had none of them: one shipped summary claimed a
-  // platform "serving 150+ users" (the CV says 170) and called the candidate a
-  // "Russell Group graduate" (the university is post-1992), while metric_fab
-  // reported 0 because it only reads experience bullets.
-  //
-  // The product strip runs here as well as inside generateSummary, because the
-  // stage is in a try/catch: when it fails, the JSON summary ships, and that path
-  // was never product-guarded despite T2's comment claiming the summary was.
-  //
-  // Order matters — all three can shorten the summary, and the 50-word floor pad
-  // below has to see the shortened text so it can top it back up.
-  cvContent.summary = verifySummaryFigures(cvContent.summary, cvText);
-  cvContent.summary = stripFabricatedCredentials(cvContent.summary, cvText);
-  cvContent.summary = stripFabricatedProducts(cvContent.summary, cvText);
-  // Sibling of the two above, and the one benchmark rule 7 predicted would be
-  // needed: a domain the posting supplies and cv.md never claims. It runs here as
-  // well as inside generateSummary for the same reason the product strip does —
-  // when the stage throws, the JSON summary ships down this path instead.
-  cvContent.summary = stripFabricatedDomains(cvContent.summary, cvText);
-  // Ledger §10's entry-scoped rule, on the surface it never reached: a figure
-  // that is real, and belongs to a different entry than the clause names.
-  cvContent.summary = stripMisattributedFigures(cvContent.summary, cvText);
-  // The general case of the company-name strip below: any name the posting
-  // supplies and cv.md does not. The `--company` comparison alone missed a
-  // summary claiming work "for Joybuy Systems" on a JD.com posting.
-  cvContent.summary = stripJdProperNouns(cvContent.summary, cvText, jdText);
-
-  // Deterministic fabrication strip — if the target company name survived the
-  // retries, drop the sentence claiming it (runs before the length-floor pad).
-  const cre = companyRe(args.company);
-  if (cre && cre.test(cvContent.summary)) {
-    cvContent.summary = cvContent.summary
-      .split(/(?<=[.!?])\s+/)
-      .filter(s => !cre.test(s))
-      .join(' ')
-      .trim();
-  }
-
-  // Deterministic floor guarantee — the 7B reliably writes tight but under-hits
-  // 50 words. If still short, append a natural, role-specific targeting closer
-  // (on-brand: end-to-end ownership is a stated profile superpower).
-  if (wordCount(cvContent.summary) < 50 && !/\btarget/i.test(cvContent.summary)) {
-    // Strip a trailing " - Apollo Platform" qualifier, but NOT an in-word hyphen
-    // like "Full-Stack" (which `\s*[-–—]` would truncate to "Full").
-    const role = (args.role || 'engineering').replace(/\s+[-–—]\s+.*$/, '').trim();
-    const closer = ` Targeting ${role} roles where I can own systems end-to-end and ship secure, production-grade software.`;
-    const combined = cvContent.summary.replace(/\s+$/, '') + closer;
-    if (wordCount(combined) <= 72) cvContent.summary = combined;
-  }
-
-  // Deterministic guard — the model anchors on the report's seniority assessment
-  // and self-labels ("Mid-level …") despite the prompt rule. Self-labelling down
-  // is off-strategy on a CV, so strip it and re-capitalise.
-  const stripped = cvContent.summary.replace(
-    /\b(mid|junior|senior|entry|associate)[\s-]?level\s+/gi, '');
-  cvContent.summary = stripped.charAt(0).toUpperCase() + stripped.slice(1);
-}
+// The bench's summary_fab_* / summary_shape metrics read `summary` and
+// `_summary_pre_guard` and now score nothing. That is correct: the metric is
+// undefined once the field is not on the page (benchmark rule 5 — ask what a
+// metric reads if the change lands).
+cvContent.summary = '';
 
 // T2 — a named product cv.md never mentions is stripped, not counted. The
 // two-tier vocabulary rule (capability phrases free, named products grounded)
@@ -1001,10 +862,9 @@ function trimProjectsByRelevance(list, n, jdTok) {
 }
 const jdTokens = new Set(tokenize(jdText));
 
-// Tier 5 — relevance-preserving density ladder. The summary is NEVER cut to fit
-// the page; we only reduce experience-bullet depth (fill caps per role, hitting
-// the least-relevant backfilled roles too), skill breadth, and the weakest
-// (last-ranked) projects.
+// Tier 5 — relevance-preserving density ladder. It reduces experience-bullet
+// depth (fill caps per role, hitting the least-relevant backfilled roles too),
+// skill breadth, and the weakest (last-ranked) projects.
 //
 // The target is ONE page. It used to be two, which meant the ladder was
 // perfectly satisfied by the output that prompted this whole exercise — it
@@ -1013,8 +873,8 @@ const jdTokens = new Set(tokenize(jdText));
 // Its role has changed with it. cv-select now spends a rendered-line budget, so
 // selection already fits the page on 31 of 32 offers and the ladder is a safety
 // net rather than the mechanism: it exists for the residual that selection
-// cannot predict, because chrome moves between runs (the summary is
-// model-written and varies by ~200 characters). Steps are therefore gentle at
+// cannot predict, since a bullet's rendered height depends on where LaTeX
+// breaks its lines. Steps are therefore gentle at
 // the top — one project bullet at a time — where they used to jump straight
 // from 4 to 1 and throw away a project's worth of evidence to save two lines.
 //

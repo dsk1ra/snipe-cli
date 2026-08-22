@@ -226,6 +226,18 @@ if (/sanitizeAtsText\(String\(s \?\? ''\)\)\.replace\(\/\[/.test(fillSrc)) {
   fail('fill-cv-template.mjs escapes without normalizing first — a • becomes a bare pipe, which T1 sets as an em-dash');
 }
 
+// The summary is disconnected, not deleted. Its stage cost one snipe-eval call
+// per offer to write prose the template has no slot for; a re-import here would
+// silently start paying for it again.
+const pdfOffer = readFile('batch/local-pdf-offer.mjs');
+// Matched against the import rather than the identifier: the comment explaining
+// the disconnection names the function, and a substring check flags itself.
+if (!/import\s*\{[^}]*\bgenerateSummary\b/.test(pdfOffer)) {
+  pass('local-pdf-offer.mjs makes no summary call (no inference spent on an unrendered field)');
+} else {
+  fail('local-pdf-offer.mjs calls generateSummary — the template renders no summary, so that is a wasted model call');
+}
+
 // ── 11. CLAUDE.md INTEGRITY ─────────────────────────────────────
 
 console.log('\n11. CLAUDE.md integrity');
