@@ -92,11 +92,22 @@ else fail(`modelFingerprint() offline fallback → "${offline}", expected "snipe
     writeFileSync(p, body, 'utf8');
     planted.push(p);
   };
+
+  // The JD corpus and its index both move to a scratch dir for this block.
+  // Ranking is relative: asserting the fixture lands in the top 3 of the real
+  // batch/jds means asserting against however many postings happen to be
+  // cached, which is a number that only ever grows. Three offers added in one
+  // afternoon took this from passing to failing with no code change.
+  const jdSandbox = join(ROOT, 'batch/.test-jd-index');
+  mkdirSync(jdSandbox, { recursive: true });
+  process.env.SNIPE_JDS_DIR  = jdSandbox;
+  process.env.SNIPE_JD_INDEX = join(jdSandbox, 'jd-index.json');
+  const plantJd = (id, body) => writeFileSync(join(jdSandbox, `${id}.txt`), body, 'utf8');
   const server = await startFakeOllama();
 
   try {
-    plant(`batch/jds/${IDS[0]}.txt`, 'Senior Rust engineer building distributed payment infrastructure. '.repeat(20));
-    plant(`batch/jds/${IDS[1]}.txt`, 'Frontend React designer working on marketing landing pages. '.repeat(20));
+    plantJd(IDS[0], 'Senior Rust engineer building distributed payment infrastructure. '.repeat(20));
+    plantJd(IDS[1], 'Frontend React designer working on marketing landing pages. '.repeat(20));
     plant(`batch/evals/${IDS[0]}.json`, JSON.stringify({
       status: 'evaled', id: IDS[0], company: 'Past Corp', role: 'Rust Engineer',
       score: 4.4, final_decision: 'Apply', report_num: 991,
@@ -110,6 +121,8 @@ else fail(`modelFingerprint() offline fallback → "${offline}", expected "snipe
     const ids = new Set(entries.map(e => e.id));
     if (IDS.every(id => ids.has(id))) pass('loadJdIndex embeds every cached JD it has not seen before');
     else fail(`loadJdIndex indexed ${entries.length} JDs but missed the fixtures`);
+    if (entries.length === IDS.length) pass('loadJdIndex reads the sandboxed corpus, not batch/jds');
+    else fail(`loadJdIndex saw ${entries.length} JDs, expected only the ${IDS.length} fixtures`);
 
     // Second call must hit the on-disk index rather than re-embedding.
     const before = server.calls.filter(c => c.path === '/api/embed').length;
@@ -150,6 +163,9 @@ else fail(`modelFingerprint() offline fallback → "${offline}", expected "snipe
   } finally {
     await server.close();
     for (const p of planted) rmSync(p, { force: true });
+    rmSync(jdSandbox, { recursive: true, force: true });
+    delete process.env.SNIPE_JDS_DIR;
+    delete process.env.SNIPE_JD_INDEX;
     restore();
   }
 }

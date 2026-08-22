@@ -27,7 +27,21 @@ const PROJECT = resolve(__dirname, '..');
 
 export const EMBED_MODEL = 'snipe-embed';
 const CV_INDEX_PATH = resolve(__dirname, 'cv-index.json');
-const JD_INDEX_PATH = resolve(__dirname, 'jd-index.json');
+
+// Test seams. Read per call rather than frozen at import: the suite imports this
+// module for the pure helpers long before the JD-retrieval block runs, and an
+// import-time constant would already hold the real paths by then. Both default
+// to the real corpus, so nothing outside the tests sees a difference.
+//
+// Without them, the fixture test ranked against every JD in batch/jds — so its
+// assertions passed or failed on how many real postings happened to be cached,
+// and adding three offers in one afternoon was enough to break it.
+const jdIndexPath = () => (process.env.SNIPE_JD_INDEX
+  ? resolve(process.env.SNIPE_JD_INDEX)
+  : resolve(__dirname, 'jd-index.json'));
+const jdsDir = () => (process.env.SNIPE_JDS_DIR
+  ? resolve(process.env.SNIPE_JDS_DIR)
+  : resolve(__dirname, 'jds'));
 
 // ── Ollama embed API ──────────────────────────────────────────────────────────
 
@@ -194,30 +208,31 @@ export async function loadCvIndex(opts = {}) {
 // One vector per past JD (head of the cleaned text). Incremental: only new ids
 // are embedded on refresh.
 export async function loadJdIndex(opts = {}) {
-  const jdsDir = resolve(__dirname, 'jds');
+  const dir = jdsDir();
+  const indexPath = jdIndexPath();
   const fp = await modelFingerprint(opts);
   let cached = { model: fp, entries: [] };
-  if (existsSync(JD_INDEX_PATH)) {
-    try { cached = JSON.parse(readFileSync(JD_INDEX_PATH, 'utf8')); } catch {}
+  if (existsSync(indexPath)) {
+    try { cached = JSON.parse(readFileSync(indexPath, 'utf8')); } catch {}
   }
   // Mismatch (including pre-fingerprint indexes keyed on the bare tag) discards
   // the entries — a partial re-embed would mix vector spaces.
   if (cached.model !== fp) cached = { model: fp, entries: [] };
   const have = new Set(cached.entries.map(e => e.id));
 
-  const ids = existsSync(jdsDir)
-    ? readdirSync(jdsDir).filter(f => f.endsWith('.txt')).map(f => f.replace('.txt', ''))
+  const ids = existsSync(dir)
+    ? readdirSync(dir).filter(f => f.endsWith('.txt')).map(f => f.replace('.txt', ''))
     : [];
   const fresh = ids.filter(id => !have.has(id));
   if (fresh.length) {
-    const texts = fresh.map(id => cleanJd(readFileSync(join(jdsDir, `${id}.txt`), 'utf8'), 2000));
+    const texts = fresh.map(id => cleanJd(readFileSync(join(dir, `${id}.txt`), 'utf8'), 2000));
     // Embed in chunks of 32 to keep request sizes sane
     for (let i = 0; i < fresh.length; i += 32) {
       const chunk = fresh.slice(i, i + 32);
       const vecs = await embed(texts.slice(i, i + 32), opts);
       chunk.forEach((id, j) => cached.entries.push({ id, vec: vecs[j] }));
     }
-    writeFileSync(JD_INDEX_PATH, JSON.stringify(cached), 'utf8');
+    writeFileSync(indexPath, JSON.stringify(cached), 'utf8');
   }
   return cached.entries;
 }
@@ -303,7 +318,7 @@ const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.arg
 if (isMain) {
   const cmd = process.argv[2];
   if (cmd === 'rebuild') {
-    for (const p of [CV_INDEX_PATH, JD_INDEX_PATH]) { try { unlinkSync(p); } catch {} }
+    for (const p of [CV_INDEX_PATH, jdIndexPath()]) { try { unlinkSync(p); } catch {} }
     const atoms = await loadCvIndex();
     console.log(`✓ cv-index: ${atoms.length} atoms`);
     const jds = await loadJdIndex();
