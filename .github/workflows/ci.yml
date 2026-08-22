@@ -40,3 +40,18 @@ jobs:
           fail_ci_if_error: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # The Go port builds and tests alongside the Node suite for as long as both
+  # implementations live here. It is a separate job rather than a step in the
+  # one above so a Node failure and a Go failure stay legible apart.
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # go test compiles everything, so there is no separate build step. The
+      # tests needing Ollama, pdflatex or a real cv.md skip themselves, which on
+      # a runner is always.
+      - run: go test ./...
