@@ -886,13 +886,14 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
  * metric reads if the change lands).
  *
  * Measured, not simulated. The content JSON goes through the real
- * `fill-cv-template.mjs` and is laid out by the real browser at the real content
- * box, so the number cannot drift from what `generate-pdf.mjs` would print. One
- * browser for the whole run, not one per offer.
+ * `fill-cv-template.mjs` and the real `renderTexToPdf`, so the number cannot
+ * drift from what `generate-pdf.mjs` would print — it is the same compile.
  *
  * `pages` is fractional on purpose. A boolean "fits" cannot tell an arm that
  * overran by two lines from one that overran by a page, and the difference is
- * the whole question during the one-page work.
+ * the whole question during the one-page work. pdflatex reports whole pages, so
+ * the fraction comes from the template's `\pagetotal / \pagegoal` hook.
+ * `page_px` is gone with the browser; nothing consumed it but the mean below.
  */
 // `maxSkills` defaults to null to match LADDER step 0, the step production
 // renders at unless the page overruns. A 6 here measured a document the pipeline
@@ -900,34 +901,31 @@ async function withEmbedMetrics(m, { ollamaUrl = 'http://localhost:11434', cvPat
 // sixth, so the bench would have rendered 6 rows while the PDF carried 8.
 async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = null } = {}) {
   if (!m.rows.length) return m;
-  let chromium;
-  try { ({ chromium } = await import('playwright')); }
-  catch { return { ...m, pages: null, page_note: 'playwright unavailable' }; }
-  const { CONTENT_BOX } = await import(pathToFileURL(resolve(PROJECT, 'generate-pdf.mjs')).href);
+  let renderTexToPdf;
+  try { ({ renderTexToPdf } = await import(pathToFileURL(resolve(PROJECT, 'generate-pdf.mjs')).href)); }
+  catch (err) { return { ...m, pages: null, page_note: `renderer unavailable: ${err.message}` }; }
 
   const tmp = mkdtempSync(join(tmpdir(), 'snipe-pages-'));
   const fill = resolve(PROJECT, 'batch/fill-cv-template.mjs');
-  const browser = await chromium.launch({ headless: true });
   try {
-    const page = await browser.newPage();
-    await page.setViewportSize({ width: CONTENT_BOX.width, height: 1200 });
     for (const r of m.rows) {
       const src = join(benchRoot, label, r.dir, 'cv-content.json');
-      const html = join(tmp, `${r.dir}.html`);
+      const tex = join(tmp, `${r.dir}.tex`);
       try {
-        const a = [fill, '--content', src, '--output', html];
+        const a = [fill, '--content', src, '--output', tex];
         if (maxSkills) a.push('--max-skills', String(maxSkills));
         if (r.role) a.push('--role', r.role);
         execFileSync(process.execPath, a, { stdio: 'ignore', cwd: PROJECT });
-        await page.goto(pathToFileURL(html).href, { waitUntil: 'load' });
-        r.page_px = await page.evaluate(() =>
-          Math.round(document.querySelector('.page').getBoundingClientRect().height));
-        r.pages = +(r.page_px / CONTENT_BOX.height).toFixed(3);
-        r.fits_one_page = r.pages <= 1 ? 1 : 0;
+        const out = renderTexToPdf(readFileSync(tex, 'utf8'), join(tmp, `${r.dir}.pdf`));
+        // Whole pages plus how full the last one is, from the template's
+        // \AtEndDocument hook — the LaTeX equivalent of measuring `.page`'s
+        // height against CONTENT_BOX, and exact rather than a CSS estimate.
+        r.pages = out.pages;
+        r.page_px = null;
+        r.fits_one_page = out.pageCount <= 1 ? 1 : 0;
       } catch { r.page_px = null; r.pages = null; r.fits_one_page = null; }
     }
   } finally {
-    await browser.close();
     rmSync(tmp, { recursive: true, force: true });
   }
 
@@ -937,7 +935,6 @@ async function withPageMetrics(m, { benchRoot = BENCH, label = '', maxSkills = n
   return {
     ...m,
     pages: avg('pages'),
-    page_px: Math.round(got.reduce((a, r) => a + r.page_px, 0) / got.length),
     // The gate for the one-page work. A mean page count says nothing on its own:
     // 30 offers fitting and 2 overrunning is not "1.05 pages", it is a failure.
     one_page_rate: +(got.filter(r => r.fits_one_page).length / got.length).toFixed(3),

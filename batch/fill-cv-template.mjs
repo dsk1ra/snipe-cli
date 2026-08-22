@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * fill-cv-template.mjs — Merges Ollama JSON content + cv.md into source.html
+ * fill-cv-template.mjs — Merges Ollama JSON content + cv.md into source.tex
  *
  * Usage:
  *   node batch/fill-cv-template.mjs \
  *     --content /tmp/cv-content-42.json \
- *     --output output/2026-01-01_company_042/source.html
+ *     --output output/2026-01-01_company_042/source.tex
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
-import { groundSkillItems } from './text-utils.mjs';
+import { groundSkillItems, sanitizeAtsText } from './text-utils.mjs';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const PROJECT    = resolve(__dirname, '..');
 const CV_PATH    = resolve(PROJECT, 'cv.md');
 const PROFILE    = resolve(PROJECT, 'config/profile.yml');
-const TEMPLATE   = resolve(PROJECT, 'templates/cv-template.html');
+const TEMPLATE   = resolve(PROJECT, 'templates/cv-template.tex');
 
 // ── Args ──────────────────────────────────────────────────────────────────────
 
@@ -39,26 +39,49 @@ const maxBullets  = args['max-bullets'] ? parseInt(args['max-bullets'], 10) : nu
 // instead of only being able to delete one.
 const maxProjBullets = args['max-project-bullets'] ? parseInt(args['max-project-bullets'], 10) : null;
 
-if (!contentPath || !outputPath) {
-  console.error('Usage: fill-cv-template.mjs --content <json> --output <html> [--max-skills N] [--role "Title"]');
-  process.exit(1);
+// Checked after the self-check below, so a bare invocation runs that instead.
+function requireArgs() {
+  if (!contentPath || !outputPath) {
+    console.error('Usage: fill-cv-template.mjs --content <json> --output <tex> [--max-skills N] [--role "Title"]');
+    process.exit(1);
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function esc(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// LaTeX's ten special characters, plus the three T1 text-mode traps: bare <, >
+// and | typeset as ¡, ¿ and — rather than themselves, silently, with no error.
+// cv.md is markdown written by a human and carries all of them (C++ in a module
+// list, 85%+ coverage, snake_case identifiers, "Redis/Valkey | Caddy").
+const TEX_ESCAPES = {
+  '\\': '\\textbackslash{}', '{': '\\{',  '}': '\\}',
+  '$':  '\\$',  '&': '\\&',  '#': '\\#',  '_': '\\_', '%': '\\%',
+  // cv.md's tildes are all "approximately" (~200 TB, ~0.4 ms, ~11K/day).
+  // \textasciitilde is the faithful glyph and typesets as a raised squiggle
+  // that reads as a macron at this size; $\sim$ is what the text means.
+  '~':  '$\\sim$', '^': '\\textasciicircum{}',
+  '<':  '\\textless{}', '>': '\\textgreater{}', '|': '\\textbar{}',
+};
+
+// ATS normalization runs BEFORE escaping, not on the finished .tex. `•` maps to
+// ` | `, and a pipe introduced after the escaper has run reaches LaTeX bare —
+// where T1 typesets it as an em-dash. The HTML path normalizes the rendered
+// document instead; see sanitizeAtsText.
+function tex(s) {
+  return sanitizeAtsText(String(s ?? '')).replace(/[\\{}$&#_%~^<>|]/g, c => TEX_ESCAPES[c]);
 }
 
-// Wrap measurable metrics in <strong>. MUST run on already-esc()'d text so the
-// injected <strong> tags are intentional HTML (not re-escaped). Targets counts,
-// percentages, latencies, currency, units (k/M/ms/x/GB…) and durations; leaves
-// bare years (2025), version numbers (2.0) and "AES-256" untouched since they
-// lack a separator/sign/unit.
+// hyperref reads the href target verbatim, so only the two characters TeX still
+// eats there need escaping. Everything else in a URL — including ~ and & — is
+// safe inside \href's first argument.
+function texUrl(s) {
+  return String(s ?? '').replace(/([%#\\])/g, '\\$1');
+}
+
+// Wrap measurable metrics in \textbf. Targets counts, percentages, latencies,
+// currency, units (k/M/ms/x/GB…) and durations; leaves bare years (2025),
+// version numbers (2.0) and "AES-256" untouched since they lack a
+// separator/sign/unit.
 const METRIC_RE = new RegExp([
   '[£$€]\\s?\\d[\\d,]*(?:\\.\\d+)?\\+?[kKmMbB]?',                 // £3,500, $120k
   'sub-\\d[\\d,]*\\s?ms',                                          // sub-500ms
@@ -70,8 +93,26 @@ const METRIC_RE = new RegExp([
   '\\d+\\s?(?:weeks?|days?|hours?|minutes?|months?|years?)\\b',    // 4 weeks, 30 minutes
 ].join('|'), 'g');
 
-function boldMetrics(escaped) {
-  return String(escaped).replace(METRIC_RE, m => `<strong>${m}</strong>`);
+/**
+ * Escape for LaTeX and bold the metrics, in one pass over the RAW string.
+ *
+ * The HTML template could run its metric regex over already-escaped text,
+ * because escaping HTML leaves digits, %, £ and $ alone. LaTeX escaping does
+ * not: `95%` becomes `95\%` and `$120k` becomes `\$120k`, so a regex tuned to
+ * the source text stops matching the moment it is escaped. Matching first and
+ * escaping the pieces keeps METRIC_RE reading the text it was calibrated on.
+ *
+ * @param {string} raw
+ * @returns {string} LaTeX-safe text with metrics wrapped in \textbf
+ */
+function texBold(raw) {
+  const s = String(raw ?? '');
+  let out = '', last = 0;
+  for (const m of s.matchAll(METRIC_RE)) {
+    out += tex(s.slice(last, m.index)) + `\\textbf{${tex(m[0])}}`;
+    last = m.index + m[0].length;
+  }
+  return out + tex(s.slice(last));
 }
 
 function wordSet(s) {
@@ -95,8 +136,12 @@ function matchProject(jsonName, cvName) {
 }
 
 function matchCompany(jsonCompany, cvCompany) {
-  const j = jsonCompany.toLowerCase().trim();
-  const c = cvCompany.toLowerCase().trim();
+  const j = String(jsonCompany ?? '').toLowerCase().trim();
+  const c = String(cvCompany ?? '').toLowerCase().trim();
+  // Neither side may be empty. `''.includes('')` and `x.includes('')` are both
+  // true, so a cv.md entry whose company failed to parse used to match the
+  // FIRST model entry and every employer after it rendered the same bullets.
+  if (!j || !c) return false;
   return j === c || c.includes(j) || j.includes(c);
 }
 
@@ -142,8 +187,16 @@ function parseExperience(lines) {
     if (!s) continue;
 
     // Company line: **Company** — Location | Period
-    if (/^\*\*[^*]+\*\*\s*(?:—|–)/.test(s)) {
-      const m = s.match(/^\*\*([^*]+)\*\*\s*(?:—|–)\s*([^|]+)\|\s*(.+)$/);
+    //
+    // The dash may be an em-dash, an en-dash or a plain ASCII hyphen. cv.md is
+    // a user-layer file edited by hand, and matching only the typographic ones
+    // fails *silently*: the line falls through to the role-title branch, which
+    // does not match either, so company, location and period all render empty
+    // and the CV ships with no employer names or dates on it. The empty company
+    // then makes every JSON entry match the first role (see matchCompany), so
+    // every employer gets the same bullets.
+    if (/^\*\*[^*]+\*\*\s*(?:—|–|-)\s/.test(s)) {
+      const m = s.match(/^\*\*([^*]+)\*\*\s*(?:—|–|-)\s*([^|]+)\|\s*(.+)$/);
       if (m && cur) {
         cur.company  = m[1].trim();
         cur.location = m[2].trim();
@@ -299,13 +352,24 @@ function parseSkills(lines) {
   return rows;
 }
 
-// ── HTML builders ─────────────────────────────────────────────────────────────
+// ── LaTeX builders ────────────────────────────────────────────────────────────
+
+// `\begin{itemize}\end{itemize}` with no \item is a LaTeX error ("Something's
+// wrong--perhaps a missing \item"), not the harmless empty <ul> the HTML
+// template used to emit. Every list the density ladder can empty goes through
+// here, so an entry whose bullets are all trimmed away renders as a bare
+// heading rather than failing the whole compile.
+function itemList(items, indent = '      ') {
+  const kept = items.filter(Boolean);
+  if (!kept.length) return '';
+  return `\n${indent}\\resumeItemListStart\n${kept.join('\n')}\n${indent}\\resumeItemListEnd`;
+}
 
 // UK CV convention: ALL companies, reverse-chronological, never reordered or
 // silently dropped by the model — the CV itself is the source of truth for
 // the company list and order; the model only supplies (or fails to supply,
 // in which case we fall back to the CV's own) bullets per company.
-function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
+function buildExperienceTex(cvExp, jsonExp, maxBullets) {
   const ordered = [...cvExp]
     .sort((a, b) => parsePeriodEnd(b.period) - parsePeriodEnd(a.period))
     .map(ce => {
@@ -318,33 +382,39 @@ function buildExperienceHtml(cvExp, jsonExp, maxBullets) {
     // so the page-fit ladder can reduce depth uniformly without gutting any one
     // role. Bullets are already ordered most-relevant-first.
     const bullets = maxBullets ? e.bullets.slice(0, maxBullets) : e.bullets;
-    // Company, role, location and dates share one line. Three stacked lines cost
-    // 51px a role and said nothing the single line does not. Role precedes
-    // location and carries its own class: they used to be one blob in one style,
-    // so the role read as part of the address.
-    const sep = '<span class="job-sep">|</span>';
-    const meta = [
-      e.role     ? `<span class="job-role">${esc(e.role)}</span>` : '',
-      e.location ? `<span class="job-location">${esc(e.location)}</span>` : '',
-    ].filter(Boolean).join(sep);
-    return `
-    <div class="job">
-      <div class="job-header">
-        <span><span class="job-company">${esc(e.company)}</span>${meta ? sep + meta : ''}</span>
-        <span class="job-period">${esc(e.period)}</span>
-      </div>
-      <ul>
-        ${bullets.map(b => `<li>${boldMetrics(esc(b))}</li>`).join('\n        ')}
-      </ul>
-    </div>`;
+    // Company/period on the bold line, role/location italic underneath — the
+    // template's own \resumeSubheading shape. The HTML template welded all four
+    // onto one line because three stacked <div>s cost 51px a role; LaTeX stacks
+    // two at 0.97\textwidth for far less, so the upstream two-line form stands.
+    return `    \\resumeSubheading
+      {${tex(e.company)}}{${tex(e.period)}}
+      {${tex(e.role)}}{${tex(e.location)}}${
+      itemList(bullets.map(b => `        \\resumeItem{${texBold(b)}}`))}`;
   }).join('\n');
+}
+
+// `github.com/Drakon4ik-Coder/okta-dashboard-back` is the longest string on the
+// page. The host is redundant — the header already carries the GitHub profile —
+// so a github.com URL renders as `owner/repo`. Any other host keeps its name,
+// because there the domain is the information.
+// cv.md writes repo URLs bare ("github.com/dsk1ra/snipe-cli"). An href without a
+// scheme resolves against the local file and points nowhere.
+function absoluteUrl(url) {
+  const s = String(url || '').trim();
+  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
+}
+
+function shortRepo(url) {
+  const s = String(url || '').replace(/^https?:\/\//, '').replace(/^www\./, '');
+  const m = s.match(/^github\.com\/(.+)$/i);
+  return m ? m[1].replace(/\/$/, '') : s;
 }
 
 // Accepts the new `projects` field (array of {name, description}) OR the legacy
 // `selected_projects` (array of name strings). When the LLM supplies a tailored
 // description we use it; otherwise we fall back to the project's first 2 CV
 // bullets (never the full dump) so descriptions stay tight.
-function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
+function buildProjectsTex(cvProjects, projectsField, maxProjBullets) {
   const sel = Array.isArray(projectsField)
     ? projectsField
         .map(p => (typeof p === 'string'
@@ -369,17 +439,13 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
   }
 
   return chosen.map(({ cv, description, bullets }) => {
-    // cv.md carries a repo URL per project and it was parsed but never rendered,
-    // so every tailored CV silently dropped the one link a reviewer can click to
-    // check the claim. It rides the tech line, which already exists.
     // The repo is a link, not text. A reviewer who wants to check a claim should
     // not have to retype a URL off a PDF — and the tech line is the only place
     // the CV offers one per project.
-    const techText = [cv.tech, cv.period].filter(Boolean).map(esc).join(' | ');
-    const repoHtml = cv.url
-      ? `<a href="${esc(absoluteUrl(cv.url))}">${esc(shortRepo(cv.url))}</a>`
+    const repoTex = cv.url
+      ? `\\href{${texUrl(absoluteUrl(cv.url))}}{\\underline{${tex(shortRepo(cv.url))}}}`
       : '';
-    const techLine = [techText, repoHtml].filter(Boolean).join(' | ');
+    const techLine = [cv.tech ? tex(cv.tech) : '', repoTex].filter(Boolean).join(' $|$ ');
     // Bullets when the writer supplies them, one paragraph otherwise.
     //
     // The paragraph was the only shape for a long time, and it is where the
@@ -392,43 +458,19 @@ function buildProjectsHtml(cvProjects, projectsField, maxProjBullets) {
     // perfect. A list costs vertical space, which is what the density ladder is
     // for; losing the evidence costs the application.
     const body = bullets.length
-      ? `<ul class="project-bullets">${bullets.map(b => `<li>${boldMetrics(esc(String(b)))}</li>`).join('')}</ul>`
-      : `<div class="project-desc">${boldMetrics(esc(
+      ? bullets.map(b => `        \\resumeItem{${texBold(String(b))}}`)
+      : [`        \\resumeItem{${texBold(
           description && description.trim()
             ? description.trim()
-            // Same weld as remapProjectNames' backfill had: joining two bullets
-            // with a bare space runs two sentences together with no separator.
-            : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. ')))}</div>`;
-    return `
-    <div class="project">
-      <div>
-        <span class="project-title">${esc(cv.name)}</span>${cv.badge ? `\n        <span class="project-badge">${esc(cv.badge)}</span>` : ''}
-      </div>
-      ${body}
-      ${techLine ? `<div class="project-tech">${techLine}</div>` : ''}
-    </div>`;
+            // Joining two bullets with a bare space runs two sentences together
+            // with no separator.
+            : cv.bullets.slice(0, 2).join('. ').replace(/\.\.\s/g, '. '))}}`];
+    const head = [`\\textbf{${tex(cv.name)}}`, cv.badge ? `\\emph{${tex(cv.badge)}}` : '']
+      .filter(Boolean).join(' $|$ ');
+    return `    \\resumeProjectHeading
+      {${head}}{${tex(cv.period)}}${
+      itemList([...body, techLine ? `        \\resumeTechLine{${techLine}}` : ''])}`;
   }).join('\n');
-}
-
-// When the LLM supplies `education_modules` (a JD-relevant subset), rewrite the
-// "Key Modules:" line to those modules only; other extra lines (Achievement,
-// etc.) are kept as-is. Without the field, the CV's modules pass through verbatim.
-// `github.com/Drakon4ik-Coder/okta-dashboard-back` is the longest string on the
-// page and wrapped so late that "back" landed alone on the next line, costing a
-// whole row to say nothing. The host is redundant — the header already carries
-// the GitHub profile — so a github.com URL renders as `owner/repo`. Any other
-// host keeps its name, because there the domain is the information.
-// cv.md writes repo URLs bare ("github.com/dsk1ra/snipe-cli"). An href without a
-// scheme resolves against the file:// page and points nowhere.
-function absoluteUrl(url) {
-  const s = String(url || '').trim();
-  return /^https?:\/\//i.test(s) ? s : `https://${s}`;
-}
-
-function shortRepo(url) {
-  const s = String(url || '').replace(/^https?:\/\//, '').replace(/^www\./, '');
-  const m = s.match(/^github\.com\/(.+)$/i);
-  return m ? m[1].replace(/\/$/, '') : s;
 }
 
 // "Achievement: 2nd place out of 24 teams" — bold up to the colon so the label
@@ -436,13 +478,16 @@ function shortRepo(url) {
 // contains a colon mid-sentence is not carved up at it.
 function labelled(line) {
   const m = String(line).match(/^([^:]{1,20}):\s*([\s\S]*)$/);
-  return m ? `<span class="edu-label">${esc(m[1])}:</span> ${esc(m[2])}` : esc(line);
+  return m ? `\\textbf{${tex(m[1])}:} ${tex(m[2])}` : tex(line);
 }
 
-function buildEducationHtml(eduEntries, selectedModules, certs = []) {
+// When the LLM supplies `education_modules` (a JD-relevant subset), rewrite the
+// "Key Modules:" line to those modules only; other extra lines (Achievement,
+// etc.) are kept as-is. Without the field, the CV's modules pass through verbatim.
+function buildEducationTex(eduEntries, selectedModules, certs = []) {
   const sel = Array.isArray(selectedModules) && selectedModules.length > 0 ? selectedModules : null;
-  // Certifications ride the last education entry as one more desc line. Its own
-  // section cost 42px of heading, rule and margin to carry two lines of content.
+  // Certifications ride the last education entry as one more line. Its own
+  // section cost a heading and a rule to carry two lines of content.
   // Name and year only — the awarding body repeats what the name already says.
   const certLine = certs.length
     ? `Certifications: ${certs.map(c => [c.name, c.year].filter(Boolean).join(', ')).join(' • ')}`
@@ -451,26 +496,20 @@ function buildEducationHtml(eduEntries, selectedModules, certs = []) {
     // The degree line is "<Degree> — <Classification>"; splitting on the dash and
     // keeping [0] threw the classification away, so "First Class Honours (80+
     // average)" — the strongest single credential a recent graduate has — never
-    // reached the PDF. The header is a flex row that wraps, so keeping the whole
-    // line costs nothing but the width it needs.
+    // reached the PDF.
     const degreeMain = e.degree.replace(/\s*—\s*/g, ' — ').trim();
     const extra = sel
       ? e.extra.map(line => (/^key modules\s*:/i.test(line) ? `Key Modules: ${sel.join(', ')}` : line))
       : e.extra;
     // One row per line, not all of them joined with " • ". A CTF placing that
     // trails five module names behind a bullet separator reads as a footnote to
-    // the module list; on its own row with its label in bold it reads as a
-    // result. The rows already wrapped to two lines, so this costs 1px of margin.
-    const extraLines = extra.filter(x => x.trim());
-    return `
-    <div class="edu-item">
-      <div class="edu-header">
-        <span><span class="edu-title">${esc(degreeMain)}</span> <span class="edu-org">${esc(e.school)}</span></span>
-        <span class="edu-year">${esc(e.period)}</span>
-      </div>
-      ${extraLines.map(line => `<div class="edu-desc">${labelled(line)}</div>`).join('\n      ')}
-      ${i === eduEntries.length - 1 && certLine ? `<div class="edu-desc">${esc(certLine)}</div>` : ''}
-    </div>`;
+    // the module list; on its own row with its label in bold it reads as a result.
+    const lines = extra.filter(x => x.trim());
+    if (i === eduEntries.length - 1 && certLine) lines.push(certLine);
+    return `    \\resumeSubheading
+      {${tex(degreeMain)}}{${tex(e.period)}}
+      {${tex(e.school)}}{}${
+      itemList(lines.map(line => `        \\resumeItem{${labelled(line)}}`))}`;
   }).join('\n');
 }
 
@@ -529,13 +568,61 @@ function resolveSkills(allRows, content, maxCount, cvText = '') {
   return maxCount ? resolved.slice(0, maxCount) : resolved;
 }
 
-function buildSkillsHtml(rows) {
-  return `<div class="skills-grid">\n` +
-    rows.map(r => `      <span class="skill-item"><span class="skill-category">${esc(r.category)}:</span> ${esc(r.items)}</span>`).join('\n') +
-    `\n    </div>`;
+function buildSkillsTex(rows) {
+  if (!rows.length) return '';
+  const body = rows
+    .map(r => `     \\textbf{${tex(r.category)}}{: ${tex(r.items)}}`)
+    .join(' \\\\\n');
+  return ` \\begin{itemize}[leftmargin=0.15in, label={}]\n    \\small{\\item{\n${body}\n    }}\n \\end{itemize}`;
+}
+
+// ── Self-check (ponytail: one runnable check) ─────────────────────────────────
+//
+// `node batch/fill-cv-template.mjs` with no arguments runs this instead of the
+// usage error. It guards the two failures that render a *plausible* CV with the
+// employers silently missing off it, which no page-count or compile check sees.
+
+if (process.argv.length === 2) {
+  const assert = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.exit(1); } };
+
+  for (const dash of ['—', '–', '-']) {
+    const [e] = parseExperience([
+      '### Teaching Assistant',
+      `**Napier University** ${dash} Edinburgh, UK | Sep 2025 – Present`,
+      '- Taught 800+ undergraduates',
+    ]);
+    assert(e.company === 'Napier University', `company parses with "${dash}"`);
+    assert(e.location === 'Edinburgh, UK', `location parses with "${dash}"`);
+    assert(e.period === 'Sep 2025 – Present', `period parses with "${dash}"`);
+    assert(e.bullets.length === 1, `bullets survive with "${dash}"`);
+  }
+
+  // An entry that failed to parse must match nothing, or it takes the first
+  // model entry's bullets and every employer renders the same ones.
+  assert(matchCompany('Acme', 'Acme') === true, 'exact company matches');
+  assert(matchCompany('Acme Ltd', 'Acme') === true, 'substring company matches');
+  assert(matchCompany('Acme', '') === false, 'an empty CV company matches nothing');
+  assert(matchCompany('', 'Acme') === false, 'an empty JSON company matches nothing');
+
+  // LaTeX escaping, and ATS normalization running before it.
+  assert(tex('100% & <C++>') === '100\\% \\& \\textless{}C++\\textgreater{}', 'specials escape');
+  assert(tex('a — b') === 'a - b', 'em-dash normalised before escaping');
+  assert(tex('CEH • 2025') === 'CEH \\textbar{} 2025', 'a bullet becomes an escaped pipe, not a bare one');
+  assert(texBold('cut latency by 90% to 250ms') ===
+    'cut latency by \\textbf{90\\%} to \\textbf{250ms}', 'metrics bold, and stay escaped');
+  assert(texBold('shipped in 2025') === 'shipped in 2025', 'a bare year is not a metric');
+
+  // An empty itemize is a LaTeX error, not an empty list.
+  assert(itemList([]) === '', 'no items renders no list at all');
+  assert(itemList(['  \\resumeItem{x}']).includes('\\resumeItemListStart'), 'items render a list');
+
+  console.log('✓ fill-cv-template self-check passed');
+  process.exit(0);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+
+requireArgs();
 
 const cvText     = readFileSync(CV_PATH, 'utf8');
 const profileRaw = readFileSync(PROFILE, 'utf8');
@@ -554,37 +641,37 @@ const cand = profile.candidate || {};
 const linkedin = cand.linkedin || '';
 const github   = cand.github   || '';
 
+// One token rather than ten. The header is a run of `$|$`-separated \href calls
+// where every field is optional, and threading that through the template would
+// need `\href{mailto:{{EMAIL}}}{\underline{{{EMAIL}}}}` — four levels of brace
+// that break the moment a field is blank.
+const contact = [
+  cand.phone ? `\\href{tel:${texUrl(String(cand.phone).replace(/[^\d+]/g, ''))}}{${tex(cand.phone)}}` : '',
+  cand.email ? `\\href{mailto:${texUrl(cand.email)}}{\\underline{${tex(cand.email)}}}` : '',
+  linkedin ? `\\href{${texUrl(linkedin.startsWith('http') ? linkedin : `https://${linkedin}`)}}{\\underline{${tex(linkedin)}}}` : '',
+  github ? `\\href{${texUrl(github.startsWith('http') ? github : `https://${github}`)}}{\\underline{${tex(github)}}}` : '',
+  cand.location ? tex(cand.location) : '',
+].filter(Boolean).join(' $|$ ');
+
 const replacements = {
-  '{{LANG}}':                  'en',
-  '{{PAGE_WIDTH}}':            '794px',   // A4 at 96dpi; the only paper we render
-  '{{NAME}}':                  esc(cand.full_name || ''),
-  '{{PHONE}}':                 esc(cand.phone || ''),
-  // tel: wants no spaces, brackets or dashes; the printed number keeps them.
-  '{{PHONE_TEL}}':             esc(String(cand.phone || '').replace(/[^\d+]/g, '')),
-  '{{EMAIL}}':                 esc(cand.email || ''),
-  '{{LINKEDIN_URL}}':          linkedin.startsWith('http') ? linkedin : `https://${linkedin}`,
-  '{{LINKEDIN_DISPLAY}}':      esc(linkedin),
-  '{{PORTFOLIO_URL}}':         github.startsWith('http') ? github : `https://${github}`,
-  '{{PORTFOLIO_DISPLAY}}':     esc(github),
-  '{{LOCATION}}':              esc(cand.location || ''),
-  '{{TARGET_ROLE}}':           targetRole ? `<div class="target-role">${esc(targetRole)}</div>` : '',
-  '{{SECTION_SUMMARY}}':       'Professional Summary',
-  '{{SUMMARY_TEXT}}':          boldMetrics(esc(content.summary || '')),
+  '{{NAME}}':                  tex(cand.full_name || ''),
+  '{{TARGET_ROLE}}':           targetRole ? `\\small{\\textit{${tex(targetRole)}}} \\\\ \\vspace{1pt}` : '',
+  '{{CONTACT}}':               contact,
   '{{SECTION_EXPERIENCE}}':    'Work Experience',
-  '{{EXPERIENCE}}':            buildExperienceHtml(cvExp, content.experience, maxBullets),
+  '{{EXPERIENCE}}':            buildExperienceTex(cvExp, content.experience, maxBullets),
   '{{SECTION_PROJECTS}}':      'Projects',
-  '{{PROJECTS}}':              buildProjectsHtml(cvProjects, content.projects || content.selected_projects, maxProjBullets),
-  '{{SECTION_EDUCATION}}':     cvCerts.length ? 'Education &amp; Certifications' : 'Education',
-  '{{EDUCATION}}':             buildEducationHtml(cvEdu, content.education_modules, cvCerts),
+  '{{PROJECTS}}':              buildProjectsTex(cvProjects, content.projects || content.selected_projects, maxProjBullets),
+  '{{SECTION_EDUCATION}}':     cvCerts.length ? 'Education \\& Certifications' : 'Education',
+  '{{EDUCATION}}':             buildEducationTex(cvEdu, content.education_modules, cvCerts),
   '{{SECTION_SKILLS}}':        'Technical Skills',
-  '{{SKILLS}}':                buildSkillsHtml(resolveSkills(cvSkills, content, maxSkills, cvText)),
+  '{{SKILLS}}':                buildSkillsTex(resolveSkills(cvSkills, content, maxSkills, cvText)),
 };
 
-let html = template;
+let out = template;
 for (const [k, v] of Object.entries(replacements)) {
-  html = html.replaceAll(k, v);
+  out = out.replaceAll(k, v);
 }
 
 mkdirSync(dirname(outputPath), { recursive: true });
-writeFileSync(outputPath, html, 'utf8');
-console.log(`✓ source.html written → ${outputPath}`);
+writeFileSync(outputPath, out, 'utf8');
+console.log(`✓ source.tex written → ${outputPath}`);

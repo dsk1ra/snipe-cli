@@ -934,7 +934,7 @@ const appDir      = args.benchDir
   ? resolve(args.benchDir, `${args.id || args.reportNum}_${companySlug}`)
   : resolve(PROJECT, `output/${args.date}_${companySlug}_${args.reportNum}`);
 const contentFile = resolve(appDir, 'cv-content.json');
-const htmlFile    = resolve(appDir, 'source.html');
+const texFile     = resolve(appDir, 'source.tex');
 const cvName      = 'Candidate'; // fallback for PDF filename; overridden by profile.yml full_name below
 mkdirSync(appDir, { recursive: true });
 
@@ -974,7 +974,7 @@ function runFill(maxSkills, maxBullets, maxProjectBullets) {
   const a = [
     fillScript,
     '--content',    contentFile,
-    '--output',     htmlFile,
+    '--output',     texFile,
   ];
   // null renders every category cv-writers selected. It already dropped the ones
   // the posting had no use for, and it refuses to cut a category the posting
@@ -1071,7 +1071,7 @@ for (const maxPages of [1, 2]) {
 
     try {
       execFileSync(process.execPath, [
-        generatePdf, htmlFile, pdfFile,
+        generatePdf, texFile, pdfFile,
         `--max-pages=${maxPages}`,
         `--source-url=${args.url}`,
       ], { stdio: 'inherit', cwd: PROJECT });

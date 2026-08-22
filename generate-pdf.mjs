@@ -1,21 +1,24 @@
 #!/usr/bin/env node
 
 /**
- * generate-pdf.mjs — HTML → PDF via Playwright
+ * generate-pdf.mjs — .tex → PDF via pdflatex, .html → PDF via Playwright
  *
  * Usage:
- *   node generate-pdf.mjs <input.html> <output.pdf> [--max-pages=N] [--source-url=URL]
+ *   node generate-pdf.mjs <input.tex|input.html> <output.pdf> [--max-pages=N] [--source-url=URL]
  *
- * Requires: @playwright/test (or playwright) installed.
- * Uses Chromium headless to render the HTML and produce a clean, ATS-parseable PDF.
+ * The CV renders from LaTeX (templates/cv-template.tex, Jake's Resume) and
+ * needs pdflatex on PATH. The cover letter is still HTML and still needs
+ * Playwright; the input extension picks the path.
  */
 
 import { chromium } from 'playwright';
 import { resolve, dirname, relative, isAbsolute, join } from 'path';
 import { readFile } from 'fs/promises';
-import { mkdirSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
+import { sanitizeAtsText } from './batch/text-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,7 +37,7 @@ mkdirSync(resolve(__dirname, 'output'), { recursive: true });
  */
 function normalizeTextForATS(html) {
   const replacements = {};
-  const bump = (key, n) => { replacements[key] = (replacements[key] || 0) + n; };
+  const bump = (key) => { replacements[key] = (replacements[key] || 0) + 1; };
 
   const masks = [];
   const masked = html.replace(
@@ -50,8 +53,8 @@ function normalizeTextForATS(html) {
   let i = 0;
   while (i < masked.length) {
     const lt = masked.indexOf('<', i);
-    if (lt === -1) { out += sanitizeText(masked.slice(i)); break; }
-    out += sanitizeText(masked.slice(i, lt));
+    if (lt === -1) { out += sanitizeAtsText(masked.slice(i), bump); break; }
+    out += sanitizeAtsText(masked.slice(i, lt), bump);
     const gt = masked.indexOf('>', lt);
     if (gt === -1) { out += masked.slice(lt); break; }
     out += masked.slice(lt, gt + 1);
@@ -60,33 +63,6 @@ function normalizeTextForATS(html) {
 
   const restored = out.replace(/\u0000MASK(\d+)\u0000/g, (_, n) => masks[Number(n)]);
   return { html: restored, replacements };
-
-  function sanitizeText(text) {
-    if (!text) return text;
-    let t = text;
-    t = t.replace(/\u2014/g, () => { bump('em-dash', 1); return '-'; });
-    t = t.replace(/\u2013/g, () => { bump('en-dash', 1); return '-'; });
-    t = t.replace(/[\u201C\u201D\u201E\u201F]/g, () => { bump('smart-double-quote', 1); return '"'; });
-    t = t.replace(/[\u2018\u2019\u201A\u201B]/g, () => { bump('smart-single-quote', 1); return "'"; });
-    t = t.replace(/\u2026/g, () => { bump('ellipsis', 1); return '...'; });
-    t = t.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, () => { bump('zero-width', 1); return ''; });
-    t = t.replace(/\u00A0/g, () => { bump('nbsp', 1); return ' '; });
-    // Arrows often stripped by PDF text extractors \u2014 replace with ASCII for ATS safety.
-    // Consume surrounding whitespace to avoid double-spacing in output.
-    t = t.replace(/\s*\u2192\s*/g, () => { bump('right-arrow', 1); return ' to '; });
-    t = t.replace(/\s*\u2190\s*/g, () => { bump('left-arrow', 1); return ' from '; });
-    t = t.replace(/\s*[\u2191\u2193]\s*/g, () => { bump('vert-arrow', 1); return ' '; });
-    // Middle dot and bullet glyphs garble in some extractors \u2014 replace with pipe.
-    t = t.replace(/\s*\u00B7\s*/g, () => { bump('middot', 1); return ' | '; });
-    t = t.replace(/\s*\u2022\s*/g, () => { bump('bullet', 1); return ' | '; });
-    // Currency symbols sometimes stripped by font-subsetted PDFs \u2014 spell out
-    // the unambiguous ones. \u00A5 is intentionally NOT converted: it maps to both
-    // Japanese Yen (JPY) and Chinese Yuan (CNY), so any spelled-out code would be
-    // wrong for half of users \u2014 better to leave the glyph than emit bad data.
-    t = t.replace(/\u20AC/g, () => { bump('euro', 1); return 'EUR '; });
-    t = t.replace(/\u00A3/g, () => { bump('pound', 1); return 'GBP '; });
-    return t;
-  }
 }
 
 const SECTION_ALIASES = new Map([
@@ -123,12 +99,19 @@ function sectionKey(text) {
   return SECTION_ALIASES.get(normalized) ?? normalized;
 }
 
-function extractRenderedSectionOrder(html) {
-  const titleMatches = [...html.matchAll(/class=["'][^"']*\bsection-title\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi)];
+// `\section{Work Experience}` in the LaTeX template, `class="section-title"` in
+// the HTML one. The check itself — rendered order must not contradict cv.md —
+// is the same for both, and is the reason a template swap cannot silently
+// reorder the document.
+function extractRenderedSectionOrder(source, isTex = false) {
+  const titleMatches = isTex
+    ? [...source.matchAll(/^\s*\\section\{([^{}]*)\}/gm)]
+    : [...source.matchAll(/class=["'][^"']*\bsection-title\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi)];
   const sections = [];
 
   for (const match of titleMatches) {
-    const text = normalizeSectionTitle(match[1]);
+    // \& is how "Education & Certifications" reaches the .tex.
+    const text = normalizeSectionTitle(match[1].replace(/\\&/g, '&'));
     if (!text) continue;
     sections.push({ key: sectionKey(text), title: text });
   }
@@ -158,8 +141,8 @@ function extractSourceSectionOrder(markdown) {
 // has to follow cv.md, which is what this check exists for.
 const TEMPLATE_ORDERED = new Set(['skills']);
 
-function validateCvSectionOrder(html, cvMarkdown) {
-  const rendered = extractRenderedSectionOrder(html);
+function validateCvSectionOrder(doc, cvMarkdown, isTex = false) {
+  const rendered = extractRenderedSectionOrder(doc, isTex);
   const source = extractSourceSectionOrder(cvMarkdown);
   if (rendered.length < 2 || source.length < 2) return;
 
@@ -201,7 +184,7 @@ async function generatePDF() {
   }
 
   if (!inputPath || !outputPath) {
-    console.error('Usage: node generate-pdf.mjs <input.html> <output.pdf> [--max-pages=N] [--source-url=URL]');
+    console.error('Usage: node generate-pdf.mjs <input.tex|input.html> <output.pdf> [--max-pages=N] [--source-url=URL]');
     process.exit(1);
   }
 
@@ -211,25 +194,32 @@ async function generatePDF() {
   console.log(`Input:  ${inputPath}`);
   console.log(`Output: ${outputPath}`);
 
-  let html = await readFile(inputPath, 'utf-8');
+  const isTex = inputPath.toLowerCase().endsWith('.tex');
+  let source = await readFile(inputPath, 'utf-8');
   let cvMarkdown = '';
   try {
     cvMarkdown = await readFile(resolve(__dirname, 'cv.md'), 'utf-8');
   } catch (err) {
     if (err?.code !== 'ENOENT') throw err;
   }
-  validateCvSectionOrder(html, cvMarkdown);
+  validateCvSectionOrder(source, cvMarkdown, isTex);
 
-  // Normalize text for ATS compatibility (issue #1)
-  const normalized = normalizeTextForATS(html);
-  html = normalized.html;
-  const totalReplacements = Object.values(normalized.replacements).reduce((a, b) => a + b, 0);
-  if (totalReplacements > 0) {
-    const breakdown = Object.entries(normalized.replacements).map(([k, v]) => `${k}=${v}`).join(', ');
-    console.log(`ATS normalization: ${totalReplacements} replacements (${breakdown})`);
+  // Normalize text for ATS compatibility (issue #1). The LaTeX path already
+  // did this in fill-cv-template.mjs, on the content rather than the document —
+  // it has to run before escaping, or the pipes this emits reach TeX bare.
+  if (!isTex) {
+    const normalized = normalizeTextForATS(source);
+    source = normalized.html;
+    const totalReplacements = Object.values(normalized.replacements).reduce((a, b) => a + b, 0);
+    if (totalReplacements > 0) {
+      const breakdown = Object.entries(normalized.replacements).map(([k, v]) => `${k}=${v}`).join(', ');
+      console.log(`ATS normalization: ${totalReplacements} replacements (${breakdown})`);
+    }
   }
 
-  const result = await renderHtmlToPdf(html, outputPath, { baseDir: dirname(inputPath) });
+  const result = isTex
+    ? renderTexToPdf(source, outputPath)
+    : await renderHtmlToPdf(source, outputPath, { baseDir: dirname(inputPath) });
 
   // Embed the job-posting URL into PDF metadata (Subject + Keywords) so the
   // source posting is visible in any PDF reader's document properties.
@@ -255,6 +245,79 @@ async function generatePDF() {
   }
 
   return result;
+}
+
+/**
+ * Render a LaTeX string to a PDF file via pdflatex.
+ *
+ * One pass, not two: the template sets `bookmarks=false`, so hyperref writes no
+ * .out file and has nothing to ask for a rerun about. Nothing else in the
+ * document cross-references, and the density ladder compiles this up to six
+ * times per offer.
+ *
+ * pdflatex insists on writing .aux/.log next to its output, so it renders into
+ * a scratch directory and the PDF is moved into place. `-output-directory`
+ * rather than a chdir, because the ladder runs several of these and cwd is
+ * process-global.
+ *
+ * @param {string} tex - Full LaTeX document.
+ * @param {string} outputPath - Absolute path to write the PDF to.
+ * @param {{keepLog?: boolean}} [opts]
+ * @returns {{outputPath: string, pageCount: number, pages: number|null, size: number}}
+ */
+export function renderTexToPdf(tex, outputPath, opts = {}) {
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const scratch = mkdtempSync(join(tmpdir(), 'snipe-tex-'));
+  const texPath = join(scratch, 'cv.tex');
+
+  try {
+    writeFileSync(texPath, tex);
+    let log = '';
+    try {
+      log = execFileSync('pdflatex', [
+        '-interaction=nonstopmode',
+        '-halt-on-error',
+        `-output-directory=${scratch}`,
+        texPath,
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      if (err?.code === 'ENOENT') {
+        throw new Error('pdflatex not found on PATH — install TeX Live (texlive-latex-recommended, texlive-fonts-recommended)');
+      }
+      // nonstopmode puts the real complaint in stdout, prefixed "! ".
+      const out = String(err.stdout || '');
+      const why = (out.match(/^!.*$/gm) || []).slice(0, 3).join('; ') || err.message;
+      throw new Error(`pdflatex failed: ${why}`);
+    }
+
+    // The page-count regex the HTML path uses reads /Type /Page out of the raw
+    // bytes; pdflatex compresses those into object streams, so it finds zero on
+    // every document. pdflatex states the count itself, so read that instead of
+    // adding a poppler dependency to get it back.
+    const m = log.match(/Output written on .*?\((\d+) pages?/);
+    if (!m) throw new Error(`pdflatex wrote no page count — ${(log.match(/^!.*$/gm) || []).slice(0, 2).join('; ') || 'no output'}`);
+    const pageCount = parseInt(m[1], 10);
+
+    // Fractional page count, from the template's \AtEndDocument hook: whole
+    // pages, plus how full the last one is. Null if the hook is absent (a .tex
+    // that did not come from templates/cv-template.tex).
+    const f = log.match(/SNIPE-FILL ([\d.]+)pt ([\d.]+)pt/);
+    const pages = f && +f[2] ? +((pageCount - 1 + +f[1] / +f[2]).toFixed(3)) : null;
+
+    const pdf = readFileSync(join(scratch, 'cv.pdf'));
+    writeFileSync(outputPath, pdf);
+
+    // stderr, not stdout: tailor-harness.mjs calls this per offer and prints its
+    // metrics as JSON on stdout, so a "PDF generated" line here is parsed as
+    // part of the report. The CLI still shows it.
+    process.stderr.write(`PDF generated: ${outputPath}\n`);
+    process.stderr.write(`Pages: ${pageCount}${pages ? ` (${pages} incl. last-page fill)` : ''}\n`);
+    process.stderr.write(`Size: ${(pdf.length / 1024).toFixed(1)} KB\n`);
+
+    return { outputPath, pageCount, pages, size: pdf.length };
+  } finally {
+    if (!opts.keepLog) rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /**

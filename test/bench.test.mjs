@@ -723,16 +723,18 @@ try {
     eq(short.code, 0, 'tailor-harness metrics renders the page for a run');
     const sM = JSON.parse(short.out.slice(0, short.out.indexOf('}\n') + 1));
     const lM = JSON.parse(long.out.slice(0, long.out.indexOf('}\n') + 1));
-    ok(typeof sM.pages === 'number' && typeof sM.page_px === 'number',
+    ok(typeof sM.pages === 'number',
       'metrics reports how many pages the CV renders to');
     ok(typeof sM.one_page_rate === 'number' && typeof sM.one_page_n === 'number',
       'and the one-page rate, which is the gate rather than the mean');
-    ok(lM.page_px > sM.page_px,
-      `a longer CV measures taller (${sM.page_px}px -> ${lM.page_px}px) — the harness can see the page`);
-    ok(lM.pages > sM.pages, 'and reports it as more pages, not just more pixels');
+    // `pages` is fractional — whole pages plus how full the last one is — so a
+    // difference of a few lines is visible without either arm crossing onto a
+    // second page.
+    ok(lM.pages > sM.pages,
+      `a longer CV measures taller (${sM.pages} -> ${lM.pages} pages) — the harness can see the page`);
 
     const noPages = await runNodeAsync([TH, 'metrics', 'SHORT', '--no-embed', '--no-pages'], { env });
-    eq(noPages.code, 0, '--no-pages runs without a browser');
+    eq(noPages.code, 0, '--no-pages runs without invoking pdflatex');
     ok(!/"pages"/.test(noPages.out.slice(0, noPages.out.indexOf('}\n') + 1)),
       'and reports no page metric at all rather than a zero that would read as fitting');
 

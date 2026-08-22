@@ -17,7 +17,7 @@ const systemFiles = [
   'CLAUDE.md',
   'modes/_shared.md', 'config/profile.template.md',
   'modes/pdf.md', 'modes/scan.md',
-  'templates/states.yml', 'templates/cv-template.html',
+  'templates/states.yml', 'templates/cv-template.tex',
 ];
 
 for (const f of systemFiles) {
@@ -155,45 +155,75 @@ if (overCap.length === 0) {
   fail(`staged-evaluator has maxLength ${overCap.join(', ')} — over the 1500 ceiling, grammar will not compile`);
 }
 
-// ATS text extraction breaks when Chrome's PDF writer emits per-glyph offsets,
-// so the CV template must not track any text.
-const cvTemplate = readFile('templates/cv-template.html');
-const tracked = [...cvTemplate.matchAll(/letter-spacing:\s*([^;]+);/g)]
-  .map(m => m[1].trim())
-  .filter(v => v !== 'normal' && !/^0\w*$/.test(v));
-if (tracked.length === 0) {
-  pass('cv-template.html uses no letter-spacing (ATS-parseable headers)');
+// pdflatex's default output has no /ToUnicode map for its Type1 fonts, so the
+// text layer extracts as mojibake and an ATS reads nothing. These two lines are
+// the entire fix and the reason the template keeps them.
+const cvTemplate = readFile('templates/cv-template.tex');
+for (const [re, what] of [
+  [/\\input\{glyphtounicode\}/, 'loads glyphtounicode'],
+  [/\\pdfgentounicode=1/, 'sets pdfgentounicode'],
+]) {
+  if (re.test(cvTemplate)) pass(`cv-template.tex ${what} (ATS-parseable text layer)`);
+  else fail(`cv-template.tex ${what.replace(/^/, 'does not ')} — the PDF's text extracts as mojibake`);
+}
+
+// The filler is a blind replaceAll over the template, so a token name written
+// inside a comment is substituted into that comment. The first render did
+// exactly this and put the whole experience section in the preamble, which
+// failed as "Missing \begin{document}" a hundred lines away from the cause.
+const tokenInComment = cvTemplate.split('\n')
+  .filter(l => /^\s*%/.test(l) && /\{\{[A-Z_]+\}\}/.test(l));
+if (tokenInComment.length === 0) {
+  pass('cv-template.tex names no placeholder token in a comment');
 } else {
-  fail(`cv-template.html has letter-spacing ${tracked.join(', ')} — ATS will read headers glyph-by-glyph`);
+  fail(`cv-template.tex has a token in a comment (${tokenInComment.length} line(s)) — replaceAll will substitute into it`);
+}
+
+// A project title comes from cv.md, which the template does not control, and a
+// tabular* column does not wrap: the longest one ran 89pt into the margin as a
+// mere log warning, so the ladder saw a clean one-page compile and shipped it.
+if (/\\newcommand\{\\resumeProjectHeading\}[\s\S]{0,400}?\\begin\{tabularx\}/.test(cvTemplate)) {
+  pass('cv-template.tex wraps the project heading (tabularx), so a long title cannot overflow silently');
+} else {
+  fail('cv-template.tex project heading does not wrap — a long cv.md title overflows the margin with no error');
 }
 
 // Every contact detail and repo the CV prints must be clickable in the PDF.
-// Chromium turns <a href> into a PDF link annotation and plain text into
-// nothing, so a URL rendered as text is one a reviewer has to retype.
+// hyperref turns \href into a link annotation and plain text into nothing, so a
+// URL rendered as text is one a reviewer has to retype. Built in code rather
+// than the template, because every field is optional and the brace nesting
+// (\href{mailto:{{EMAIL}}}{\underline{{{EMAIL}}}}) does not survive a blank one.
+const fillSrc = readFile('batch/fill-cv-template.mjs');
 const contactLinks = [
-  [/<a href="tel:\{\{PHONE_TEL\}\}"/, 'phone is a tel: link'],
-  [/<a href="mailto:\{\{EMAIL\}\}"/, 'email is a mailto: link'],
-  [/<a href="\{\{LINKEDIN_URL\}\}"/, 'LinkedIn is a link'],
-  [/<a href="\{\{PORTFOLIO_URL\}\}"/, 'GitHub profile is a link'],
+  [/\\\\href\{tel:/, 'phone is a tel: link'],
+  [/\\\\href\{mailto:/, 'email is a mailto: link'],
+  [/linkedin\.startsWith\('http'\)/, 'LinkedIn is a link'],
+  [/github\.startsWith\('http'\)/, 'GitHub profile is a link'],
 ];
 for (const [re, what] of contactLinks) {
-  if (re.test(cvTemplate)) pass(`cv-template.html: ${what}`);
-  else fail(`cv-template.html: ${what} — renders as plain text, so the PDF carries no annotation`);
+  if (re.test(fillSrc)) pass(`fill-cv-template.mjs: ${what}`);
+  else fail(`fill-cv-template.mjs: ${what} — renders as plain text, so the PDF carries no annotation`);
 }
 
-// The project repo is built in code, not the template. `esc()` around the whole
-// tech line would escape the anchor into visible markup, so this pins the shape
-// that broke when the link was added.
-const fillSrc = readFile('batch/fill-cv-template.mjs');
-if (/<div class="project-tech">\$\{techLine\}<\/div>/.test(fillSrc)) {
-  pass('fill-cv-template.mjs renders the tech line as HTML, so the repo anchor survives');
+// The repo link rides the project tech line. tex() around the whole line would
+// escape the backslash of \href into visible markup, so this pins the shape.
+if (/techLine = \[cv\.tech \? tex\(cv\.tech\) : '', repoTex\]/.test(fillSrc)) {
+  pass('fill-cv-template.mjs escapes the tech text but not the \\href, so the repo link survives');
 } else {
-  fail('fill-cv-template.mjs escapes the tech line — the repo <a> would print as markup');
+  fail('fill-cv-template.mjs escapes the whole tech line — the \\href would print as literal markup');
 }
 if (/`https:\/\/\$\{s\}`/.test(fillSrc)) {
   pass('fill-cv-template.mjs makes bare repo URLs absolute');
 } else {
-  fail('fill-cv-template.mjs does not absolutise repo URLs — a bare href resolves against file://');
+  fail('fill-cv-template.mjs does not absolutise repo URLs — a bare href points nowhere');
+}
+
+// LaTeX escaping is not optional: cv.md carries %, &, _, # and C++ in ordinary
+// prose, and an unescaped one is a compile error or a silently wrong glyph.
+if (/sanitizeAtsText\(String\(s \?\? ''\)\)\.replace\(\/\[/.test(fillSrc)) {
+  pass('fill-cv-template.mjs normalizes for ATS before escaping for LaTeX');
+} else {
+  fail('fill-cv-template.mjs escapes without normalizing first — a • becomes a bare pipe, which T1 sets as an em-dash');
 }
 
 // ── 11. CLAUDE.md INTEGRITY ─────────────────────────────────────

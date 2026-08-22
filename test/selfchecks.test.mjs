@@ -57,6 +57,7 @@ try {
   await selfCheck('batch/cv-writers.mjs', [], /cv-writers self-check OK/, 'cv-writers');
   await selfCheck('batch/fit-rules.mjs', [], /fit-rules self-check passed/, 'fit-rules');
   await selfCheck('batch/text-utils.mjs', [], /text-utils self-check passed/, 'text-utils');
+  await selfCheck('batch/fill-cv-template.mjs', [], /fill-cv-template self-check passed/, 'fill-cv-template');
   if (hasGoldsetData) {
     await selfCheck('batch/goldset.mjs', ['selfcheck'], /goldset selfcheck ok/, 'goldset');
   } else {
