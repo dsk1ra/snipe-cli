@@ -74,6 +74,8 @@ reports/*-RESERVED.md
 
 # Backup files (normalize-statuses.mjs, dedup-tracker.mjs, manual *.bak snapshots)
 *.bak
+# nano's emergency save on a crashed edit of an unnamed buffer
+nano.*.save
 
 # OS
 .DS_Store
