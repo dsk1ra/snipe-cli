@@ -118,3 +118,24 @@ demo/screens/*
 !demo/screens/running.png
 !demo/snipe-demo.mp4
 !demo/snipe-hero.gif
+
+# ── Go port ──────────────────────────────────────────────────────────────────
+# The Go binary cannot take ./snipe while the Node bash script of that name is
+# still tracked, so it builds to bin/ for the duration of the port and claims
+# the plain name when the script retires.
+/bin/
+/gate
+/sandbox
+
+# Go's data root writes three directories the Node layout has no name for.
+batch/state/
+batch/cache/
+batch/work/
+
+# Personal model-prompt overrides, Go side. Mirrors batch/*.local.md above.
+prompts/*.local.md
+
+# A full working copy of this repo, kept locally as a snapshot. Everything in it
+# is recoverable from history or a tag, and committing it would duplicate the
+# tree at 7MB.
+base/
