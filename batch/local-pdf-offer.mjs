@@ -592,16 +592,31 @@ if (!cached) try {
   // the three count knobs exist so the E2 control — naive count-cutting tuned
   // until it fits one page — is runnable as an arm. Defaults are the shipped
   // values, so an unset environment is the shipped selector.
-  // 24 lines over 3 projects, not 21 over 4. Four projects spent ~38px each on a
-  // title, a badge and a tech line to deliver one bullet apiece: 43% of the
-  // largest section on the page was chrome, and three of the four projects said
-  // one thing and stopped. Dropping a project and spending its chrome — plus the
-  // 69px the page was simply not using — on bullets is worth +0.116
+  // 3 projects, not 4. Four projects spent ~38px each on a title, a badge and a
+  // tech line to deliver one bullet apiece: 43% of the largest section on the
+  // page was chrome, and three of the four projects said one thing and stopped.
+  // Dropping a project and spending its chrome on bullets was worth +0.116
   // differentiator coverage (21-5, p=0.002), −0.063 noise and +0.071 grade yield,
   // with mean bullets 2.69 → 3.44. `projectBulletBudget` is dead on this path;
   // `allocateLines` spends `lineBudget` and never reads it (cv-select.mjs:579).
+  //
+  // 22 lines, down from the HTML template's 24. Deleting the summary section
+  // gave lines back and the LaTeX column took most of them again: at 497.5pt the
+  // itemize is narrower than the old 708px box, so `bulletLines` fell 124 → 108
+  // and every bullet costs ~15% more. Measured over all 220 cv-content.json in
+  // output/, re-filled and compiled: capacity is p10 22.9, p25 23.9, median
+  // 25.9. 22 fits 202 of 220 on selection alone (92%) and leaves the rest to
+  // the ladder — the same division of labour 24 had against the old page, where
+  // the ladder fired on 3 of 32. Passing the median would overrun the third of
+  // offers carrying the heaviest chrome, which is the trade the old comment
+  // describes and the reason this takes the low end of the range.
+  //
+  // Measure this AFTER any change to `parseExperience`. The first pass at it
+  // read p10 19.6 because cv.md had switched to an ASCII hyphen on the company
+  // line, which parsed to an empty company, which made every employer render
+  // the first model entry's bullets — a different document, measured honestly.
   const num = (k, d) => parseInt(process.env[k] ?? String(d), 10) || d;
-  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '24', 10) || null;
+  const lineBudget = parseInt(process.env.SNIPE_LINE_BUDGET ?? '22', 10) || null;
   cvForPrompt = await selectCvForJd(
     cvText, blockBReqs, jdText,
     { ollamaUrl: args.ollamaUrl, judgeShots, lineBudget, pinnedProjects,
