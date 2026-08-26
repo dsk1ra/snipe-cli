@@ -6,6 +6,120 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 _Nothing yet._
 
+## [0.6.0] - 2026-08-26
+
+The Node implementation retires. snipe is a Go binary now.
+
+### Added
+
+- An Apify provider in Go. LinkedIn, Indeed and Glassdoor were three enabled
+  entries in `portals.yml` that the Go scanner could not serve, and fixing that
+  took the scan from 16 new postings to 53 on the same config. Built-in field
+  maps for the three actors, per-key `field_map` overrides, and results cached
+  on disk keyed on the actor and its input, because runs are billed.
+- `Options.Method`, `Options.Body` and `Options.Timeout` on the provider
+  transport. All three are zero-valued for a plain GET, so the nine existing
+  providers were untouched.
+- `.env` is read at startup, about twenty lines rather than a dotenv dependency.
+  Nothing on the Go side read it before, so a configured `APIFY_API_KEY` was
+  invisible.
+
+### Changed
+
+- **The Node implementation is gone.** The pipeline, TUI, runner, scanner, all
+  twenty providers, the tracker tooling and the 1363-check test suite. Recover
+  any of it from the `oracle/node-complete` tag.
+- Two pieces stayed, and neither is on the path of a run: the oracle under
+  `batch/` that `cmd/gate` diffs against, and `batch/bench-tools/`, the only way
+  to re-derive a measured constant.
+- The npm tree is one package. `ink`, `react`, `playwright`, `dotenv`, `c8`,
+  `typescript` and `@types/node` all go, and setup no longer downloads a browser.
+- CI runs one job. The Node job took `npm ci`, a Chromium install, `tsc` and `c8`
+  over a suite that no longer exists.
+- One copy of the prompts and Modelfiles. All seven under `batch/` were
+  byte-identical duplicates of `prompts/`, and two copies meant an edit could
+  reach the binary and not the harness, leaving a gate green against a stale
+  prompt.
+
+### Removed
+
+- Cover letters. The feature was never finished, and removing it took the last
+  consumer of Playwright and of the HTML render path with it.
+- Liveness verification, which `internal/scan` had already documented as a
+  deliberate omission.
+- `docs/SCRIPTS.md` and `docs/local-parser-cookbook.md`, which described only
+  deleted scripts.
+- `PORT-PLAN.md`, the Node to Go transition plan, along with its history. The
+  port is finished, so the plan described a transition that no longer has two
+  sides. Three Phase 3 comments cited its section 2 for why the 7B tailor arm
+  was not ported; each now states the reason instead of pointing at a file.
+- `CLAUDE.md` is untracked and gitignored. It briefs a coding agent working in
+  this checkout rather than describing the project. The data contract and the
+  entry-point map were the parts other files cited, and neither is agent
+  specific, so both moved to `docs/ARCHITECTURE.md`. `batch/CLAUDE.md` stays
+  tracked: it is the authority for every measured constant.
+
+### Security
+
+- The Apify token is sent as a bearer header instead of a URL query parameter.
+  As a query parameter it was printed in full by every transport error, which
+  put it in terminal scrollback and any log capturing scan warnings. A test
+  asserts it reaches neither the request URL nor any error text.
+
+## [0.5.0] - 2026-08-26
+
+The Go port lands. Both implementations now live in this repo, and the Go one
+runs the whole pipeline end to end. Nothing is removed yet: the Node code is
+untouched and still the one the `snipe` script drives, so this release adds a
+second implementation rather than swapping one for the other.
+
+### Added
+
+- A Go implementation of the whole pipeline, one package per concern under
+  `internal/`, with `cmd/snipe` as the binary and `cmd/gate` as the harness that
+  compares it against the Node original. Build it with
+  `go build -o bin/snipe ./cmd/snipe`.
+- A Bubble Tea TUI covering the queue, the activity view, follow-ups, the report
+  pane and the per-row actions, with a snapshot suite that pins the frame.
+- `cmd/gate`, which diffs Go output against Node output over the real cached
+  corpus, one subcommand per seam. Green at this release: `fit` 351 of 351,
+  `salary` 351 of 351, `cleanjd` 351 of 351, `atoms` 68 of 68.
+- The demo recording rig is now committed: the vhs tapes, the sandbox generator
+  and the caption tool. Without them the mp4 and gif in the README were binaries
+  nobody could reproduce. Everything the generator invents is fake and it reads
+  no `cv.md`, no tracker and no model.
+
+### Changed
+
+- The Go binary builds to `bin/snipe` rather than `./snipe`, because the Node
+  script of that name is still tracked at the repo root. It takes the plain name
+  when that script retires.
+- `CLAUDE.md` describes both implementations for as long as both are here. The
+  Node data contract, entry points and conventions are unchanged.
+- The JS gate harnesses resolve their repo path to an absolute path from any
+  input and default to this repo root. A dynamic `import()` resolves against the
+  module while `readFileSync` resolves against the process, so a relative
+  argument quietly meant two different directories.
+
+### Fixed
+
+- A YAML scalar of any type now decodes as text in the Go config loader. An
+  unquoted phone number is a YAML integer, and the failure would have taken the
+  archetype list and the score threshold down with it.
+- The README and `docs/ARCHITECTURE.md` carried claims that no longer matched the
+  code. The architecture diagram still rendered the PDF from HTML through
+  Puppeteer, which stopped being true in 0.4.0; scoring was documented as ten
+  weighted dimensions when it is three; the PDF naming convention described a
+  filename nothing has ever written; and archetypes were described as a fixed set
+  of six rather than whatever `config/profile.yml` defines. The README claimed a
+  4.0 recommendation threshold that exists nowhere in the code.
+
+### Security
+
+- Removed a real phone number that was serving as the worked example in a source
+  comment, and the hardcoded local home directory that five gate harnesses used
+  as their default repo path.
+
 ## [0.4.0] - 2026-08-13
 
 The tailored-summary release. Pre-release: the location cap changes what the

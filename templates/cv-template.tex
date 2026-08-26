@@ -1,0 +1,146 @@
+%% cv-template.tex — Jake's Resume, adapted for snipe
+%%
+%% Rendered by generate-pdf.mjs (pdflatex), filled by batch/fill-cv-template.mjs.
+%% Placeholder tokens are substituted before compilation; everything else is
+%% Jake Ryan's template verbatim. Do not write a token name in these comments:
+%% the filler is a blind replaceAll and will substitute into a comment too.
+%% Source: https://github.com/jakegut/resume (MIT).
+%%
+%% Two deliberate departures from upstream:
+%%
+%%   a4paper, not letterpaper. Letter is 66px shorter — about four bullet lines
+%%   on a CV fighting to stay on one page — and this pipeline rations the page
+%%   in lines (batch/cv-select.mjs). The margin arithmetic upstream does with
+%%   \addtolength is Letter-tuned, so it is replaced by geometry at the 0.45in
+%%   this project already measured as its floor.
+%%
+%%   No summary section. Jake's has none either; the pipeline still generates
+%%   one (see batch/summary-stage.mjs) and simply does not render it.
+
+\documentclass[a4paper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+% bookmarks=false so a single pdflatex pass is enough. hyperref writes a .out
+% file for PDF outlines and asks to be re-run to get them right; the ladder in
+% local-pdf-offer.mjs compiles up to six times per offer, and nobody has ever
+% opened the bookmark pane on a one-page CV.
+\usepackage[hidelinks,bookmarks=false]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage[T1]{fontenc}
+\usepackage[a4paper,margin=0.45in]{geometry}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+% Ensure that generated pdf is machine readable/ATS parsable
+\input{glyphtounicode}
+\pdfgentounicode=1
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+% tabularx, not upstream's tabular*. A tabular* `l` column does not wrap, and
+% this one holds a project title from cv.md — user-layer text this template has
+% no say over. "Re:Link — Privacy-Preserving Peer-to-Peer Remote Access System"
+% plus its badge ran 89pt into the right margin, silently: an overfull \hbox is
+% a log warning, not an error, so the ladder saw a clean 1-page compile and
+% shipped it. X wraps instead.
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabularx}{0.97\textwidth}[t]{@{}>{\raggedright\arraybackslash}X@{\extracolsep{\fill}}r@{}}
+      \small#1 & #2 \\
+    \end{tabularx}\vspace{-7pt}
+}
+
+% Not upstream. cv.md carries a tech stack and a repo URL per project, and
+% Jake's project heading is a tabular* row that does not wrap — a 70-character
+% stack in the left cell runs off the page. This puts it on its own unbulleted
+% line under the project instead.
+\newcommand{\resumeTechLine}[1]{
+  \item[]\small{\textit{#1}}\vspace{-4pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+% How full the last page is, into the compile log. `pages: 2` cannot tell an
+% overrun of two lines from an overrun of a whole page, and that difference is
+% the entire subject of the density ladder — so generate-pdf.mjs and
+% tailor-harness.mjs both read this line to recover the fractional page count
+% the browser-rendered template used to measure directly.
+\AtEndDocument{\typeout{SNIPE-FILL \the\pagetotal\space \the\pagegoal}}
+
+%-------------------------------------------
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape {{NAME}}} \\ \vspace{1pt}
+    {{TARGET_ROLE}}
+    \small {{CONTACT}}
+\end{center}
+
+%-----------TECHNICAL SKILLS-----------
+% Directly under the heading, where a reader and a keyword scan both look
+% first. Upstream puts it last; here that is the worst spot on the document.
+\section{{{SECTION_SKILLS}}}
+{{SKILLS}}
+
+%-----------EXPERIENCE-----------
+\section{{{SECTION_EXPERIENCE}}}
+  \resumeSubHeadingListStart
+{{EXPERIENCE}}
+  \resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{{{SECTION_PROJECTS}}}
+    \resumeSubHeadingListStart
+{{PROJECTS}}
+    \resumeSubHeadingListEnd
+
+%-----------EDUCATION-----------
+\section{{{SECTION_EDUCATION}}}
+  \resumeSubHeadingListStart
+{{EDUCATION}}
+  \resumeSubHeadingListEnd
+
+\end{document}

@@ -74,6 +74,8 @@ reports/*-RESERVED.md
 
 # Backup files (normalize-statuses.mjs, dedup-tracker.mjs, manual *.bak snapshots)
 *.bak
+# nano's emergency save on a crashed edit of an unnamed buffer
+nano.*.save
 
 # OS
 .DS_Store
@@ -83,6 +85,8 @@ reports/*-RESERVED.md
 # CLI-specific local config
 .claude/settings.local.json
 .claude/memory/
+# Agent briefing for this checkout. Local, not part of the project.
+/CLAUDE.md
 
 # Playwright MCP server run artifacts (ephemeral, machine-local — never commit)
 .playwright-mcp/
@@ -99,20 +103,35 @@ batch/timings.tsv
 # Regenerate: node batch/bench-tools/gen-cv-bank.mjs
 batch/cv-bank.json
 
-# Demo assets. Only what README.md actually embeds is tracked; everything else
-# under demo/ is the local recording rig — vhs tapes, the seed script, the
-# caption tool, the sandbox it records against, and the renders the README does
-# not link (the full-length GIF is a megabyte larger than the mp4 of the same
-# session). Ignore the directory wholesale and negate the six files back in, so
-# a new tape or screenshot is local by default rather than accidentally
-# committed. demo/screens/ needs its own re-include: git will not look inside an
-# excluded directory, so the files under it cannot be negated until it is.
-demo/*
-!demo/screens/
-demo/screens/*
-!demo/screens/activity-year.png
-!demo/screens/followups.png
-!demo/screens/queue.png
-!demo/screens/running.png
-!demo/snipe-demo.mp4
-!demo/snipe-hero.gif
+# Demo. The recording rig is source and is committed: the vhs tapes, the sandbox
+# generator, the caption tool. Without them the committed mp4 and gif are
+# binaries nobody can reproduce, this repo's author included.
+#
+# What is not committed is the fixture the generator builds, the uncaptioned
+# recordings vhs drops beside it, and the renders README.md does not link. A
+# full-length gif is several megabytes larger than the mp4 of the same session.
+demo/.sandbox/
+demo/.sandbox.bin
+demo/snipe-demo.gif
+demo/snipe-hero.mp4
+
+# ── Go port ──────────────────────────────────────────────────────────────────
+# The Go binary cannot take ./snipe while the Node bash script of that name is
+# still tracked, so it builds to bin/ for the duration of the port and claims
+# the plain name when the script retires.
+/bin/
+/gate
+/sandbox
+
+# Go's data root writes three directories the Node layout has no name for.
+batch/state/
+batch/cache/
+batch/work/
+
+# Personal model-prompt overrides, Go side. Mirrors batch/*.local.md above.
+prompts/*.local.md
+
+# A full working copy of this repo, kept locally as a snapshot. Everything in it
+# is recoverable from history or a tag, and committing it would duplicate the
+# tree at 7MB.
+base/

@@ -338,37 +338,46 @@ export async function spikeBackground(bullets, opts = {}) {
  * silently; overestimating only leaves a little of it unused. At 126 the
  * underestimates start.
  *
- * It is tied to the column width, so a template change moves it. Recalibrate
- * with the same sweep if `CONTENT_BOX`, the body font or `.job li` padding
- * change; 95 was right for the 0.6in margins this used to render at, and was
- * wrong by a third of a line per bullet the moment Phase A widened the column.
+ * It is tied to the column width, so a template change moves it. 95 was right
+ * for the 0.6in margins this used to render at, and was wrong by a third of a
+ * line per bullet the moment Phase A widened the column; 124 was right for the
+ * HTML template's 708px content box.
+ *
+ * 108 is the Jake's-Resume LaTeX template: \small (10pt) in a nested itemize
+ * whose \linewidth is 497.5pt — narrower than the HTML column was, because the
+ * two list indents eat into it, so every bullet costs about 15% more lines than
+ * it used to. Fitted against all 33 real cv.md bullets measured with
+ * \settototalheight inside the real list nesting: exact on 33 of 33.
  *
  * @param {string} text
  * @returns {number}
  */
 export function bulletLines(text) {
-  return Math.max(1, Math.ceil(String(text || '').length / 124));
+  return Math.max(1, Math.ceil(String(text || '').length / 108));
 }
 
 /**
  * What a bullet costs the page, in line-heights, margin included.
  *
- * Every `<li>` carries `margin-bottom: 2px` on top of its 15.6px line height, so
- * a bullet costs `lines + 2/15.6` — about an eighth of a line each. Counting
- * only line height understates a nine-bullet page by more than a line and a
- * thirteen-bullet page by nearly two, which is exactly how the first knapsack
- * run overran on 6 of 32 offers by 1-2 lines apiece while a line-only model
- * insisted every one of them fitted.
+ * A `\resumeItem` costs 2pt on top of its 12pt line height, so a bullet costs
+ * `lines + 2/12` — about a sixth of a line each. Counting only line height
+ * understates a nine-bullet page by more than a line and a thirteen-bullet page
+ * by nearly two, which is exactly how the first knapsack run overran on 6 of 32
+ * offers by 1-2 lines apiece while a line-only model insisted every one fitted.
  *
- * The budget is measured the same way — capacity is `(page - chrome) / 15.6`
- * where chrome excludes bullet margins — so cost and budget agree only if the
- * margin is charged here.
+ * Both numbers are measured, not read off the stylesheet: a list of 4 vs 12
+ * identical one-line bullets differs by 14.00pt each, and the same list of
+ * two-line bullets by 26.00pt, so a text line is exactly 12pt and the fixed
+ * cost per bullet is exactly 2pt. (The HTML template's was 2px on 15.6px.)
+ *
+ * The budget is measured in the same unit — see `lineBudget` — so cost and
+ * budget agree only if the overhead is charged here.
  *
  * @param {string} text
  * @returns {number}
  */
 export function bulletCost(text) {
-  return bulletLines(text) + 2 / 15.6;
+  return bulletLines(text) + 2 / 12;
 }
 
 /**
@@ -410,9 +419,12 @@ export async function selectCvForJd(cvText, requirements, jdText, opts = {}) {
     // allocation exactly, which is what makes this measurable as one change.
     minTopExpBullets = 2,
     // Lines the Projects section may take of `lineBudget`. 0 disables it and
-    // restores the single pool. 14 of 24 is the swept optimum — see
+    // restores the single pool. 14 of 24 was the swept optimum — see
     // `allocateLines` for the trade it makes and why it is not a smaller page.
-    projMaxLines = 14,
+    // 13 of 22 holds that same 58% share through the LaTeX template's smaller
+    // budget. The share is carried over, not re-swept: re-sweeping costs a
+    // judge call per offer, and nothing about the trade it encodes changed.
+    projMaxLines = 13,
     // Project bullets are drawn from one shared budget rather than a flat cap
     // per project: a posting that is mostly about what one project did should
     // spend more of the page on that project. The budget is exactly what 4
@@ -1605,8 +1617,8 @@ Text.
   assert(backfilled.every(p => /Crypto Tool|Web App|Java Batch/.test(p.name)), 'backfill uses real CV projects');
 
   // ── line budget (E2) ────────────────────────────────────────────────────────
-  assert(bulletLines('x'.repeat(124)) === 1 && bulletLines('x'.repeat(125)) === 2,
-    'a bullet costs one line per 124 characters');
+  assert(bulletLines('x'.repeat(108)) === 1 && bulletLines('x'.repeat(109)) === 2,
+    'a bullet costs one line per 108 characters');
   assert(bulletLines('') === 1 && bulletLines(null) === 1, 'an empty bullet still costs its line');
   // Margin is charged, or a 9-bullet page overruns by more than a line while a
   // line-only model insists it fits — measured, 6 of 32 offers.

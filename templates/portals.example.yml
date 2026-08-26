@@ -382,7 +382,7 @@ search_queries:
 # scan_method: playwright (default), websearch, local_parser
 # For Greenhouse companies, add api: field for faster structured JSON access.
 #
-# Provider routing (scan.mjs):
+# Provider routing (internal/providers):
 #   By default each entry is auto-detected from `careers_url` against the
 #   loaded providers in providers/*.mjs (local-parser, ashby, greenhouse, lever).
 #   local-parser runs first when parser.command + parser.script are set.
@@ -420,7 +420,7 @@ search_queries:
 #   enabled: true
 
 # ── Provider auto-detection ───────────────────────────────────────
-# scan.mjs auto-loads everything in providers/*.mjs and tries each
+# Each provider registers itself in internal/providers and is tried in id order
 # provider's detect() in order. URL patterns recognized:
 #
 #   greenhouse      job-boards(.eu)?.greenhouse.io/<slug>  (or api: field)
@@ -1106,7 +1106,7 @@ tracked_companies:
   #
   # NOTE on scanning: Most Turkish companies below do NOT expose a
   # public ATS API (Greenhouse / Lever / Ashby) on their careers_url,
-  # so `scan.mjs` will filter them out automatically (it requires a
+  # so the scanner will filter them out automatically (it requires a
   # detectable ATS). They are listed here as discovery aids — paste
   # the URL of any specific role into `data/pipeline.md` and run
   # `/snipe pipeline`, which uses Playwright/WebFetch instead.

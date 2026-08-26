@@ -198,6 +198,48 @@ export function groundSkillItems(curated, cvRowItems, cvText) {
   return kept.length ? kept.join(', ') : cvRowItems;
 }
 
+/**
+ * Replace the Unicode punctuation that ATS parsers mangle.
+ *
+ * Em-dashes, smart quotes, zero-width characters, non-breaking spaces, arrows
+ * and bullet glyphs cause mojibake or silent drops in legacy resume parsers
+ * (issue #1). Currency symbols get spelled out for the same reason; ¥ is
+ * deliberately NOT converted, since it maps to both JPY and CNY and either code
+ * would be wrong for half of users.
+ *
+ * Lives here rather than in generate-pdf.mjs because both render paths need it
+ * and they need it at different moments. The HTML path normalizes the rendered
+ * document; the LaTeX path must normalize the *content*, before escaping, or
+ * `•` becomes ` | ` after the escaper has already run and ships a bare pipe —
+ * which T1 typesets as an em-dash.
+ *
+ * @param {string} text
+ * @param {(key: string) => void} [bump] called once per replacement, for logging
+ * @returns {string}
+ */
+export function sanitizeAtsText(text, bump = () => {}) {
+  if (!text) return text;
+  let t = String(text);
+  t = t.replace(/—/g, () => { bump('em-dash'); return '-'; });
+  t = t.replace(/–/g, () => { bump('en-dash'); return '-'; });
+  t = t.replace(/[“”„‟]/g, () => { bump('smart-double-quote'); return '"'; });
+  t = t.replace(/[‘’‚‛]/g, () => { bump('smart-single-quote'); return "'"; });
+  t = t.replace(/…/g, () => { bump('ellipsis'); return '...'; });
+  t = t.replace(/[​‌‍⁠﻿]/g, () => { bump('zero-width'); return ''; });
+  t = t.replace(/ /g, () => { bump('nbsp'); return ' '; });
+  // Arrows are often stripped by PDF text extractors. Consume surrounding
+  // whitespace to avoid double-spacing in output.
+  t = t.replace(/\s*→\s*/g, () => { bump('right-arrow'); return ' to '; });
+  t = t.replace(/\s*←\s*/g, () => { bump('left-arrow'); return ' from '; });
+  t = t.replace(/\s*[↑↓]\s*/g, () => { bump('vert-arrow'); return ' '; });
+  // Middle dot and bullet glyphs garble in some extractors.
+  t = t.replace(/\s*·\s*/g, () => { bump('middot'); return ' | '; });
+  t = t.replace(/\s*•\s*/g, () => { bump('bullet'); return ' | '; });
+  t = t.replace(/€/g, () => { bump('euro'); return 'EUR '; });
+  t = t.replace(/£/g, () => { bump('pound'); return 'GBP '; });
+  return t;
+}
+
 // ── Self-check (ponytail: one runnable check) ─────────────────────────────────
 
 import { fileURLToPath } from 'url';
@@ -237,6 +279,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   assert(compScoreFromSalary({ min: 45000, max: 55000 }, targets) === 4, 'upper half = 4');
   assert(compScoreFromSalary({ min: 60000, max: 70000 }, targets) === 5, 'above target = 5');
   assert(compScoreFromSalary(null, targets) === null, 'no salary = null');
+
+  assert(sanitizeAtsText('a — b') === 'a - b', 'em-dash to hyphen');
+  assert(sanitizeAtsText('“x”') === '"x"', 'smart quotes');
+  assert(sanitizeAtsText('CEH • 2025') === 'CEH | 2025', 'bullet to pipe');
+  assert(sanitizeAtsText('£50,000') === 'GBP 50,000', 'pound spelled out');
+  assert(sanitizeAtsText('a → b') === 'a to b', 'arrow to word');
+  assert(sanitizeAtsText('¥500') === '¥500', 'yen left alone — JPY/CNY ambiguous');
 
   assert(cleanCvForPrompt('a  \n   \n\n\nb') === 'a\n\nb', 'cv cleaning');
 

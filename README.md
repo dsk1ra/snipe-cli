@@ -11,13 +11,20 @@ local AI job search · driven from your terminal
 # snipe-cli
 
 [![CI](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/dsk1ra/snipe-cli/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/dsk1ra/snipe-cli/graph/badge.svg)](https://codecov.io/gh/dsk1ra/snipe-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
+![Go](https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8)
 
 Paste a job description. snipe scores it against your CV, writes a full fit
 report, and tailors a one-page PDF for the roles worth your time. You drive all
 of it from the **snipe TUI**, a dashboard that lives in your terminal.
+
+snipe is a single Go binary. It was a Node project through v0.4.0 and was
+ported component by component, each one checked against the original over a
+corpus of real postings before the original was removed.
+
+What is left of Node is the oracle those checks run against and the benchmark
+harness that measured the pipeline's constants. Neither is on the path of a
+run.
 
 Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
 applications and your reports never leave the machine.
@@ -37,7 +44,7 @@ data throughout.</sub>
 ```
   paste JD ─┐
   /scan  ───┤        Phase 1            Phase 2              Phase 3
-  scan.mjs ─┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
+  scan   ───┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
      queue ────►│  pre-score   │─►│   evaluate   │──►│   tailor CV +    │──► output/
                 │ snipe-screen │  │  snipe-eval  │   │   snipe-cv → PDF │    *.pdf
                 └──────────────┘  └──────────────┘   └──────────────────┘
@@ -52,8 +59,9 @@ data throughout.</sub>
 | 3 · tailor CV | `snipe-cv` (Qwen2.5 7B Coder) | `output/<date>_<slug>_<NNN>/` (PDF) |
 
 `snipe-embed` (Qwen3 Embedding 0.6B) does the evidence matching in Phase 2 and
-the bullet selection in Phase 3. Scores run 0–5; below 4.0 snipe tells you not to
-bother applying.
+the bullet selection in Phase 3. Scores run 0–5. Below 3.0 the verdict is Skip, and an Apply
+under 3.5 is downgraded to Consider, so a marginal posting never reads as a
+recommendation.
 
 Phase 3 writes no bullets of its own. They reach the page worded as `cv.md` words
 them, ranked by embedding against the posting's requirements and reranked by
@@ -66,13 +74,16 @@ tightens the layout until the PDF fits one page.
 
 ## Setup
 
-Node ≥ 18 (≥ 22.5 for the optional SQLite tracker index) and a local
-[Ollama](https://ollama.com). Rendering the PDF needs Playwright's Chromium:
-`npx playwright install chromium`. A GPU helps but isn't required, see
+Go ≥ 1.25 and a local [Ollama](https://ollama.com). The CV renders from LaTeX,
+so it needs `pdflatex` on PATH — on Debian/Ubuntu `texlive-latex-recommended`,
+`texlive-latex-extra` and `texlive-fonts-recommended`; on Fedora
+`texlive-scheme-medium`. A GPU helps but isn't required, see
 [Hardware](#hardware).
 
+Node ≥ 18 is optional and only for the gates and the benchmark sweeps. Nothing
+in a normal run touches it.
+
 ```bash
-npm install
 cp config/profile.example.yml config/profile.yml   # comp, location, scoring policy
 cp config/profile.template.md  config/profile.md   # archetypes + narrative
 cp templates/portals.example.yml portals.yml       # portals to scan (optional)
@@ -82,7 +93,8 @@ cp .env.example .env                               # API keys (optional)
 
 `.env` only matters for portal scanning. `APIFY_API_KEY` unlocks the Apify-backed
 providers (LinkedIn, Indeed, Glassdoor); without a key those sit out and
-everything else, the whole pipeline included, runs as normal.
+everything else, the whole pipeline included, runs as normal. The key is read
+into the environment at startup and sent as a bearer token, never in a URL.
 
 Build the four models once, then start the server with a q8_0 KV cache or the
 30B's context will not fit:
@@ -93,12 +105,15 @@ ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M
 ollama pull qwen2.5-coder:7b-instruct-q5_K_M
 ollama pull qwen3-embedding:0.6b-q8_0
 
-ollama create snipe-screen -f batch/Modelfile.snipe-screen
-ollama create snipe-eval   -f batch/Modelfile.snipe-eval
-ollama create snipe-cv     -f batch/Modelfile.snipe-cv
-ollama create snipe-embed  -f batch/Modelfile.snipe-embed
+ollama create snipe-screen -f prompts/Modelfile.snipe-screen
+ollama create snipe-eval   -f prompts/Modelfile.snipe-eval
+ollama create snipe-cv     -f prompts/Modelfile.snipe-cv
+ollama create snipe-embed  -f prompts/Modelfile.snipe-embed
 
 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
+```
+
+```bash
 ```
 
 ---
@@ -106,14 +121,14 @@ OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 ## Using the TUI
 
 ```bash
-node snipe-tui.mjs        # or: npm run snipe-tui
+go build -o bin/snipe ./cmd/snipe && ./bin/snipe
 ```
 
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
 output. So you can start a run, watch it move, and keep adding jobs while it
 works. It never edits pipeline state itself. The only files it writes are its own
-sidecars: `batch/applied.tsv`, `batch/skipped.tsv`, `batch/p1-declined.tsv` and
-`batch/errors/<id>.txt`.
+sidecars under `batch/state/`: `applied.tsv`, `skipped.tsv` and the
+declined-gate list, plus `batch/errors/<id>.txt`.
 
 <table>
 <tr>
@@ -130,7 +145,7 @@ quitting the TUI does not stop it.</td>
 <td><a href="demo/screens/activity-year.png"><img src="demo/screens/activity-year.png" alt="The activity heatmap"></a><br>
 <b>Activity</b> — every scan you have run, one square a day, gold on your
 busiest. <code>y m d</code> zoom from the year to a single day by hour;
-<code>j</code> swaps the grid to applications sent.</td>
+<code>tab</code> swaps the grid to applications sent.</td>
 <td><a href="demo/screens/followups.png"><img src="demo/screens/followups.png" alt="The follow-ups tab"></a><br>
 <b>Follow-ups</b> — who is owed a nudge, worked out from the tracker.
 <code>Enter</code> records one, <code>p</code> advances the status,
@@ -139,7 +154,7 @@ busiest. <code>y m d</code> zoom from the year to a single day by hour;
 </table>
 
 <sub>Click any shot for full size. The whole session end to end, with captions:
-**[snipe-demo.mp4](demo/snipe-demo.mp4)** (2:47).</sub>
+**[snipe-demo.mp4](demo/snipe-demo.mp4)** (3:48).</sub>
 
 **Adding a job.** Paste into the box (**/** jumps into it from anywhere on the
 tab), then **Enter** walks the mini-form: JD → URL → Add to queue. **→** from the
@@ -205,25 +220,22 @@ pipeline (the row had already finished) and is recorded in
 
 ## Command line
 
-You don't need the TUI. The `snipe` launcher and the runner work standalone:
+You don't need the TUI. Every command works standalone:
 
 ```bash
-./snipe --jd "<paste JD text>"          # add one JD and run it through the pipeline
-./snipe --jdf job.txt --link <url>      # same, JD read from a file
-./snipe --jd-q "<text>"                 # queue only — don't run yet
-./snipe --drain                         # process everything queued
-node scan.mjs                           # scan configured portals for new roles
-
-bash batch/local-runner.sh                # all phases
-bash batch/local-runner.sh --skip-phase3  # score + evaluate, no PDFs
-bash batch/local-runner.sh --dry-run      # preview what would run
-bash batch/local-runner.sh --only-id 42 --retry-failed      # retry failed job 42
-bash batch/local-runner.sh --only-id 42 --p1-threshold 0    # evaluate it anyway
+./bin/snipe add -jd "<paste JD text>"    # add one JD and run it
+./bin/snipe add -f job.txt -link <url>   # same, JD read from a file
+./bin/snipe add -queue "<text>"          # queue only, don't run yet
+./bin/snipe run                          # process everything queued
+./bin/snipe scan                         # scan the configured boards
+./bin/snipe status                       # what is running, and where
+./bin/snipe stop                         # stop after the current stage
+./bin/snipe pause                        # drop the stage in flight; resume reruns it
+./bin/snipe doctor                       # setup, state and tracker integrity
+./bin/snipe tracker fix                  # canonical statuses, one row per opening
 ```
 
-Every flag is in [`batch/README.md`](batch/README.md). `node snipe-tui.mjs --stats`
-prints the current pipeline stats as JSON and exits, no terminal required —
-useful in scripts, or over an SSH connection with no TTY to render into.
+Run any subcommand with `-h` for its flags.
 
 ---
 
@@ -238,22 +250,38 @@ CPU-only setups work too — point the phases at lighter models with
 
 `data/applications.md` is the source of truth for everything you've evaluated,
 applied to, or skipped. Runs merge into it automatically, and the FOLLOW-UPS tab
-reads its cadence from there. Never hand-add rows: drop a TSV in
-`batch/tracker-additions/` and let `tracker/merge-tracker.mjs` merge it. Editing
-an existing row's status or note is fine. `tracker/tracker.mjs` keeps an optional
-SQLite index (Node ≥ 22.5) that is safe to delete; it regenerates on the next sync.
+reads its cadence from there. Runs merge into it automatically. Editing an existing row's status or note is
+fine.
 
 ```bash
-node tracker/verify-pipeline.mjs    # health check — reports, links, statuses
+./bin/snipe doctor          # setup, state and tracker integrity
+./bin/snipe tracker fix     # canonical statuses, one row per opening, working links
 ```
 
 ## Tests
 
 ```bash
-node test-all.mjs      # full suite, must stay green
-npm run typecheck      # tsc over the JSDoc types, also in CI
-npm run coverage       # same suite under c8 → coverage/lcov.info
+go test ./...          # must stay green; this is what CI runs
 ```
+
+The tests needing Ollama, `pdflatex` or a real `cv.md` skip themselves, which on
+a runner is always.
+
+Beyond them, `cmd/gate` diffs this implementation against the Node original over
+a corpus of real postings. That is what proved the port, and it still runs: the
+oracle it compares against is the one part of the Node code that was kept.
+
+```bash
+npm install            # js-yaml, nothing else
+npm run gate:fit       # 351 of 351 identical
+npm run gate:salary    # 351 of 351
+npm run gate:cleanjd   # 351 of 351
+npm run gate:atoms     # 68 of 68
+```
+
+They are not in CI because they need the cached JD corpus and a real `cv.md`,
+both user data that is never committed. A gate agreeing with Node is not the
+same as being right, so `go run ./cmd/gate goldset` asks a human instead.
 
 Coverage counts every `.mjs` file, including the ones the suite never loads, so
 no exclusion flatters the number. None of it needs a GPU, a terminal or the
@@ -271,10 +299,12 @@ layer — scripts, modes, templates — is tracked:
 - **What the pipeline produced** — `data/`, `reports/`, `output/`,
   `interview-prep/`, and the working artifacts that are easy to overlook:
   `batch/jds/` (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
-  `batch/errors/`, `batch/logs/`, `batch/local-state.tsv`
+  `batch/errors/`, `batch/logs/`, and the run state under `batch/state/`
 - **Derived copies of your CV**, personal for the same reason `cv.md` is:
-  `batch/cv-bank.json` holds the source text of every bullet, while
-  `batch/cv-index.json` and `batch/cv-spike.json` hold its embeddings
+  `batch/state/cv-bank.json` holds the source text of every bullet, while
+  `batch/cache/cv-index.json` and `batch/cache/cv-spike.json` hold its
+  embeddings. The split is by what you lose if it is gone, which is what makes
+  `rm -rf batch/cache` safe to type and `batch/state/` not
 
 Outbound traffic is limited to the job boards and APIs you configure yourself.
 Every model call goes to Ollama on localhost.
@@ -285,8 +315,12 @@ MIT — see [`LICENSE`](LICENSE).
 
 ---
 
-Deeper reading: [`CLAUDE.md`](CLAUDE.md) for the data contract ·
-[`batch/CLAUDE.md`](batch/CLAUDE.md) for the pipeline and its benchmark rules ·
-[`docs/README.md`](docs/README.md) for the measurement ledgers ·
+Deeper reading: [`batch/CLAUDE.md`](batch/CLAUDE.md) for the measured constants
+and why each is that number · [`docs/README.md`](docs/README.md) for the measurement ledgers ·
 [`docs/SETUP.md`](docs/SETUP.md) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) ·
-[`docs/CUSTOMIZATION.md`](docs/CUSTOMIZATION.md) · [`docs/SCRIPTS.md`](docs/SCRIPTS.md)
+[`docs/CUSTOMIZATION.md`](docs/CUSTOMIZATION.md)
+
+The ledgers under `docs/` are historical records of what was measured when.
+They name Node files that no longer exist here, which is correct: that is the
+code the measurements were taken against. `oracle/node-complete` is the tag that
+still has them.

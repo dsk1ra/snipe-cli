@@ -1,0 +1,11 @@
+{"summary":"x",
+ "experience":[{"company":"Edinburgh Napier University","bullets":["Taught ~800 undergraduates across 12 labs","Found 8 breaking errors in lab material"]},
+               {"company":"UBWIS","bullets":["Shipped £3,500 of billing changes","Handled 50,000 requests/day at sub-500ms"]}],
+ "projects":[{"name":"Snipe - Fully Local LLM Job-Application Pipeline","description":"","bullets":["Fitted a 3-stage pipeline onto a 6 GB GPU","Retired 2 metrics that measured the wrong thing","Cut wall-clock by 40% with staged checkpoints"]},
+             {"name":"Zero Trust Dashboard","description":"Led a team of 6 for MongoDB; B2B analytics with 2B events/mo."},
+             {"name":"nonexistent project that matches nothing at all"}],
+ "skills":[{"category":"Languages","items":"Go, Rust, R, Java, C/C++, C#"},
+           {"category":"Security","items":"OAuth 2.0, Applied Cryptography (AES-256-GCM, X25519), Genesys"},
+           {"category":"Invented Category","items":"Whatever"},
+           {"category":"Databases","items":""}],
+ "education_modules":["Honours Project","Secure Software Development"]}

@@ -23,7 +23,7 @@ Worth knowing before you decide whether something counts as a vulnerability.
 
 **Model calls stay on the machine.** Every prompt goes to a local Ollama over localhost. Your CV, your reports and your applications are never sent anywhere, and this is a core principle of the project.
 
-**The traffic that does leave** belongs to portal scans: the Apify API when a provider is configured for it, and a Playwright browser that opens posting URLs to check they're still live, which start from `scan.mjs`.
+**The traffic that does leave** belongs to portal scans: the job boards and ATS APIs you configure, and the Apify API when a provider is set up for it. All of it starts from `snipe scan`. Nothing opens a browser, and a posting URL is stored for tracking and never fetched.
 
 **Secrets live in `.env`** (`APIFY_API_KEY`), or as `api_key:` on an entry in `portals.yml`. Both are gitignored, as is the whole personal layer - `cv.md`, `config/profile.*`, `data/`, `reports/`, `output/`, `interview-prep/`. If you fork snipe, read `git status` before your first push.
 
