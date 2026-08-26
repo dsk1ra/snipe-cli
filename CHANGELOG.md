@@ -4,7 +4,34 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- The three model gates all ran the oracle from paths that no longer resolve.
+  `gate-phase1.sh` and `gate-p3.sh` invoked `batch/ollama-scorer.mjs` and
+  `batch/local-pdf-offer.mjs`, both cut from the 0.6.0 keep-list by mistake;
+  `gate-phase2.sh` copied `tracker/*.mjs`, which went with the Node tooling, and
+  died at the copy under `set -e`. Only the four no-model gates were run when
+  0.6.0 landed, which is why none of this showed.
+- The restored oracle scripts read their prompts from `batch/`, where 0.6.0's
+  deduplication removed them. They read `prompts/` now, the same file
+  `internal/config.Prompt` reads.
+- Four gate scripts defaulted their oracle root to `$HOME/projects/snipe`, which
+  resolved only because this checkout sits at that path, and used it unresolved,
+  so a relative argument produced a self-referential `node_modules` symlink.
+- `gate-phase1.sh` ran the oracle in place, against the rule that a gate must
+  not. `ollama-scorer.mjs` writes the JD it scored into its own `batch/jds/`.
+  It runs from a fixture now, and `gate-p3.sh` pins `SNIPE_ADDITIONS` to scratch
+  so a tracker row cannot depend on an argument.
+- `TestLadderProducesAOnePagePDF`, the only check that the emitted `.tex`
+  compiles, looked for one hardcoded past application and skipped itself
+  everywhere else.
+- The demo fixture wrote a real person's name into a PDF filename while seeding
+  a profile that calls the candidate "A. Candidate".
+
+### Removed
+
+- `scripts/import-data.sh`. It copied the user layer out of the Node checkout,
+  and its own guard refuses when source and destination are the same tree.
 
 ## [0.6.0] - 2026-08-26
 
