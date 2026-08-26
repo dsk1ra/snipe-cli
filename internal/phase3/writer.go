@@ -12,8 +12,8 @@ import (
 // The deterministic writer: the tailored content is lifted verbatim out of
 // cv.md, with no generation call anywhere in Phase 3.
 //
-// cv-writers.mjs defaults to `--writer verbatim` and PORT-PLAN.md §2 cuts the 7B
-// tailor arm, which "survives only as a benchmark control". So this is the whole
+// cv-writers.mjs defaults to `--writer verbatim` and the 7B tailor arm survives
+// only as a benchmark control, so it was never ported. This is the whole
 // writer: grounded by construction, because every string it emits came out of
 // the CV. The fabrication guards downstream exist to catch what a model invents
 // and have nothing to do here.

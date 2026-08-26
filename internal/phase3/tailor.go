@@ -28,8 +28,7 @@ import (
 //
 // It replaces batch/local-pdf-offer.mjs on the shipped path only — the
 // `--writer verbatim` one, with no model generation call. The 7B tailor arm
-// survives in the old repo as a benchmark control (PORT-PLAN.md §2) and is not
-// ported.
+// survives in the old repo as a benchmark control and is not ported.
 type Tailor struct {
 	L     paths.Layout
 	Cfg   *config.Config
