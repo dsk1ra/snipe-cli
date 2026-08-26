@@ -11,7 +11,9 @@
 #   scripts/gate-phase2.sh <node-repo> <id> [id...]
 set -euo pipefail
 
-NODE_REPO="${1:?usage: gate-phase2.sh <node-repo> <id> [id...]}"; shift
+# Absolute, so a relative argument cannot mean one directory to cp and another
+# to a symlink target. The JS harnesses resolve theirs for the same reason.
+NODE_REPO="$(cd "${1:?usage: gate-phase2.sh <oracle-repo> <id> [id...]}" && pwd)"; shift
 IDS=("$@")
 [ ${#IDS[@]} -gt 0 ] || { echo "give at least one offer id"; exit 2; }
 
@@ -26,8 +28,7 @@ mkdir -p "$WORK/js/batch/jds" "$WORK/js/batch/scores" "$WORK/js/batch/evals" \
 
 # The Node code, sandboxed: batch/ and the modules it imports, nothing else.
 cp "$NODE_REPO"/batch/*.mjs "$WORK/js/batch/"
-cp "$NODE_REPO"/batch/*-prompt*.md "$WORK/js/batch/"
-mkdir -p "$WORK/js/tracker" && cp "$NODE_REPO"/tracker/*.mjs "$WORK/js/tracker/"
+mkdir -p "$WORK/js/prompts" && cp "$NODE_REPO"/prompts/*.md "$WORK/js/prompts/"
 ln -s "$NODE_REPO/node_modules" "$WORK/js/node_modules"
 
 # SNIPE_DUMP writes each /api/chat body to a file per stage, on both sides. When

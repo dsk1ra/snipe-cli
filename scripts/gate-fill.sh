@@ -5,9 +5,11 @@
 # own repo and writes only to --output, so it is safe to run in place — the
 # output goes to a scratch dir, never into the offer folder it came from.
 set -uo pipefail
-REPO="${1:-$HOME/projects/snipe}"
-WORK="${WORK:-$(mktemp -d)}"
 GO="${GO:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Absolute, so a relative argument cannot mean one directory to cp and another
+# to a symlink target. The JS harnesses resolve theirs for the same reason.
+REPO="$(cd "${1:-$GO}" && pwd)"
+WORK="${WORK:-$(mktemp -d)}"
 
 # Ladder steps, as local-pdf-offer.mjs drives them: skills, bullets, projBullets.
 STEPS=("0 4 4" "0 3 2" "5 3 2" "4 2 1")

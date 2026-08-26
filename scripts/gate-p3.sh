@@ -24,8 +24,10 @@
 # rebuilt by the first offer of the run and read by the rest, so the first
 # comparison of a cold run is made against a different mean than the other 31.
 set -uo pipefail
-REPO="${1:-$HOME/projects/snipe}"
 GO="$(cd "$(dirname "$0")/.." && pwd)"
+# Absolute, so a relative argument cannot mean one directory to cp and another
+# to a symlink target. The JS harnesses resolve theirs for the same reason.
+REPO="$(cd "${1:-$GO}" && pwd)"
 WORK="${WORK:-$(mktemp -d)}"
 CV="$WORK/cv-headings.md"
 mkdir -p "$WORK"
@@ -77,7 +79,11 @@ for ev in "$GO"/batch/evals/*.json; do
   # when the budget became 22 (the same 58% share of a smaller page) and the
   # caller's env default was never updated with it. Both sides are pinned to 13
   # so the gate compares implementations rather than that stale default.
-  if ! (cd "$REPO" && SNIPE_PROJ_MAX_LINES=13 node batch/local-pdf-offer.mjs \
+  # SNIPE_ADDITIONS pins the tracker write to scratch. It only fires below
+  # threshold, which --threshold 0 rules out, but the oracle runs in this
+  # checkout and a real tracker row must not depend on an argument.
+  if ! (cd "$REPO" && SNIPE_PROJ_MAX_LINES=13 SNIPE_ADDITIONS="$WORK/additions" \
+        node batch/local-pdf-offer.mjs \
         --id "$id" --url "x" --report-path "$report" --report-num "$num" \
         --jd-file "$jd" --eval-score "$score" --company "gate" --role "gate" \
         --date 2026-01-01 --threshold 0 --cv-file "$CV" --bench-dir "$WORK/js" \
