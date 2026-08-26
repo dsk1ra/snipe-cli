@@ -1,7 +1,7 @@
 # TUI interaction detail
 
 Behaviour of the TUI's non-obvious rows and keys. The entry-point map and the
-data contract are in the root `CLAUDE.md`.
+data contract are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 Written against the Node TUI and carried over with the port: the row shapes,
 the action order and the gate semantics are unchanged in `internal/tui`. Where

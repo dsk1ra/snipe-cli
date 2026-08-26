@@ -1,6 +1,6 @@
 # Templates
 
-System-layer template files used by the binary and the modes. Put user customizations in the user-layer files instead (see the data contract in CLAUDE.md).
+System-layer template files used by the binary and the modes. Put user customizations in the user-layer files instead (see the data contract in docs/ARCHITECTURE.md).
 
 ## Files
 

@@ -85,6 +85,8 @@ nano.*.save
 # CLI-specific local config
 .claude/settings.local.json
 .claude/memory/
+# Agent briefing for this checkout. Local, not part of the project.
+/CLAUDE.md
 
 # Playwright MCP server run artifacts (ephemeral, machine-local — never commit)
 .playwright-mcp/
