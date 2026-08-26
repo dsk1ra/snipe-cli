@@ -328,8 +328,13 @@ function shingles(s, k = 8) {
  * never opened.
  */
 export function activePromptPath() {
-  const local = resolve(__dirname, 'local-tailor-prompt.local.md');
-  return existsSync(local) ? local : resolve(__dirname, 'local-tailor-prompt.md');
+  // prompts/ is the one copy of these now. This file used to read a duplicate
+  // under batch/, which meant an edit to the shipped prompt reached the Go side
+  // and not the harness, and a gate would have compared against a stale prompt
+  // while reporting green.
+  const dir = resolve(__dirname, '..', 'prompts');
+  const local = resolve(dir, 'local-tailor-prompt.local.md');
+  return existsSync(local) ? local : resolve(dir, 'local-tailor-prompt.md');
 }
 
 /**
