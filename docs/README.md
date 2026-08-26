@@ -51,4 +51,3 @@ trusting a number in one.
 
 | file | holds |
 |---|---|
-| `local-parser-cookbook.md` | writing a local parser so `scan.mjs` can read a career page offline |

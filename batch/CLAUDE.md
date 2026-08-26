@@ -1,20 +1,29 @@
 # batch/ — the 3-phase pipeline and its benchmarks
 
+> **On the file names below.** This file is the authority for every measured
+> constant, and the passages explaining why a number is that number name the
+> Node modules the measurements were taken against. Those modules were retired
+> in v0.5.0 and the logic lives in `internal/` now. The names are left as
+> written: a measurement is a record of what was run, and renaming the code it
+> ran on would make the record say something that never happened. The mapping is
+> in `docs/ARCHITECTURE.md`, and `oracle/node-complete` is the tag that still
+> has the files.
+
 Rules for everything under `batch/`. The repo-wide data contract, conventions
 and ethics rules are in the root `CLAUDE.md` and still apply.
 
-## The 3-phase pipeline (`batch/local-runner.sh`)
+## The 3-phase pipeline (`internal/run`)
 
 | Phase | Script | Model | Output |
 |-------|--------|-------|--------|
-| 1 pre-score | `ollama-scorer.mjs` | `snipe-screen` (Qwen3 4B q8_0) | `batch/scores/<id>.json` |
-| 2 evaluate | `staged-evaluator.mjs` | `snipe-eval` (Qwen3 30B-A3B Q4_K_M) | `reports/<NNN>-<slug>-<date>.md`, `batch/evals/<id>.json` |
-| 3 tailor CV | `local-pdf-offer.mjs` | `snipe-cv` (Qwen2.5 7B Coder Q5_K_M) | `output/<date>_<slug>_<NNN>/` |
+| 1 pre-score | `internal/phase1` | `snipe-screen` (Qwen3 4B q8_0) | `batch/scores/<id>.json` |
+| 2 evaluate | `internal/phase2` | `snipe-eval` (Qwen3 30B-A3B Q4_K_M) | `reports/<NNN>-<slug>-<date>.md`, `batch/evals/<id>.json` |
+| 3 tailor CV | `internal/phase3` | `snipe-cv` (Qwen2.5 7B Coder Q5_K_M) | `output/<date>_<slug>_<NNN>/` |
 
 `snipe-embed` (Qwen3 Embedding 0.6B q8_0) backs Phase 2's evidence matching and
 Phase 3's bullet selection — see `batch/embeddings.mjs`.
 
-Then `tracker/merge-tracker.mjs` → `data/applications.md`, and `tracker/verify-pipeline.mjs`.
+Then the tracker merge → `data/applications.md`, and the integrity pass (`internal/tracker`).
 
 **Phase 1** fetches the JD (provider API or HTML), caches it to `batch/jds/<id>.txt`,
 scores schema-constrained. `score = cv_match×0.625 + north_star×0.375`.

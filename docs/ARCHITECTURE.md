@@ -5,16 +5,15 @@
 ```
       ┌────────────────────────┐   ┌─────────────────────────────────┐
       │       snipe TUI        │   │       AI Coding CLI Agent       │
-      │  Go   cmd/snipe        │   │  (reads CLAUDE.md + modes/*.md) │
-      │  Node snipe-tui.mjs    │   └──────────────┬──────────────────┘
-      └───────────┬────────────┘                  │
+      │       cmd/snipe        │   │  (reads CLAUDE.md + modes/*.md) │
+      └───────────┬────────────┘   └──────────────┬──────────────────┘
                   └───────────────┬───────────────┘
                                   │
             ┌──────────────────┼──────────────────────┐
             │                  │                       │
      ┌──────▼──────┐   ┌──────▼──────┐   ┌───────────▼────────┐
      │ Single Eval  │   │ Portal Scan │   │   Batch Process    │
-     │ (auto-pipe)  │   │  (scan.md)  │   │   (local-runner)   │
+     │ (snipe add)  │   │ (snipe scan)│   │    (snipe run)     │
      └──────┬──────┘   └──────┬──────┘   └───────────┬────────┘
             │                  │                       │
             │           ┌──────▼──────┐          ┌────▼─────┐
@@ -36,36 +35,42 @@
                     └──────────────────────┘
 ```
 
-## Implementations
+## What is here
 
-Two live in this repo. The Node one shipped through v0.4.0; the Go one landed
-complete in v0.5.0 and neither has been removed.
+One Go binary. `internal/` is a package per concern, `cmd/snipe` is the binary,
+`cmd/gate` the oracle harness.
 
-| concern | Node | Go |
-|---|---|---|
-| entry point | `snipe-tui.mjs`, `./snipe` | `cmd/snipe`, built to `bin/snipe` |
-| orchestration | `batch/local-runner.sh` | `internal/run` |
-| phases | `batch/ollama-scorer.mjs`, `batch/staged-evaluator.mjs`, `batch/local-pdf-offer.mjs` | `internal/phase1`, `internal/phase2`, `internal/phase3` |
-| CV selection | `batch/cv-select.mjs` | `internal/cvselect` |
-| render | `generate-pdf.mjs` | `internal/latex`, `internal/fill`, `internal/pdf` |
-| providers | `providers/*.mjs` | `internal/providers`, `internal/scan` |
-| tracker | `tracker/*.mjs` | `internal/tracker` |
+| concern | package |
+|---|---|
+| orchestration | `internal/run` |
+| phases | `internal/phase1`, `internal/phase2`, `internal/phase3` |
+| CV selection | `internal/cvselect` |
+| render | `internal/latex`, `internal/fill`, `internal/pdf` |
+| providers | `internal/providers`, `internal/scan` |
+| tracker | `internal/tracker` |
+| TUI | `internal/tui` |
 
-The Go side keeps every path in `internal/paths` and nothing else joins one. It
-splits the data root by what you lose if it is gone: `batch/state/` is the
-record, `batch/cache/` is derived and safe to delete, and the per-offer
-directories are their own thing.
+Every path lives in `internal/paths` and nothing else joins one. The data root
+splits by what you lose if it is gone: `batch/state/` is the record,
+`batch/cache/` is derived and safe to delete, and the per-offer directories are
+their own thing.
 
-`cmd/gate` is the oracle harness. It diffs Go output against Node output over the
-real cached corpus, one subcommand per seam, which is what proves the port rather
-than the Go unit tests. `gate goldset` is the exception: it asks whether
-retrieval agrees with a human, because both implementations can share a defect
-and agree perfectly while doing the wrong thing.
+Two pieces of the Node implementation this replaced are still in the tree, and
+neither is on the path of a run:
+
+- `batch/*.mjs`, the oracle `cmd/gate` diffs against. It is what proved the port
+  and what would catch a regression in the ported logic.
+- `batch/bench-tools/`, the sweeps that measured the tuned constants.
+
+Everything else is at the `oracle/node-complete` tag.
+
+`cmd/gate` agreeing with the oracle is not the same as being right: both can
+share a defect and agree perfectly. `gate goldset` asks a human instead.
 
 ## Evaluation Flow (Single Offer)
 
 1. **Input**: User pastes JD text or URL
-2. **Extract**: Playwright/WebFetch extracts JD from URL
+2. **Extract**: the JD text is supplied by the caller. `snipe add -link` keeps the URL for tracking and never fetches it
 3. **Classify**: Detect archetype, from the list you define in `config/profile.yml`
 4. **Evaluate**: 6 blocks (A-F):
    - A: Role summary
@@ -79,7 +84,7 @@ and agree perfectly while doing the wrong thing.
    `cv_match × 0.625 + north_star × 0.375` when the posting states no salary.
    Below 3.0 the verdict is Skip; an Apply under 3.5 becomes Consider
 6. **Report**: Save as `reports/{num}-{company}-{date}.md`
-7. **PDF**: Generate ATS-optimised CV. Node renders through `generate-pdf.mjs`, Go through `internal/pdf`; both compile the same `templates/cv-template.tex`
+7. **PDF**: Generate ATS-optimised CV through `internal/pdf`, compiling `templates/cv-template.tex`
 8. **Track**: Write TSV to `batch/tracker-additions/`, auto-merged
 
 ## Batch Processing
@@ -87,11 +92,11 @@ and agree perfectly while doing the wrong thing.
 The batch system processes multiple offers in a fully local 3-phase pipeline (Ollama only — no cloud LLM calls):
 
 ```
-batch-input.tsv    →  local-runner.sh  →  Phase 1 score → Phase 2 eval → Phase 3 CV/PDF
-(id, url, source)     (orchestrator)       (all local Ollama workers)
+batch-input.tsv    →  internal/run  →  Phase 1 score → Phase 2 eval → Phase 3 CV/PDF
+(id, url, source)     (orchestrator)    (all local Ollama workers)
                            │
-              local-state.tsv  (per-phase progress)
-              batch/ under Node, batch/state/ under Go
+              batch/state/local-state.tsv
+                 (per-phase progress)
 ```
 
 Workers produce:
@@ -122,11 +127,12 @@ templates/cv-template.tex  → PDF generation template (Jake's Resume, pdflatex)
 
 Scripts maintain data consistency:
 
-| Script | Purpose |
-|--------|---------|
-| `tracker/merge-tracker.mjs` | Merges batch TSV additions into applications.md |
-| `tracker/verify-pipeline.mjs` | Health check: statuses, duplicates, links |
-| `tracker/dedup-tracker.mjs` | Removes duplicate entries by company+role |
-| `tracker/normalize-statuses.mjs` | Maps status aliases to canonical values |
-| `cv-sync-check.mjs` | Validates setup consistency |
+| Command | Purpose |
+|---------|---------|
+| `snipe doctor` | Setup, state and tracker integrity in one pass |
+| `snipe tracker fix` | Canonical statuses, one row per opening, working report links |
+
+Both live in `internal/tracker`. What used to be four scripts and a setup
+checker is two subcommands, because the checks always ran together and a
+half-fixed tracker was never a state anyone wanted.
 

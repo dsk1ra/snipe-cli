@@ -45,8 +45,6 @@ Requires TeX Live (`titlesec`, `enumitem`, `tabularx`, `marvosym`, `fancyhdr`,
 `glyphtounicode`). Colours are deliberate: there are none, because the palette
 was the least ATS-safe thing in the old template.
 
-The cover letter is still HTML (`templates/cover-letter-template.html`) and still
-uses the Space Grotesk / DM Sans pair from `fonts/`.
 
 ## Negotiation Scripts (modes/_shared.md)
 
@@ -78,5 +76,5 @@ Save hooks in `.claude/settings.json` (Claude Code). OpenCode does not support h
 
 The canonical states rarely need changing. If you add new states, update:
 1. `templates/states.yml`
-2. `tracker/normalize-statuses.mjs` (alias mappings)
+2. `internal/tracker` (alias mappings, applied by `snipe tracker fix`)
 3. `modes/_shared.md` (any references)

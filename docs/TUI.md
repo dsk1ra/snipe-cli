@@ -1,7 +1,12 @@
-# snipe-tui.mjs — interaction detail
+# TUI interaction detail
 
 Behaviour of the TUI's non-obvious rows and keys. The entry-point map and the
 data contract are in the root `CLAUDE.md`.
+
+Written against the Node TUI and carried over with the port: the row shapes,
+the action order and the gate semantics are unchanged in `internal/tui`. Where
+this file names a path, the Go layout puts the run-state sidecars under
+`batch/state/`.
 
 
 A failed queue row renders as `✗ Company — Role  see error  retry | debug`
@@ -30,7 +35,7 @@ act on next; `o` and the tracker still reach it:
   input never landed, which is itself the diagnosis. The file, not its folder —
   `batch/jds/` holds every JD ever fetched.
 
-Mapping check: `node snipe-tui.mjs --retry-plan <p1s> <p2s> <p3s> <rnum> <id>`.
+The Go TUI computes the same plan in `internal/tui/actions.go`; `internal/run` covers the resume points it produces.
 
 The footer **message** (right-hand side) is feedback on the last keypress, not a
 log: `setMsg` stamps `S.msgAt` and `poll()` sweeps it after `MSG_TTL_MS` (5 s,
@@ -61,7 +66,7 @@ while it is the focused stop, so no new global hotkeys and `q` still quits:
 - **n** / **Backspace** / **Delete** — dismiss. Nothing on the pipeline changes;
   the row was already finished. The offer retires and the row renders as
   `· Company — Role  P1 2.0  link`. The answer is written to
-  `batch/p1-declined.tsv` (`readMarkMap`/`writeMarkMap`, same id→ISO shape as
+  `batch/state/declined.tsv` (`readMarkMap`/`writeMarkMap`, same id→ISO shape as
   `applied.tsv`/`skipped.tsv`) because the row list is rebuilt from disk every
   second and from scratch on every launch — an in-memory "no" would come back.
   Undo is deleting the line. Deliberately **not** the `x` skip mark: `toggleMark`
