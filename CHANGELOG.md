@@ -6,6 +6,57 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 _Nothing yet._
 
+## [0.6.0] - 2026-08-26
+
+The Node implementation retires. snipe is a Go binary now.
+
+### Added
+
+- An Apify provider in Go. LinkedIn, Indeed and Glassdoor were three enabled
+  entries in `portals.yml` that the Go scanner could not serve, and fixing that
+  took the scan from 16 new postings to 53 on the same config. Built-in field
+  maps for the three actors, per-key `field_map` overrides, and results cached
+  on disk keyed on the actor and its input, because runs are billed.
+- `Options.Method`, `Options.Body` and `Options.Timeout` on the provider
+  transport. All three are zero-valued for a plain GET, so the nine existing
+  providers were untouched.
+- `.env` is read at startup, about twenty lines rather than a dotenv dependency.
+  Nothing on the Go side read it before, so a configured `APIFY_API_KEY` was
+  invisible.
+
+### Changed
+
+- **The Node implementation is gone.** The pipeline, TUI, runner, scanner, all
+  twenty providers, the tracker tooling and the 1363-check test suite. Recover
+  any of it from the `oracle/node-complete` tag.
+- Two pieces stayed, and neither is on the path of a run: the oracle under
+  `batch/` that `cmd/gate` diffs against, and `batch/bench-tools/`, the only way
+  to re-derive a measured constant.
+- The npm tree is one package. `ink`, `react`, `playwright`, `dotenv`, `c8`,
+  `typescript` and `@types/node` all go, and setup no longer downloads a browser.
+- CI runs one job. The Node job took `npm ci`, a Chromium install, `tsc` and `c8`
+  over a suite that no longer exists.
+- One copy of the prompts and Modelfiles. All seven under `batch/` were
+  byte-identical duplicates of `prompts/`, and two copies meant an edit could
+  reach the binary and not the harness, leaving a gate green against a stale
+  prompt.
+
+### Removed
+
+- Cover letters. The feature was never finished, and removing it took the last
+  consumer of Playwright and of the HTML render path with it.
+- Liveness verification, which `internal/scan` had already documented as a
+  deliberate omission.
+- `docs/SCRIPTS.md` and `docs/local-parser-cookbook.md`, which described only
+  deleted scripts.
+
+### Security
+
+- The Apify token is sent as a bearer header instead of a URL query parameter.
+  As a query parameter it was printed in full by every transport error, which
+  put it in terminal scrollback and any log capturing scan warnings. A test
+  asserts it reaches neither the request URL nor any error text.
+
 ## [0.5.0] - 2026-08-26
 
 The Go port lands. Both implementations now live in this repo, and the Go one

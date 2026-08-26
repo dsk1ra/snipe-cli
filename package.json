@@ -1,6 +1,6 @@
 {
   "name": "snipe-cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Node oracle and benchmark harness for snipe-cli. The tool itself is Go; see cmd/snipe",
   "private": true,
   "engines": {
