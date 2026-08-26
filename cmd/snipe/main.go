@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
 )
@@ -38,6 +39,8 @@ Run a subcommand with -h for its flags.
 `
 
 func main() {
+	// Before anything dispatches, so os.Getenv is the one way a key is read.
+	config.LoadDotEnv(filepath.Join(layout().Home, ".env"))
 	if err := dispatch(); err != nil {
 		fmt.Fprintln(os.Stderr, "snipe: "+err.Error())
 		os.Exit(1)
