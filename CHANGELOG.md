@@ -47,6 +47,13 @@ second implementation rather than swapping one for the other.
 - A YAML scalar of any type now decodes as text in the Go config loader. An
   unquoted phone number is a YAML integer, and the failure would have taken the
   archetype list and the score threshold down with it.
+- The README and `docs/ARCHITECTURE.md` carried claims that no longer matched the
+  code. The architecture diagram still rendered the PDF from HTML through
+  Puppeteer, which stopped being true in 0.4.0; scoring was documented as ten
+  weighted dimensions when it is three; the PDF naming convention described a
+  filename nothing has ever written; and archetypes were described as a fixed set
+  of six rather than whatever `config/profile.yml` defines. The README claimed a
+  4.0 recommendation threshold that exists nowhere in the code.
 
 ### Security
 
