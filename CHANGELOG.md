@@ -49,6 +49,15 @@ The Node implementation retires. snipe is a Go binary now.
   deliberate omission.
 - `docs/SCRIPTS.md` and `docs/local-parser-cookbook.md`, which described only
   deleted scripts.
+- `PORT-PLAN.md`, the Node to Go transition plan, along with its history. The
+  port is finished, so the plan described a transition that no longer has two
+  sides. Three Phase 3 comments cited its section 2 for why the 7B tailor arm
+  was not ported; each now states the reason instead of pointing at a file.
+- `CLAUDE.md` is untracked and gitignored. It briefs a coding agent working in
+  this checkout rather than describing the project. The data contract and the
+  entry-point map were the parts other files cited, and neither is agent
+  specific, so both moved to `docs/ARCHITECTURE.md`. `batch/CLAUDE.md` stays
+  tracked: it is the authority for every measured constant.
 
 ### Security
 
