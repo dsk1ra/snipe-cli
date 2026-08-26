@@ -2,26 +2,29 @@
 
 Everything runs locally against Ollama. No cloud LLM calls in the pipeline.
 
-## Two implementations live here
+## What is Go and what is not
 
-The Node implementation is the one that shipped through v0.4.0. The Go one is
-replacing it component by component, and both are in this tree until the swap
-finishes. `PORT-PLAN.md` is the running record of what has moved.
+snipe is a Go binary. `internal/` is one package per concern, `cmd/snipe` is the
+binary and `cmd/gate` the oracle harness. Build with
+`go build -o bin/snipe ./cmd/snipe`.
 
-| | Node | Go |
+The Node implementation it replaced is gone as of v0.5.0, except two things that
+never had a Go equivalent and are not on the path of a run:
+
+| what | where | why it stayed |
 |---|---|---|
-| entry point | `./snipe`, `snipe-tui.mjs` | `bin/snipe` (`go build -o bin/snipe ./cmd/snipe`) |
-| pipeline | `batch/*.mjs` | `internal/phase{1,2,3}` |
-| providers | `providers/*.mjs` | `internal/providers` |
-| tracker | `tracker/*.mjs` | `internal/tracker` |
-| tests | `node test-all.mjs` | `go test ./...` |
+| the gate oracle | `batch/*.mjs` (14 files) | `cmd/gate` diffs Go against it. Delete it and nothing can check the port again |
+| the benchmark harness | `batch/bench-tools/` | the only way to re-derive a measured constant |
 
-The Go binary builds to `bin/` rather than `./snipe`, because the Node script of
-that name is still tracked at the root. It claims the plain name when that
-script retires.
+Everything else is recoverable from the `oracle/node-complete` tag:
 
-Both read the same data root, so the tree under `batch/` and `data/` is shared
-and either implementation can run against it.
+```bash
+git worktree add /tmp/node-oracle oracle/node-complete
+```
+
+Deliberately not ported and now simply gone: cover letters, liveness
+verification, and the Playwright dependency both needed. The CV renders from
+LaTeX, so no HTML path survives.
 
 ## The one rule that matters
 
@@ -93,14 +96,15 @@ would. Retrieval is cosine against the requirement text.
 `portals.yml`, `data/*`, `reports/*`, `output/*`, `interview-prep/*`
 
 **System layer — safe to edit as code:**
-`modes/_shared.md` and other modes, `*.mjs`, `batch/*`, `templates/*`, this file.
+`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`, `scripts/*`, and
+the Node oracle under `batch/` that the gates compare against, plus this file.
 
 **Rule:** customization (archetypes, narrative, comp targets, location policy,
 scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
 `modes/_shared.md`.
 
-`config/profile.md` is a hard dependency — `batch/ollama-scorer.mjs` and
-`batch/staged-evaluator.mjs` read it at runtime.
+`config/profile.md` is a hard dependency: `internal/phase1` and
+`internal/phase2` read it at runtime.
 
 `cv.pinned_projects` in `config/profile.yml` forces a project past the
 `maxProjects` cut whatever the posting scores it, matched case-insensitively as a
@@ -108,23 +112,22 @@ substring of the `### ` title. It is the escape hatch for an entry whose value i
 not its subject — an Honours dissertation loses the cut on any posting with no
 use for its topic, and is the first thing a reader of a graduate CV looks for.
 Each pin spends one of the three slots, so it is a project the ranker no longer
-chooses. **It also moves the benchmark**: the bench runs `local-pdf-offer.mjs`,
-which reads this file, so a pin changes selection for every arm. Note it when
+chooses. **It also moves the benchmark**: the sweeps under `batch/bench-tools/`
+read this file, so a pin changes selection for every arm. Note it when
 comparing against a run made before the pin existed.
 
 ## Entry points
 
 ```
-snipe-tui.mjs (ink/react)
-  ├─ snipe ──────── batch/local-runner.sh   the 3-phase pipeline
-  ├─ scan.mjs ────────── providers/*.mjs         portal scan
-  ├─ batch/import-pipeline.mjs                   data/pipeline.md → batch input
-  └─ tracker/followup-cadence.mjs --json         follow-up due list
+bin/snipe                    the TUI (default)
+  ├─ snipe run               the three-phase pipeline
+  ├─ snipe scan              portals.yml → internal/providers → the queue
+  ├─ snipe add               one pasted JD, queued or run
+  └─ snipe tracker fix       canonical statuses, one row per opening
 ```
 
-`snipe --jd "<text>"` adds a pasted JD and runs it. A run already holding
-`batch/local-runner.pid` causes queueing instead; `snipe --drain` processes
-the queue.
+`snipe add -jd "<text>"` adds a pasted JD and runs it. A run already holding
+`batch/state/runner.pid` queues instead; `snipe run` drains the queue.
 
 Deeper TUI behaviour — failed-row retry/debug semantics, the footer message and
 hint rules, P1-gated rows and `proceed?` — is in `docs/TUI.md`.
@@ -158,28 +161,30 @@ its own area; this file holds only what applies everywhere.
 
 | file | covers |
 |---|---|
-| `batch/CLAUDE.md` | the 3-phase pipeline, models, hardware, benchmarking and its rules |
-| `test/CLAUDE.md` | the test seams — fake Ollama, TUI driver, the `SNIPE_*` env vars |
-| `tracker/CLAUDE.md` | tracker rules and the TSV contract |
+| `batch/CLAUDE.md` | the measured constants, the models, the hardware, and the benchmark rules |
 | `docs/README.md` | index of the measurement ledgers — which one answers which question |
-| `docs/TUI.md` | `snipe-tui.mjs` interaction detail |
+| `docs/ARCHITECTURE.md` | how the pieces fit together |
+
+`test/CLAUDE.md` and `tracker/CLAUDE.md` went with the code they documented.
+The Go equivalents live in package doc comments, which is where a Go reader
+looks first.
 
 ## Tests
 
-`go test ./...` covers the Go side and must stay green. The Ollama,
-pdflatex and cv.md tests skip themselves.
+`go test ./...` must stay green. The tests needing Ollama, pdflatex or a real
+`cv.md` skip themselves, which is what lets CI run the suite with none of the
+three.
 
-`node test-all.mjs` — 1335 checks, must stay green. It's a launcher over
-`test/*.test.mjs` (shared `test/harness.mjs`); run one suite in isolation with
-`node test/<name>.test.mjs`.
+The gates are the other half and they are not in CI, because they need the
+cached JD corpus and a real `cv.md`. Run them locally:
 
-`npm run typecheck` — `tsc --noEmit` over the JSDoc types, also green, also in CI.
-`npm run coverage` — the same suite under c8 (~90% lines, ~77% branches); CI uploads
-`coverage/lcov.info` to Codecov. `all: true` in `.c8rc.json` counts never-loaded
-files, so the number stays honest rather than flattered by exclusions.
-`checkJs` is off in `tsconfig.json`: a file opts in by starting with `// @ts-check`
-(24 do today), so adding a new one is a per-file decision rather than a repo-wide
-gate. `providers/_types.js` is the shared type catalog.
+```bash
+npm install          # js-yaml, nothing else
+npm run gate:fit     # 351/351   npm run gate:cleanjd  # 351/351
+npm run gate:salary  # 351/351   npm run gate:atoms    # 68/68
+```
+
+Every `SNIPE_*` env seam is load-bearing for the suite. Keep them.
 
 ## Conventions
 
