@@ -14,10 +14,16 @@ local AI job search · driven from your terminal
 [![codecov](https://codecov.io/gh/dsk1ra/snipe-cli/graph/badge.svg)](https://codecov.io/gh/dsk1ra/snipe-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen)
+![Go](https://img.shields.io/badge/go-%E2%89%A51.25-00ADD8)
 
 Paste a job description. snipe scores it against your CV, writes a full fit
 report, and tailors a one-page PDF for the roles worth your time. You drive all
 of it from the **snipe TUI**, a dashboard that lives in your terminal.
+
+Two implementations live here. The Node one shipped through v0.4.0 and still
+runs the pipeline today. The Go one is a component-by-component replacement,
+complete as of v0.5.0 and verified against the Node original over the cached
+corpus. Nothing is removed yet, so either can drive a run.
 
 Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
 applications and your reports never leave the machine.
@@ -37,7 +43,7 @@ data throughout.</sub>
 ```
   paste JD ─┐
   /scan  ───┤        Phase 1            Phase 2              Phase 3
-  scan.mjs ─┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
+  scan   ───┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
      queue ────►│  pre-score   │─►│   evaluate   │──►│   tailor CV +    │──► output/
                 │ snipe-screen │  │  snipe-eval  │   │   snipe-cv → PDF │    *.pdf
                 └──────────────┘  └──────────────┘   └──────────────────┘
@@ -52,8 +58,9 @@ data throughout.</sub>
 | 3 · tailor CV | `snipe-cv` (Qwen2.5 7B Coder) | `output/<date>_<slug>_<NNN>/` (PDF) |
 
 `snipe-embed` (Qwen3 Embedding 0.6B) does the evidence matching in Phase 2 and
-the bullet selection in Phase 3. Scores run 0–5; below 4.0 snipe tells you not to
-bother applying.
+the bullet selection in Phase 3. Scores run 0–5. Below 3.0 the verdict is Skip, and an Apply
+under 3.5 is downgraded to Consider, so a marginal posting never reads as a
+recommendation.
 
 Phase 3 writes no bullets of its own. They reach the page worded as `cv.md` words
 them, ranked by embedding against the posting's requirements and reranked by
@@ -66,7 +73,8 @@ tightens the layout until the PDF fits one page.
 
 ## Setup
 
-Node ≥ 18 (≥ 22.5 for the optional SQLite tracker index) and a local
+Node ≥ 18 (≥ 22.5 for the optional SQLite tracker index) for the Node
+implementation, Go ≥ 1.25 for the Go one, and a local
 [Ollama](https://ollama.com). The CV renders from LaTeX, so it needs `pdflatex`
 on PATH — on Debian/Ubuntu `texlive-latex-recommended`, `texlive-latex-extra`
 and `texlive-fonts-recommended`; on Fedora `texlive-scheme-medium`. Portal
@@ -104,19 +112,32 @@ ollama create snipe-embed  -f batch/Modelfile.snipe-embed
 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 ```
 
+The Go tree carries the same four Modelfiles under `prompts/`, byte for byte, so
+`prompts/Modelfile.snipe-screen` builds an identical model. Either path works.
+
+```bash
+```
+
 ---
 
 ## Using the TUI
 
 ```bash
-node snipe-tui.mjs        # or: npm run snipe-tui
+go build -o bin/snipe ./cmd/snipe && ./bin/snipe   # Go
+node snipe-tui.mjs                                 # Node, or: npm run snipe-tui
 ```
+
+The screenshots below are the Go TUI. The two are the same dashboard and the
+same layout, and the keys match except where noted: Go adds `s` to stop after
+the current stage, `p` to pause, `v` to read a report in place and `f` to find,
+and it toggles the activity grid with `tab` where Node uses `j`.
 
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
 output. So you can start a run, watch it move, and keep adding jobs while it
 works. It never edits pipeline state itself. The only files it writes are its own
-sidecars: `batch/applied.tsv`, `batch/skipped.tsv`, `batch/p1-declined.tsv` and
-`batch/errors/<id>.txt`.
+sidecars: `applied.tsv`, `skipped.tsv` and the declined-gate list, plus
+`batch/errors/<id>.txt`. Node keeps the three sidecars directly under `batch/`;
+Go keeps them in `batch/state/`.
 
 <table>
 <tr>
@@ -133,7 +154,7 @@ quitting the TUI does not stop it.</td>
 <td><a href="demo/screens/activity-year.png"><img src="demo/screens/activity-year.png" alt="The activity heatmap"></a><br>
 <b>Activity</b> — every scan you have run, one square a day, gold on your
 busiest. <code>y m d</code> zoom from the year to a single day by hour;
-<code>j</code> swaps the grid to applications sent.</td>
+<code>tab</code> swaps the grid to applications sent.</td>
 <td><a href="demo/screens/followups.png"><img src="demo/screens/followups.png" alt="The follow-ups tab"></a><br>
 <b>Follow-ups</b> — who is owed a nudge, worked out from the tracker.
 <code>Enter</code> records one, <code>p</code> advances the status,
@@ -142,7 +163,7 @@ busiest. <code>y m d</code> zoom from the year to a single day by hour;
 </table>
 
 <sub>Click any shot for full size. The whole session end to end, with captions:
-**[snipe-demo.mp4](demo/snipe-demo.mp4)** (2:47).</sub>
+**[snipe-demo.mp4](demo/snipe-demo.mp4)** (3:48).</sub>
 
 **Adding a job.** Paste into the box (**/** jumps into it from anywhere on the
 tab), then **Enter** walks the mini-form: JD → URL → Add to queue. **→** from the
@@ -224,6 +245,22 @@ bash batch/local-runner.sh --only-id 42 --retry-failed      # retry failed job 4
 bash batch/local-runner.sh --only-id 42 --p1-threshold 0    # evaluate it anyway
 ```
 
+The Go binary covers the same ground with subcommands:
+
+```bash
+./bin/snipe                 # the TUI (default)
+./bin/snipe add -jd "<text>"  # add a pasted JD and run it
+./bin/snipe add -f job.txt -link <url>
+./bin/snipe add -queue      # queue without running
+./bin/snipe run             # the three-phase pipeline
+./bin/snipe scan            # fetch the configured boards, queue what is new
+./bin/snipe status          # what is running, and where it is
+./bin/snipe stop            # stop after the current stage
+./bin/snipe pause           # drop the stage in flight; resume reruns it
+./bin/snipe doctor          # setup, state and tracker integrity
+./bin/snipe tracker fix     # canonical statuses, one row per opening
+```
+
 Every flag is in [`batch/README.md`](batch/README.md). `node snipe-tui.mjs --stats`
 prints the current pipeline stats as JSON and exits, no terminal required —
 useful in scripts, or over an SSH connection with no TTY to render into.
@@ -253,10 +290,22 @@ node tracker/verify-pipeline.mjs    # health check — reports, links, statuses
 ## Tests
 
 ```bash
-node test-all.mjs      # full suite, must stay green
+node test-all.mjs      # Node suite, must stay green
 npm run typecheck      # tsc over the JSDoc types, also in CI
 npm run coverage       # same suite under c8 → coverage/lcov.info
+go test ./...          # Go suite, must stay green
 ```
+
+CI runs both as separate jobs, so a Node failure and a Go failure stay legible
+apart. The Go tests needing Ollama, `pdflatex` or a real `cv.md` skip themselves,
+which on a runner is always.
+
+Beyond the unit tests, `cmd/gate` diffs the Go implementation against the Node
+one over the real cached corpus, which is what proves the port rather than just
+the Go code. Four gates need no model and are green as of v0.5.0: `fit` 351 of
+351, `salary` 351 of 351, `cleanjd` 351 of 351, `atoms` 68 of 68. A gate agrees
+with Node, which is not the same as being right, so `gate goldset` asks a human
+instead.
 
 Coverage counts every `.mjs` file, including the ones the suite never loads, so
 no exclusion flatters the number. None of it needs a GPU, a terminal or the
@@ -274,10 +323,13 @@ layer — scripts, modes, templates — is tracked:
 - **What the pipeline produced** — `data/`, `reports/`, `output/`,
   `interview-prep/`, and the working artifacts that are easy to overlook:
   `batch/jds/` (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
-  `batch/errors/`, `batch/logs/`, `batch/local-state.tsv`
+  `batch/errors/`, `batch/logs/`, and the run state (`batch/local-state.tsv`
+  under Node, `batch/state/` under Go)
 - **Derived copies of your CV**, personal for the same reason `cv.md` is:
-  `batch/cv-bank.json` holds the source text of every bullet, while
-  `batch/cv-index.json` and `batch/cv-spike.json` hold its embeddings
+  `cv-bank.json` holds the source text of every bullet, while `cv-index.json`
+  and `cv-spike.json` hold its embeddings. Go splits these by what you lose if
+  they are gone: the bank is state, the embeddings are cache, so
+  `rm -rf batch/cache` is safe to type and `batch/state/` is not
 
 Outbound traffic is limited to the job boards and APIs you configure yourself.
 Every model call goes to Ollama on localhost.
