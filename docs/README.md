@@ -1,7 +1,7 @@
 # docs/ — which file answers which question
 
-The ledgers are append-only and hold the numbers. `CLAUDE.md` and
-`batch/CLAUDE.md` state the conclusions; when you need the evidence behind one —
+The ledgers are append-only and hold the numbers. `batch/CLAUDE.md` states the
+conclusions; when you need the evidence behind one —
 sample size, confidence interval, what was rejected on the way — it is here.
 
 ## Start here

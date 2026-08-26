@@ -79,7 +79,6 @@ second implementation rather than swapping one for the other.
   and the caption tool. Without them the mp4 and gif in the README were binaries
   nobody could reproduce. Everything the generator invents is fake and it reads
   no `cv.md`, no tracker and no model.
-- `PORT-PLAN.md`, the running record of which components have moved.
 
 ### Changed
 

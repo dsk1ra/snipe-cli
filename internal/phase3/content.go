@@ -12,7 +12,7 @@ import (
 
 // VerbatimContent renders the selection as cv.md already words it — the shipped
 // writer, and the whole of it. cv-writers.mjs defaults to `--writer verbatim`
-// and PORT-PLAN.md §2 cuts the 7B tailor arm, so there is no generation call in
+// and the 7B tailor arm was never ported, so there is no generation call in
 // Phase 3 at all.
 //
 // It parses the SELECTED cv rather than re-deriving entries from the full one:

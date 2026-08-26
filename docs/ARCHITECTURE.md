@@ -5,7 +5,7 @@
 ```
       ┌────────────────────────┐   ┌─────────────────────────────────┐
       │       snipe TUI        │   │       AI Coding CLI Agent       │
-      │       cmd/snipe        │   │  (reads CLAUDE.md + modes/*.md) │
+      │       cmd/snipe        │   │      (reads modes/*.md)         │
       └───────────┬────────────┘   └──────────────┬──────────────────┘
                   └───────────────┬───────────────┘
                                   │
@@ -66,6 +66,53 @@ Everything else is at the `oracle/node-complete` tag.
 
 `cmd/gate` agreeing with the oracle is not the same as being right: both can
 share a defect and agree perfectly. `gate goldset` asks a human instead.
+
+## Data contract
+
+**User layer — never auto-update, all personalization goes here:**
+`cv.md`, `config/profile.yml`, `config/profile.md`, `article-digest.md`,
+`portals.yml`, `data/*`, `reports/*`, `output/*`, `interview-prep/*`
+
+**System layer — safe to edit as code:**
+`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`, `scripts/*`, and
+the Node oracle under `batch/` that the gates compare against.
+
+**Rule:** customization (archetypes, narrative, comp targets, location policy,
+scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
+`modes/_shared.md`.
+
+`config/profile.md` is a hard dependency: `internal/phase1` and
+`internal/phase2` read it at runtime.
+
+`cv.pinned_projects` in `config/profile.yml` forces a project past the
+`maxProjects` cut whatever the posting scores it, matched case-insensitively as a
+substring of the `### ` title. It is the escape hatch for an entry whose value is
+not its subject — an Honours dissertation loses the cut on any posting with no
+use for its topic, and is the first thing a reader of a graduate CV looks for.
+Each pin spends one of the three slots, so it is a project the ranker no longer
+chooses. **It also moves the benchmark**: the sweeps under `batch/bench-tools/`
+read this file, so a pin changes selection for every arm. Note it when comparing
+against a run made before the pin existed.
+
+## Entry points
+
+```
+bin/snipe                    the TUI (default)
+  ├─ snipe run               the three-phase pipeline
+  ├─ snipe scan              portals.yml → internal/providers → the queue
+  ├─ snipe add               one pasted JD, queued or run
+  └─ snipe tracker fix       canonical statuses, one row per opening
+```
+
+`snipe add -jd "<text>"` adds a pasted JD and runs it. A run already holding
+`batch/state/runner.pid` queues instead; `snipe run` drains the queue.
+
+Deeper TUI behaviour — failed-row retry/debug semantics, the footer message and
+hint rules, P1-gated rows and `proceed?` — is in [`TUI.md`](TUI.md).
+
+Every `SNIPE_*` env seam is load-bearing for the Go test suite. Keep them. Tests
+needing Ollama, pdflatex or a real `cv.md` skip themselves, because CI has none
+of the three and `cv.md` is user data that is never committed.
 
 ## Evaluation Flow (Single Offer)
 
