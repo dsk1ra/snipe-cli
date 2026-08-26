@@ -6,6 +6,54 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 _Nothing yet._
 
+## [0.5.0] - 2026-08-26
+
+The Go port lands. Both implementations now live in this repo, and the Go one
+runs the whole pipeline end to end. Nothing is removed yet: the Node code is
+untouched and still the one the `snipe` script drives, so this release adds a
+second implementation rather than swapping one for the other.
+
+### Added
+
+- A Go implementation of the whole pipeline, one package per concern under
+  `internal/`, with `cmd/snipe` as the binary and `cmd/gate` as the harness that
+  compares it against the Node original. Build it with
+  `go build -o bin/snipe ./cmd/snipe`.
+- A Bubble Tea TUI covering the queue, the activity view, follow-ups, the report
+  pane and the per-row actions, with a snapshot suite that pins the frame.
+- `cmd/gate`, which diffs Go output against Node output over the real cached
+  corpus, one subcommand per seam. Green at this release: `fit` 351 of 351,
+  `salary` 351 of 351, `cleanjd` 351 of 351, `atoms` 68 of 68.
+- The demo recording rig is now committed: the vhs tapes, the sandbox generator
+  and the caption tool. Without them the mp4 and gif in the README were binaries
+  nobody could reproduce. Everything the generator invents is fake and it reads
+  no `cv.md`, no tracker and no model.
+- `PORT-PLAN.md`, the running record of which components have moved.
+
+### Changed
+
+- The Go binary builds to `bin/snipe` rather than `./snipe`, because the Node
+  script of that name is still tracked at the repo root. It takes the plain name
+  when that script retires.
+- `CLAUDE.md` describes both implementations for as long as both are here. The
+  Node data contract, entry points and conventions are unchanged.
+- The JS gate harnesses resolve their repo path to an absolute path from any
+  input and default to this repo root. A dynamic `import()` resolves against the
+  module while `readFileSync` resolves against the process, so a relative
+  argument quietly meant two different directories.
+
+### Fixed
+
+- A YAML scalar of any type now decodes as text in the Go config loader. An
+  unquoted phone number is a YAML integer, and the failure would have taken the
+  archetype list and the score threshold down with it.
+
+### Security
+
+- Removed a real phone number that was serving as the worked example in a source
+  comment, and the hardcoded local home directory that five gate harnesses used
+  as their default repo path.
+
 ## [0.4.0] - 2026-08-13
 
 The tailored-summary release. Pre-release: the location cap changes what the
