@@ -13,16 +13,16 @@ Process multiple job offers in a 3-phase local pipeline — all LLM work runs on
 2. **Dry run** to preview what will be processed:
 
    ```bash
-   bash batch/local-runner.sh --dry-run
+   ./bin/snipe run -dry-run
    ```
 
 3. **Run the batch**:
 
    ```bash
-   bash batch/local-runner.sh
+   ./bin/snipe run
    ```
 
-4. **Results** are automatically merged into `data/applications.md` and verified with `tracker/verify-pipeline.mjs` at the end of the run.
+4. **Results** are automatically merged into `data/applications.md` and verified by the tracker integrity pass at the end of the run.
 
 ## Options
 
@@ -47,7 +47,7 @@ Process multiple job offers in a 3-phase local pipeline — all LLM work runs on
 
 ```
 batch/
-  local-runner.sh          # Orchestrator script (all 3 phases)
+  (orchestration lives in internal/run)
   Modelfile.snipe-*        # Ollama model definitions (screen/eval/cv/embed)
   ollama-score-prompt.md   # Phase 1 system prompt
   ollama-eval-prompt.md    # Phase 2 system prompt (classic evaluator)
@@ -70,11 +70,11 @@ gitignored and loaded in preference to the shipped file.
 
 ## How It Works
 
-1. **local-runner.sh** reads `batch-input.tsv` and `local-state.tsv` to determine which offers need processing.
-2. **Phase 1** (`ollama-scorer.mjs`): reads the JD from `batch/jds/<id>.txt` (or fetches it once if missing), pre-scores it, writes `scores/<id>.json`.
-3. **Phase 2** (`staged-evaluator.mjs`): full A-G evaluation from the stored JD, writes `reports/<NNN>-<slug>-<date>.md` + `evals/<id>.json`.
-4. **Phase 3** (`local-pdf-offer.mjs`): for offers ≥ threshold, tailors the CV on the `snipe-cv` coder model, generates the PDF via `generate-pdf.mjs`, writes the tracker TSV. Below-threshold offers get a tracker TSV directly (no LLM).
-5. After all phases, the runner calls `tracker/merge-tracker.mjs` and `tracker/verify-pipeline.mjs`.
+1. **`internal/run`** reads `batch-input.tsv` and `local-state.tsv` to determine which offers need processing.
+2. **Phase 1** (`internal/phase1`): reads the JD from `batch/jds/<id>.txt` (or fetches it once if missing), pre-scores it, writes `scores/<id>.json`.
+3. **Phase 2** (`internal/phase2`): full A-G evaluation from the stored JD, writes `reports/<NNN>-<slug>-<date>.md` + `evals/<id>.json`.
+4. **Phase 3** (`internal/phase3`): for offers ≥ threshold, tailors the CV on the `snipe-cv` coder model, compiles the PDF through `internal/pdf`, writes the tracker TSV. Below-threshold offers get a tracker TSV directly (no LLM).
+5. After all phases, the runner merges into the tracker and checks its integrity (`internal/tracker`).
 
 ## Tracker Merge
 
@@ -89,7 +89,7 @@ Run `npm run merge` manually if you need to merge outside of a batch run.
 
 ## Resumability
 
-`local-state.tsv` tracks per-phase status for every offer (10 columns). If the batch is interrupted, re-running `local-runner.sh` picks up where it left off — completed phases are skipped per offer. A PID-based lock file (`local-runner.pid`) prevents concurrent batch runs; stale locks from crashed runs are detected and removed automatically.
+`local-state.tsv` tracks per-phase status for every offer (10 columns). If the batch is interrupted, re-running `snipe run` picks up where it left off — completed phases are skipped per offer. A PID-based lock file (`batch/state/runner.pid`) prevents concurrent batch runs; stale locks from crashed runs are detected and removed automatically.
 
 ## Prerequisites
 

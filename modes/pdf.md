@@ -16,7 +16,7 @@
 10. Generate the full LaTeX document from the template + personalized content
 11. Read `name` from `config/profile.yml` and derive two forms: `{candidate}` = kebab-case lowercase for slugs (e.g. "John Doe" → "john-doe"); `{CandidateName}` = Title-Case hyphenated for the PDF filename (e.g. "John-Doe"). Also derive `{company}` and `{role}` as kebab-case slugs.
 12. **One folder per application — keep the PDF and its source together.** Let `APP_DIR = output/{YYYY-MM-DD}_{company}_{role}`. Write the filled LaTeX to `{APP_DIR}/source.tex` (persisted, NOT /tmp — it is the editable source of the PDF).
-13. Execute: `mkdir -p "{APP_DIR}" && node generate-pdf.mjs "{APP_DIR}/source.tex" "{APP_DIR}/{CandidateName}-CV.pdf"` (always A4)
+13. Execute: `mkdir -p "{APP_DIR}" && pdflatex -interaction=batchmode -output-directory "{APP_DIR}" "{APP_DIR}/source.tex"` (always A4). One pass is enough: the template sets `bookmarks=false`, so hyperref needs no second run.
 14. Report: the folder path, the PDF path (`{CandidateName}-CV.pdf` — attach as-is), number of pages, keyword coverage %. Note that `source.tex` in the same folder is editable for manual tweaks + re-render.
 
 ## ATS Rules (clean parsing)
@@ -49,7 +49,7 @@
 
 No Professional Summary and no Core Competencies. Every tag Competencies printed
 also appeared in Skills; the summary is a section Jake's Resume does not have,
-and `generate-pdf.mjs` holds every section but Skills to `cv.md`'s own order.
+and `internal/fill` holds every section but Skills to `cv.md`'s own order.
 
 ## Keyword injection strategy (ethical, truth-based)
 
@@ -81,7 +81,7 @@ content, all of it LaTeX-escaped (`% & _ # $ { } ~ ^` and the T1 traps `< > |`):
 | `{{EDUCATION}}` | `\resumeSubheading{Degree}{Period}{School}{}`, with modules, achievements and certifications as `\resumeItem` rows |
 
 There is no summary. Jake's has none, and the generation stage that used to
-write one is disconnected in `batch/local-pdf-offer.mjs`. Core Competencies is
+write one is disconnected in `internal/phase3`. Core Competencies is
 gone too: every tag it printed also appeared in Skills. Certifications has no
 section of its own — it trails the last education entry.
 
