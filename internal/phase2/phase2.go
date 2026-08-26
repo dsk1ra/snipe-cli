@@ -107,7 +107,7 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	// 30B and the 0.6 GB embedder costs a reload — measured at 4 reloads across
 	// 5 calls on Phase 3. Everything the embedder can do without stage 1's
 	// output therefore happens here, not between the two 30B calls.
-	atoms := embed.ExtractAtoms(e.Cfg.CVRaw, embed.ReadFileOr(filepath.Join(e.L.Home, "article-digest.md")))
+	atoms := embed.ExtractAtoms(e.Cfg.CVRaw, embed.ReadFileOr(e.L.Digest()))
 	cvIndex, err := e.IX.LoadCV(ctx, atoms)
 	if err != nil {
 		return fmt.Errorf("loading the CV index: %w", err)

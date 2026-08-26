@@ -7,8 +7,7 @@
 // batch/ was a flat drop of everything the pipeline touched, inherited from the
 // Node implementation so both could read one tree during the port. It is split
 // now that they no longer have to: batch/state/ is the record, batch/cache/ is
-// derived, and the per-offer directories are their own thing. scripts/
-// import-data.sh writes the new shape.
+// derived, and the per-offer directories are their own thing.
 package paths
 
 import (
@@ -87,6 +86,7 @@ func (l Layout) Errors() string     { return filepath.Join(l.Batch(), "errors") 
 func (l Layout) JDs() string        { return filepath.Join(l.Batch(), "jds") }
 func (l Layout) Work() string       { return filepath.Join(l.Batch(), "work") }
 func (l Layout) CV() string         { return filepath.Join(l.Home, "cv.md") }
+func (l Layout) Digest() string     { return filepath.Join(l.Home, "article-digest.md") }
 func (l Layout) ProfileYML() string { return filepath.Join(l.Home, "config", "profile.yml") }
 func (l Layout) ProfileMD() string  { return filepath.Join(l.Home, "config", "profile.md") }
 func (l Layout) Followups() string  { return filepath.Join(l.Data(), "follow-ups.md") }

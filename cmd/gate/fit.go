@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/fit"
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
 )
 
@@ -15,12 +16,13 @@ import (
 // the whole cached JD corpus. These are the hard-won constants the port must not
 // drift on, and they have no unit test on either side.
 func gateFit(root, jsFile string) int {
-	cv, err := os.ReadFile(filepath.Join(root, "cv.md"))
+	l := paths.Layout{Home: root, Code: root}
+	cv, err := os.ReadFile(l.CV())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	prof, err := os.ReadFile(filepath.Join(root, "config", "profile.yml"))
+	prof, err := os.ReadFile(l.ProfileYML())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -45,7 +47,7 @@ func gateFit(root, jsFile string) int {
 
 	var diffs int
 	for _, f := range files {
-		b, err := os.ReadFile(filepath.Join(root, "batch", "jds", f))
+		b, err := os.ReadFile(filepath.Join(l.JDs(), f))
 		if err != nil {
 			continue
 		}
@@ -54,7 +56,7 @@ func gateFit(root, jsFile string) int {
 		title := ""
 		id := strings.TrimSuffix(f, ".txt")
 		if n := atoi(id); n > 0 {
-			if a := cache.Score(filepath.Join(root, "batch", "scores"), n); a != nil {
+			if a := cache.Score(l.Scores(), n); a != nil {
 				title = a.Role
 			}
 		}

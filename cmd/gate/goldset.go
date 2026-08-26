@@ -96,7 +96,7 @@ func goldsetCorpus(home string) (paths.Layout, []embed.Atom, error) {
 	if err != nil {
 		return l, nil, err
 	}
-	atoms := embed.ExtractAtoms(cfg.CVRaw, embed.ReadFileOr(filepath.Join(l.Home, "article-digest.md")))
+	atoms := embed.ExtractAtoms(cfg.CVRaw, embed.ReadFileOr(l.Digest()))
 	if len(atoms) == 0 {
 		return l, nil, fmt.Errorf("no atoms extracted from %s", l.CV())
 	}

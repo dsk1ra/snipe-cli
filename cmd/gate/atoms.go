@@ -3,22 +3,23 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 )
 
 // gateAtoms compares the CV atom split, which decides what retrieval can even
 // see. An atom the splitter drops can never be matched to a requirement, and
 // that reads as a Gap rather than as a bug.
 func gateAtoms(root, jsFile string) int {
-	cv, err := os.ReadFile(filepath.Join(root, "cv.md"))
+	l := paths.Layout{Home: root, Code: root}
+	cv, err := os.ReadFile(l.CV())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	digest := embed.ReadFileOr(filepath.Join(root, "article-digest.md"))
+	digest := embed.ReadFileOr(l.Digest())
 
 	wantB, err := os.ReadFile(jsFile)
 	if err != nil {

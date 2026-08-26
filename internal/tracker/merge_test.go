@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 )
 
 const header = `# Applications Tracker
@@ -19,9 +21,12 @@ const header = `# Applications Tracker
 func fixture(t *testing.T, additions ...string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
-	data := filepath.Join(root, "data")
+	l := paths.Layout{Home: root, Code: root}
+	data := l.Data()
+	// Not l.Additions(): it reads SNIPE_ADDITIONS, and a fixture must not
+	// depend on the environment the test happens to run in.
 	add := filepath.Join(root, "batch", "tracker-additions")
-	for _, d := range []string{data, add, filepath.Join(root, "reports")} {
+	for _, d := range []string{data, add, l.Reports()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
