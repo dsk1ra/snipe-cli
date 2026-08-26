@@ -11,39 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04
-    env:
-      # Skips playwright's postinstall, which would pull all three browsers.
-      # Chromium is installed on its own below — it is the only one used.
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # Without a browser the PDF render checks degrade to warnings, and
-      # warnings do not fail the suite — CI would report green on an untested
-      # Phase 3. The install CLI ignores the skip env var above.
-      - run: npx playwright install --with-deps chromium
-      - run: npm run typecheck
-      - run: npm run coverage
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: ./coverage/lcov.info
-          # A silent upload failure is worse than a rare Codecov outage: the
-          # badge read "unknown" for the life of this branch while every run
-          # was green.
-          fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  # The Go port builds and tests alongside the Node suite for as long as both
-  # implementations live here. It is a separate job rather than a step in the
-  # one above so a Node failure and a Go failure stay legible apart.
   go:
     runs-on: ubuntu-24.04
     steps:
@@ -54,4 +21,8 @@ jobs:
       # go test compiles everything, so there is no separate build step. The
       # tests needing Ollama, pdflatex or a real cv.md skip themselves, which on
       # a runner is always.
+      #
+      # The gates are not here. They need the cached JD corpus and a real cv.md,
+      # both of which are user data that is never committed, so they run
+      # locally: npm run gate:fit and friends.
       - run: go test ./...
