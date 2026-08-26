@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,14 +55,25 @@ func (e *StatusError) Gone() bool {
 var errRedirect = errors.New("redirect refused")
 
 func (h *HTTP) do(ctx context.Context, target string, opts Options, accept string) ([]byte, error) {
-	timeout := h.Timeout
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = h.Timeout
+	}
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	method := opts.Method
+	if method == "" {
+		method = http.MethodGet
+	}
+	var reqBody io.Reader
+	if len(opts.Body) > 0 {
+		reqBody = bytes.NewReader(opts.Body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +105,10 @@ func (h *HTTP) do(ctx context.Context, target string, opts Options, accept strin
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode != http.StatusOK {
+	// Any 2xx is a success. Every board feed answers 200, but Apify's run-sync
+	// endpoint creates a run and answers 201, and treating that as a failure
+	// threw away a dataset that had already been paid for.
+	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return nil, &StatusError{
 			Status: res.StatusCode, URL: target,
 			Snippet: clip(strings.Join(strings.Fields(string(body)), " "), 300),

@@ -233,3 +233,42 @@ func PromptLines(l paths.Layout, name string) (string, error) {
 	}
 	return strings.TrimSuffix(s, "\n"), nil
 }
+
+// LoadDotEnv reads KEY=value lines from .env into the process environment.
+//
+// Only the provider layer needs it, and only for portal scanning, but it runs
+// at startup so os.Getenv is the single way anything reads a key. An existing
+// environment variable always wins: exporting one for a single run is how you
+// override the file, and silently losing that would be surprising.
+//
+// Deliberately not a dotenv library. This file is one key today and the format
+// it needs is KEY=value with optional quotes and # comments. A dependency for
+// twenty lines is a dependency to keep updated.
+//
+// Missing or unreadable is not an error. A checkout with no .env is the normal
+// case: without a key the Apify providers sit out and everything else runs.
+func LoadDotEnv(path string) {
+	f, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(f), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if len(v) > 1 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+		if k == "" || os.Getenv(k) != "" {
+			continue
+		}
+		_ = os.Setenv(k, v)
+	}
+}

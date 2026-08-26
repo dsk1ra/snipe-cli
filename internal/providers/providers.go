@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Job is the unit of currency throughout the scanner.
@@ -65,6 +66,16 @@ type Fetcher interface {
 // Options are per-request transport knobs.
 type Options struct {
 	Headers map[string]string
+	// Method and Body carry a request that is not a bare GET. The zero value is
+	// a GET with no body, which is what every board provider sends, so adding
+	// these changed no existing caller.
+	Method string
+	Body   []byte
+	// Timeout overrides the transport default for this request alone. A board
+	// feed answers in under ten seconds; an Apify actor run is a job that can
+	// take minutes, and holding one connection open is how its API is designed
+	// to be called.
+	Timeout time.Duration
 	// NoRedirect refuses to follow redirects. Combined with a hostname
 	// allowlist it is what closes SSRF via a server-side redirect: the
 	// allowlist checks the URL we send, the refusal stops it becoming another.
