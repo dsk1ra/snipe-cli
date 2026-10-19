@@ -24,6 +24,15 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   scoring every primary archetype 5. Stage 3's `archetype` is now an enum of the
   profile's list, as Phase 1's already was, so the lookup gets an exact label. On
   the 18 labelled offers the lookup's own moves all went toward the labels.
+- The location cap has a hybrid tier. A `search_locations` entry that allows
+  hybrid but not on-site, such as `London — hybrid or remote`, makes a posting
+  there acceptable unless it asks for full-time attendance (five days a week, or
+  on-site only). A hybrid posting offering that city alongside another ("London
+  or Manchester, hybrid") is read as the acceptable one, and a hybrid office near
+  Liverpool Street no longer reads as Liverpool. With London set to hybrid, the
+  capped postings among 351 cached JDs fell from 52 to 14, every one of them
+  full-time on-site, and pair accuracy on the 18 labelled offers rose from 63.3%
+  to 77.7%.
 
 ### Fixed
 
@@ -52,6 +61,10 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   a profile that calls the candidate "A. Candidate".
 - `TestApifyPostedAtAcceptsBothShapes` hardcoded 2026-08-26 as a date "this
   week" and had failed every day since. It compares against today.
+- Only the first `search_locations` entry in `profile.yml` was ever read: the
+  pattern ended at `$`, and under multi-line mode the lazy match stopped at the
+  first line end. `batch/fit-rules.mjs` has the same bug, so `gate fit` now
+  differs from the Node oracle wherever a later entry matters.
 
 ### Removed
 
