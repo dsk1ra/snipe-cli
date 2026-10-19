@@ -50,6 +50,8 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   everywhere else.
 - The demo fixture wrote a real person's name into a PDF filename while seeding
   a profile that calls the candidate "A. Candidate".
+- `TestApifyPostedAtAcceptsBothShapes` hardcoded 2026-08-26 as a date "this
+  week" and had failed every day since. It compares against today.
 
 ### Removed
 
