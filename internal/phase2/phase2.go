@@ -185,7 +185,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	j Judgment, salary *text.Salary, compDim int, hasComp bool) composed {
 
 	modelCV := clampDim(j.CVMatch, 1)
-	ns := clampDim(j.NorthStar, 1)
+	ns := e.Cfg.NorthStar(j.Archetype)
 	rf := clampDim(j.RedFlagsScore, 5)
 
 	// Blend the continuous coverage metric into cv_match.

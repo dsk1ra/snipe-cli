@@ -25,7 +25,6 @@ import (
 // harness against the labels before reading anything into a change here.
 type Judgment struct {
 	CVMatch         int           `json:"cv_match"`
-	NorthStar       int           `json:"north_star"`
 	RedFlagsScore   int           `json:"red_flags_score"`
 	Archetype       string        `json:"archetype"`
 	HardStops       []string      `json:"hard_stops"`
@@ -74,17 +73,24 @@ func cappedArr(maxLen, maxItems int, minItems ...int) ollama.Schema {
 	return append(s, ollama.F("maxItems", maxItems), ollama.F("items", capped(maxLen)))
 }
 
-func stage3Schema() ollama.Schema {
+// stage3Schema takes the profile's archetype enum because north_star is now
+// looked up from the archetype in code (config.NorthStar), and a lookup needs
+// the exact label. Phase 1 constrains the same field the same way. With no
+// profile list it stays free text and north_star falls back to neutral.
+func stage3Schema(archetypes []string) ollama.Schema {
 	dim := ollama.Int(1, 5)
+	archetype := capped(80)
+	if len(archetypes) > 0 {
+		archetype = ollama.Str(archetypes...)
+	}
 	// Ollama compiles `format` into a decoding grammar that emits properties in
 	// *properties* order, so reordering them changes the context every later
 	// field is generated against — measured: identical dimensions, visibly
 	// different notes, soft_gaps and top_strengths.
 	props := ollama.Obj(
 		ollama.F("cv_match", dim),
-		ollama.F("north_star", dim),
 		ollama.F("red_flags_score", dim),
-		ollama.F("archetype", capped(80)),
+		ollama.F("archetype", archetype),
 		ollama.F("hard_stops", cappedArr(200, 6)),
 		ollama.F("soft_gaps", cappedArr(240, 5)),
 		ollama.F("top_strengths", cappedArr(160, 3)),
@@ -104,7 +110,7 @@ func stage3Schema() ollama.Schema {
 		ollama.F("notes", capped(1500)),
 	)
 	return ollama.Object(props,
-		"cv_match", "north_star", "red_flags_score", "archetype", "hard_stops",
+		"cv_match", "red_flags_score", "archetype", "hard_stops",
 		"soft_gaps", "top_strengths", "strategy", "personalisation",
 		"final_decision", "notes")
 }
@@ -214,7 +220,7 @@ func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgmen
 	// ceiling, not a cost.
 	if err := e.OL.Chat(ctx, ollama.Request{
 		Model: e.Model, System: system, User: user,
-		Schema:  stage3Schema(),
+		Schema:  stage3Schema(e.Cfg.ArchetypeEnum()),
 		Options: ollama.Options{Temperature: 0, NumCtx: 12288, NumPredict: 5120},
 		Timeout: e.Timeout, Label: "p2.judgment", ID: id,
 	}, &out); err != nil {

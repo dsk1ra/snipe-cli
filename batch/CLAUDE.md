@@ -42,7 +42,11 @@ code-enforced in both phases.
 strategy and the personalisation table. STAR stories, hard questions, LinkedIn
 tweaks and the legitimacy verdict are gone: output 3,022 → 982 tokens, the call
 158 s → 57 s, about 95 s off every offer, with pair accuracy on the 18 labels
-moved by one `cv_match` flip on one offer.
+moved by one `cv_match` flip on one offer. **`north_star` is not judged** in
+Phase 2: it is the archetype's `fit` tier from `profile.yml` (primary 5,
+secondary 3, adjacent 2, unlisted 1), then capped. Stage 3's `archetype` is an
+enum of the profile's list for that reason. Numbers and the per-offer reading:
+`docs/REWORK-PLAN.md` §1.
 
 The location cap exists because `hard_stops` never reaches `final_decision`:
 Phase 2 printed the profile's "hybrid or on-site outside the commutable base"

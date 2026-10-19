@@ -4,6 +4,15 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Changed
+
+- Phase 2's `north_star` is read from the archetype's `fit` tier in
+  `profile.yml` (primary 5, secondary 3, adjacent 2, unlisted 1) and then capped
+  as before; the model no longer scores it. It had been doing the lookup anyway,
+  scoring every primary archetype 5. Stage 3's `archetype` is now an enum of the
+  profile's list, as Phase 1's already was, so the lookup gets an exact label. On
+  the 18 labelled offers the lookup's own moves all went toward the labels.
+
 ### Fixed
 
 - The three model gates all ran the oracle from paths that no longer resolve.

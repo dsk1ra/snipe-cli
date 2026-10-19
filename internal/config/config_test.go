@@ -72,3 +72,45 @@ func TestCVRawIsCvMdAlone(t *testing.T) {
 		t.Errorf("CVRaw is %q, want cv.md trimmed and otherwise verbatim", c.CVRaw)
 	}
 }
+
+// north_star is the profile's fit tier, so a mis-read tier silently re-ranks
+// every offer of that archetype.
+func TestNorthStarFollowsFitTier(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"cv.md": "# CV\n",
+		"config/profile.yml": `target_roles:
+  archetypes:
+    - name: "Backend"
+      fit: "primary"
+    - name: "Full-Stack"
+      fit: "Secondary"
+    - name: "SRE"
+      fit: "adjacent"
+    - "Security"
+`,
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := Load(paths.Layout{Home: dir, Code: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for arch, want := range map[string]int{
+		"Backend": 5, "Full-Stack": 3, "SRE": 2, "Security": 5,
+		OutsideTargets: 1, "Data Engineer": 1,
+	} {
+		if got := c.NorthStar(arch); got != want {
+			t.Errorf("NorthStar(%q) = %d, want %d", arch, got, want)
+		}
+	}
+	if got := (&Config{}).NorthStar("Backend"); got != 3 {
+		t.Errorf("with no archetype list NorthStar = %d, want neutral 3", got)
+	}
+}

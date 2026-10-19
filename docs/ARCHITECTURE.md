@@ -124,9 +124,12 @@ of the three and `cv.md` is user data that is never committed.
    - B: CV match (evidence table, gaps, strengths)
    - C: Level strategy
    - D: CV personalisation plan
-5. **Score**: Weighted blend of three integer dimensions (1-5).
+5. **Score**: Weighted blend of three dimensions (1-5).
    `cv_match × 0.50 + north_star × 0.30 + comp × 0.20`, or
    `cv_match × 0.625 + north_star × 0.375` when the posting states no salary.
+   `north_star` is not judged: it is the archetype's `fit` tier in
+   `profile.yml` (primary 5, secondary 3, adjacent 2, outside 1), then capped
+   for seniority in code. `comp` is computed from the posted salary.
    Below 3.0 the verdict is Skip; an Apply under 3.5 becomes Consider
 6. **Report**: Save as `reports/{num}-{company}-{date}.md`
 7. **PDF**: Generate ATS-optimised CV through `internal/pdf`, compiling `templates/cv-template.tex`
