@@ -25,7 +25,7 @@
      │                    Output Pipeline                      │
      │  ┌──────────┐  ┌────────────┐  ┌───────────────────┐  │
      │  │ Report.md│  │ PDF (.tex → │  │ Tracker TSV       │  │
-     │  │ (A-F eval)│  │  pdflatex)   │  │ (merge-tracker)  │  │
+     │  │ (A-D eval)│  │  pdflatex)   │  │ (merge-tracker)  │  │
      │  └──────────┘  └────────────┘  └───────────────────┘  │
      └────────────────────────────────────────────────────────┘
                                │
@@ -119,13 +119,11 @@ of the three and `cv.md` is user data that is never committed.
 1. **Input**: User pastes JD text or URL
 2. **Extract**: the JD text is supplied by the caller. `snipe add -link` keeps the URL for tracking and never fetches it
 3. **Classify**: Detect archetype, from the list you define in `config/profile.yml`
-4. **Evaluate**: 6 blocks (A-F):
+4. **Evaluate**: 4 blocks (A-D), only what decides the tailored CV:
    - A: Role summary
-   - B: CV match (gaps + mitigation)
+   - B: CV match (evidence table, gaps, strengths)
    - C: Level strategy
-   - D: Comp research (WebSearch)
-   - E: CV personalization plan
-   - F: Interview prep (STAR stories)
+   - D: CV personalisation plan
 5. **Score**: Weighted blend of three integer dimensions (1-5).
    `cv_match × 0.50 + north_star × 0.30 + comp × 0.20`, or
    `cv_match × 0.625 + north_star × 0.375` when the posting states no salary.

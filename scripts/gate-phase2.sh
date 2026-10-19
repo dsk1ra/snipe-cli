@@ -2,6 +2,11 @@
 # Phase 2 equivalence gate: evaluate the same offer through the Node
 # implementation and this one, and diff the report and the artifact.
 #
+# Stage 3 and the report diverge from the oracle by design since the judgment
+# was slimmed to the CV-facing blocks. The p2.jdparse and p2.evidence requests
+# must still come out identical; a DIFFERS on p2.judgment, the eval or the report
+# is expected.
+#
 # The Node side runs from a COPY of its own code inside the fixture tree.
 # staged-evaluator.mjs resolves PROJECT_DIR as `resolve(__dirname, '..')` and
 # writes reports/, batch/evals/ and batch/jds/ under it — so running it in place

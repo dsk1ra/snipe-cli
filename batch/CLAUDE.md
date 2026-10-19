@@ -38,6 +38,12 @@ never guessed; when present the weights become `cv×0.50 + ns×0.30 + comp×0.20
 Seniority, stack-mismatch, language and **location** caps (`fit-rules.mjs`) are
 code-enforced in both phases.
 
+**The judgment writes only what decides the CV** — dimensions, gaps, strengths,
+strategy and the personalisation table. STAR stories, hard questions, LinkedIn
+tweaks and the legitimacy verdict are gone: output 3,022 → 982 tokens, the call
+158 s → 57 s, about 95 s off every offer, with pair accuracy on the 18 labels
+moved by one `cv_match` flip on one offer.
+
 The location cap exists because `hard_stops` never reaches `final_decision`:
 Phase 2 printed the profile's "hybrid or on-site outside the commutable base"
 hard stop verbatim on offers it then scored 4.9 and told the user to Apply to,

@@ -10,10 +10,9 @@ Scoring (integers 1-5, commit — no hedging toward 3):
 
 - archetype / hard_stops / soft_gaps / top_strengths: short factual phrases drawn from the evidence table, not prose.
 
-Content blocks: strategy (positioning without overpromising), personalisation (specific CV changes for THIS role, referencing real CV content), linkedin (headline/summary tweaks), hard_questions (tough interview questions with grounded answers — `a` must be an ANSWER the candidate can give, never another question), legitimacy (is this POSTING genuine and well-specified — description quality, realistic requirements, transparency? It is NOT about candidate fit; a poor fit at a legitimate company is still "High Confidence". Judge ONLY from the JD itself — never invent hiring freezes or company signals).
+Content blocks: strategy (positioning without overpromising), personalisation (specific CV changes for THIS role, referencing real CV content).
 
-STAR stories — the strictest rule here:
-- `req` is the NUMBER of a target from the "Story targets" list. That list is the complete set of requirements you may write a story about. Requirements missing from it have no supporting CV evidence.
-- Build each story from the evidence shown for that target and from the CV. Do NOT introduce a technology, platform or tool that is absent from the CV — not in situation, task, action or result, and not as something the candidate "would apply".
-- Do NOT invent numbers. Percentages, counts and outcomes must appear in the CV; if none is given, describe the result without inventing a metric.
-- If the JD demands a technology the candidate lacks, that belongs in soft_gaps or hard_stops. It must never appear inside a story as work they did.
+Personalisation — the strictest rule here:
+- `current` quotes real CV content. `proposed` may reword, reorder or emphasise it, but must not introduce a technology, platform or tool that is absent from the CV.
+- Do NOT invent numbers. Percentages, counts and outcomes must appear in the CV.
+- If the JD demands a technology the candidate lacks, that belongs in soft_gaps or hard_stops, never in a proposed CV change.

@@ -9,34 +9,32 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/text"
 )
 
-// Judgment is stage 3's output: the dimensions and every content block, in one
-// call.
+// Judgment is stage 3's output: the dimensions and the CV-facing content
+// blocks, in one call.
 //
-// Scoring and the content blocks stay together deliberately. Splitting them
-// (dimensions first, prose second) was measured over 18 hand-labelled offers
-// and collapsed rank agreement from 0.578 to 0.101 — and to 0.018 when the CV
-// was also withheld. The dimensions decode before any story token exists, so
-// this is not the prose leaking into the scores; committing to justify the
-// score with specific CV lines and real projects appears to be what keeps the
-// score honest. Do not split it again without re-running the eval harness
-// against the labels.
+// The report carries only what decides the tailored CV. STAR stories, hard
+// questions, LinkedIn tweaks and the posting-legitimacy verdict were cut, and
+// nothing downstream read them. Measured over the 18 labelled offers: output
+// 3,022 → 982 tokens, this call 158 s → 57 s, pair accuracy within one offer's
+// flip of the baseline (docs/REWORK-PLAN.md §1). The multi-posting check that
+// legitimacy stood in for is a code gate in compose and stays.
+//
+// The old note here — that splitting scoring from the content blocks collapsed
+// rank agreement 0.578 → 0.101 — measured against the July evals archive, which
+// batch/labels/LEDGER.md records as an invalid control. Re-run the eval
+// harness against the labels before reading anything into a change here.
 type Judgment struct {
-	CVMatch          int           `json:"cv_match"`
-	NorthStar        int           `json:"north_star"`
-	RedFlagsScore    int           `json:"red_flags_score"`
-	Archetype        string        `json:"archetype"`
-	HardStops        []string      `json:"hard_stops"`
-	SoftGaps         []string      `json:"soft_gaps"`
-	TopStrengths     []string      `json:"top_strengths"`
-	Strategy         []string      `json:"strategy"`
-	Personalisation  []Personalise `json:"personalisation"`
-	LinkedIn         []string      `json:"linkedin"`
-	Stories          []Story       `json:"stories"`
-	HardQuestions    []QA          `json:"hard_questions"`
-	LegitimacyTier   string        `json:"legitimacy_tier"`
-	LegitimacyReason string        `json:"legitimacy_reason"`
-	FinalDecision    string        `json:"final_decision"`
-	Notes            string        `json:"notes"`
+	CVMatch         int           `json:"cv_match"`
+	NorthStar       int           `json:"north_star"`
+	RedFlagsScore   int           `json:"red_flags_score"`
+	Archetype       string        `json:"archetype"`
+	HardStops       []string      `json:"hard_stops"`
+	SoftGaps        []string      `json:"soft_gaps"`
+	TopStrengths    []string      `json:"top_strengths"`
+	Strategy        []string      `json:"strategy"`
+	Personalisation []Personalise `json:"personalisation"`
+	FinalDecision   string        `json:"final_decision"`
+	Notes           string        `json:"notes"`
 }
 
 type Personalise struct {
@@ -44,21 +42,6 @@ type Personalise struct {
 	Current  string `json:"current"`
 	Proposed string `json:"proposed"`
 	Why      string `json:"why"`
-}
-
-type Story struct {
-	Req         int    `json:"req"`
-	Requirement string `json:"requirement,omitempty"`
-	Story       string `json:"story"`
-	Situation   string `json:"situation"`
-	Task        string `json:"task"`
-	Action      string `json:"action"`
-	Result      string `json:"result"`
-}
-
-type QA struct {
-	Q string `json:"q"`
-	A string `json:"a"`
 }
 
 // capped is a string property with a length limit.
@@ -91,57 +74,12 @@ func cappedArr(maxLen, maxItems int, minItems ...int) ollama.Schema {
 	return append(s, ollama.F("maxItems", maxItems), ollama.F("items", capped(maxLen)))
 }
 
-// storiesSchema constrains STAR targets to rows that actually have evidence.
-//
-// The targets are chosen by CODE, not by the model: req is an index into the
-// eligible list, so a story about a requirement the CV does not cover is not
-// merely discouraged — it cannot be encoded.
-//
-// The old schema asked for free-text `requirement` with minItems 3 while the
-// prompt pointed at "the hardest requirements", which are exactly the ones
-// graded Gap. That made fabrication the only grammatically valid output, and it
-// duly produced stories about technologies the CV had none of. When nothing is
-// covered, an empty Block F is the honest answer.
-func storiesSchema(eligible []int) ollama.Schema {
-	if len(eligible) == 0 {
-		return ollama.Obj(
-			ollama.F("type", "array"),
-			ollama.F("maxItems", 0),
-			ollama.F("items", ollama.Obj(ollama.F("type", "object"))),
-		)
-	}
-	return ollama.Obj(
-		ollama.F("type", "array"),
-		ollama.F("minItems", min(3, len(eligible))),
-		ollama.F("maxItems", min(5, len(eligible))),
-		ollama.F("items", ollama.Object(ollama.Obj(
-			// An enum of the allowed evidence-table row numbers. The same
-			// grammar-level guarantee as a bounded integer, but it indexes the
-			// table the prompt already contains, so the targets need not be
-			// re-listed.
-			ollama.F("req", ollama.Obj(ollama.F("type", "integer"), ollama.F("enum", eligible))),
-			// Caps from 417 stored STAR rows (p95 / observed max):
-			// story 857/1648 · situation 239/515 · task 162/209 · action 811/1316.
-			ollama.F("story", capped(1200)),
-			ollama.F("situation", capped(400)),
-			ollama.F("task", capped(300)),
-			ollama.F("action", capped(1000)),
-			ollama.F("result", capped(800)),
-		))),
-	)
-}
-
-func stage3Schema(eligible []int) ollama.Schema {
+func stage3Schema() ollama.Schema {
 	dim := ollama.Int(1, 5)
-	// `stories` comes LAST in properties, and mid-list in required.
-	//
-	// That asymmetry is not a mistake to tidy up. The Node schema spreads the
-	// stories property onto the object literal, which appends it at the end,
-	// while its `required` array lists it between linkedin and hard_questions.
 	// Ollama compiles `format` into a decoding grammar that emits properties in
-	// *properties* order, so moving stories earlier changes the context every
-	// later field is generated against — measured: identical dimensions,
-	// visibly different notes, soft_gaps and top_strengths.
+	// *properties* order, so reordering them changes the context every later
+	// field is generated against — measured: identical dimensions, visibly
+	// different notes, soft_gaps and top_strengths.
 	props := ollama.Obj(
 		ollama.F("cv_match", dim),
 		ollama.F("north_star", dim),
@@ -162,35 +100,18 @@ func stage3Schema(eligible []int) ollama.Schema {
 				ollama.F("why", capped(300)),
 			))),
 		)),
-		ollama.F("linkedin", cappedArr(300, 3, 2)),
-		ollama.F("hard_questions", ollama.Obj(
-			ollama.F("type", "array"),
-			ollama.F("minItems", 2),
-			ollama.F("maxItems", 3),
-			ollama.F("items", ollama.Object(ollama.Obj(
-				ollama.F("q", capped(200)),
-				ollama.F("a", capped(800)),
-			))),
-		)),
-		ollama.F("legitimacy_tier", ollama.Str("High Confidence", "Proceed with Caution", "Suspicious")),
-		ollama.F("legitimacy_reason", capped(400)),
 		ollama.F("final_decision", ollama.Str("Apply", "Research first", "Consider", "Skip")),
 		ollama.F("notes", capped(1500)),
-		ollama.F("stories", storiesSchema(eligible)),
 	)
 	return ollama.Object(props,
 		"cv_match", "north_star", "red_flags_score", "archetype", "hard_stops",
-		"soft_gaps", "top_strengths", "strategy", "personalisation", "linkedin",
-		"stories", "hard_questions", "legitimacy_tier", "legitimacy_reason",
+		"soft_gaps", "top_strengths", "strategy", "personalisation",
 		"final_decision", "notes")
 }
 
-// stageContext builds the shared prompt fragments. Both the evidence table and
-// the story targets are numbered against the same list, so the targets are row
-// numbers rather than a second copy of the table — re-listing each target with
-// its evidence cost 1500–2000 characters of pure duplication, and on the
-// longest JD that squeezed the output budget until the eval failed.
-func stageContext(rows []Row, calib []Calibration) (evidenceTable string, eligible []int, targetLines, calibLines string) {
+// stageContext builds the shared prompt fragments: the numbered evidence table
+// and the calibration anchors.
+func stageContext(rows []Row, calib []Calibration) (evidenceTable, calibLines string) {
 	var b strings.Builder
 	for i, e := range rows {
 		if i > 0 {
@@ -206,19 +127,6 @@ func stageContext(rows []Row, calib []Calibration) (evidenceTable string, eligib
 		}
 	}
 	evidenceTable = b.String()
-
-	// Only requirements with real retrieved evidence can host a STAR story.
-	for i, e := range rows {
-		if e.Strength != "Gap" {
-			eligible = append(eligible, i+1)
-		}
-	}
-	if len(eligible) > 0 {
-		targetLines = fmt.Sprintf("Requirements %s (numbered as in the evidence table above). No others have supporting CV evidence.",
-			joinInts(eligible, ", "))
-	} else {
-		targetLines = "(none — no requirement has supporting CV evidence, so write no stories)"
-	}
 
 	if len(calib) == 0 {
 		calibLines = "(none available)"
@@ -266,7 +174,7 @@ type stage3Input struct {
 }
 
 func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgment, error) {
-	evidenceTable, eligible, targetLines, calibLines := stageContext(in.Rows, in.Calib)
+	evidenceTable, calibLines := stageContext(in.Rows, in.Calib)
 
 	salaryLine := "Not stated. Do NOT guess one."
 	if in.Salary != nil {
@@ -288,7 +196,6 @@ func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgmen
 		"## Evidence table (requirement → graded CV evidence)", evidenceTable, "",
 		fmt.Sprintf("Coverage of must-have requirements: %s%%", text.Fixed(in.Coverage.Coverage*100, 0)),
 		"",
-		"## Story targets", targetLines, "",
 		"## Similar past offers (calibration anchors)", calibLines, "",
 		"## Candidate profile (archetypes, framing, deal-breakers)", orNone(e.Cfg.ProfileMD, "(no profile)"), "",
 		"## Candidate CV (cite real lines only)", e.Cfg.CV, "",
@@ -301,49 +208,19 @@ func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgmen
 	}
 
 	var out Judgment
-	// Stage 3 emits every content block at once and used to run right at a
-	// 3000-token ceiling, where one offer truncated twice and lost the eval.
-	// 5120 leaves real headroom; num_ctx 12288 keeps prompt plus output inside
-	// the window, which q8_0 KV cache makes fit.
+	// num_ctx stays at 12288 although the output shrank: Ollama keys a loaded
+	// model on its context size, and changing it was measured to change the
+	// answers at temperature 0 (PHASE3-GENERATION-LEDGER §8). NumPredict is a
+	// ceiling, not a cost.
 	if err := e.OL.Chat(ctx, ollama.Request{
 		Model: e.Model, System: system, User: user,
-		Schema:  stage3Schema(eligible),
+		Schema:  stage3Schema(),
 		Options: ollama.Options{Temperature: 0, NumCtx: 12288, NumPredict: 5120},
 		Timeout: e.Timeout, Label: "p2.judgment", ID: id,
 	}, &out); err != nil {
 		return Judgment{}, fmt.Errorf("stage 3 (judgment): %w", err)
 	}
-
-	// Resolve target numbers back to requirement text. Out-of-range indices are
-	// dropped rather than rendered.
-	allowed := map[int]bool{}
-	for _, n := range eligible {
-		allowed[n] = true
-	}
-	var kept []Story
-	for _, s := range out.Stories {
-		if allowed[s.Req] {
-			s.Requirement = in.Rows[s.Req-1].Requirement
-			kept = append(kept, s)
-		}
-	}
-	out.Stories = kept
 	return out, nil
-}
-
-func joinInts(ns []int, sep string) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
-		parts[i] = fmt.Sprint(n)
-	}
-	return strings.Join(parts, sep)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func orNone(s, fallback string) string {

@@ -30,6 +30,13 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Removed
 
+- Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
+  Posting Legitimacy, and the judgment call stops writing them. Nothing
+  downstream read them, yet they were most of that call's output: on the 18
+  labelled offers it fell from 3,022 to 982 tokens and from 158 s to 57 s, about
+  95 s off every offer once the stage reload is counted. Pair accuracy moved by
+  one offer. The report runs A–D now; a posted salary keeps one header line,
+  since it still carries a fifth of the score.
 - `scripts/import-data.sh`. It copied the user layer out of the Node checkout,
   and its own guard refuses when source and destination are the same tree.
 
