@@ -89,6 +89,7 @@ func (l Layout) CV() string         { return filepath.Join(l.Home, "cv.md") }
 func (l Layout) Digest() string     { return filepath.Join(l.Home, "article-digest.md") }
 func (l Layout) ProfileYML() string { return filepath.Join(l.Home, "config", "profile.yml") }
 func (l Layout) ProfileMD() string  { return filepath.Join(l.Home, "config", "profile.md") }
+func (l Layout) SkillsYML() string  { return filepath.Join(l.Home, "config", "skills.yml") }
 func (l Layout) Followups() string  { return filepath.Join(l.Data(), "follow-ups.md") }
 
 // ScanHistory is the scanner's long memory: every URL it has ever kept, which

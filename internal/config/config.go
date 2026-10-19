@@ -36,6 +36,10 @@ type Config struct {
 	// PinnedProjects ship whatever the posting scores them. A deliberate
 	// override of the relevance ranker, so it belongs in the user layer.
 	PinnedProjects []string
+	// Aliases are config/skills.yml's approved spellings of a cv.md skill item,
+	// keyed by the item lowercased. The tailored CV prints whichever spelling the
+	// posting uses. Nil when the file is absent.
+	Aliases map[string][]string
 }
 
 // Goals are the targets the queue's side panel measures the day against.
@@ -164,6 +168,25 @@ func Load(l paths.Layout) (*Config, error) {
 		}
 		c.Candidate = doc.Candidate
 		c.PinnedProjects = doc.CV.PinnedProjects
+	}
+
+	var skills struct {
+		Aliases map[string][]string `yaml:"aliases"`
+	}
+	if b, err := os.ReadFile(l.SkillsYML()); err == nil {
+		// Unlike profile.yml a broken skills.yml is reported, not ignored: the
+		// file exists only to be read, and a typo silently dropping every alias
+		// looks exactly like the aliases not mattering.
+		if err := yaml.Unmarshal(b, &skills); err != nil {
+			return nil, fmt.Errorf("%s: %w", l.SkillsYML(), err)
+		}
+		for item, forms := range skills.Aliases {
+			if c.Aliases == nil {
+				c.Aliases = map[string][]string{}
+			}
+			key := strings.ToLower(strings.TrimSpace(item))
+			c.Aliases[key] = append(c.Aliases[key], forms...)
+		}
 	}
 	return c, nil
 }

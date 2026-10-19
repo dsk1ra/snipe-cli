@@ -88,7 +88,7 @@ func TestASentenceFinalDotDoesNotHideAMatch(t *testing.T) {
 // one the posting named is never cut for budget.
 func TestSelectSkillsKeepsWhatThePostingNamed(t *testing.T) {
 	jd := "We need Rust and AES-256-GCM encryption experience."
-	got := SelectSkills(writerCV, jd, 6, 12, 3)
+	got := SelectSkills(writerCV, jd, 6, 12, 3, nil)
 
 	if len(got) != 3 {
 		t.Fatalf("got %d categories, want all 3 within budget: %+v", len(got), got)
@@ -108,7 +108,7 @@ func TestSelectSkillsKeepsWhatThePostingNamed(t *testing.T) {
 	}
 
 	// A tight budget drops what the posting did not name, and only that.
-	tight := SelectSkills(writerCV, jd, 2, 12, 3)
+	tight := SelectSkills(writerCV, jd, 2, 12, 3, nil)
 	for _, c := range tight {
 		if c.Category == "Cloud" {
 			t.Errorf("dropped a named category before an unnamed one: %+v", tight)
@@ -126,12 +126,40 @@ func TestSelectSkillsAgainstTheRealCV(t *testing.T) {
 	if len(cats) < 4 {
 		t.Fatalf("parsed %d skill categories out of cv.md, want the real block", len(cats))
 	}
-	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", 6, 12, 3)
+	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", 6, 12, 3, nil)
 	if len(got) == 0 || len(got) > 6 {
 		t.Fatalf("selected %d categories, want 1..6", len(got))
 	}
 	t.Logf("%d categories from %d:", len(got), len(cats))
 	for _, c := range got {
 		t.Logf("  %-28s %s", c.Category, c.Items)
+	}
+}
+
+// An approved alias makes a skill count as named and prints it the way the
+// posting spells it — the one thing an ATS keyword search can actually see.
+func TestSelectSkillsPrintsThePostingsSpelling(t *testing.T) {
+	aliases := map[string][]string{"java": {"JVM", "JVM languages"}}
+	items := func(jd string, aliases map[string][]string) string {
+		for _, c := range SelectSkills(writerCV, jd, 6, 12, 1, aliases) {
+			if c.Category == "Languages" {
+				return c.Items
+			}
+		}
+		return ""
+	}
+
+	// Named only by an alias: kept and printed as the posting wrote it, the
+	// longest matching form winning.
+	if got := items("Strong background in JVM languages.", aliases); got != "JVM languages" {
+		t.Errorf("Languages reads %q, want the posting's longest spelling", got)
+	}
+	// The posting also uses cv.md's own spelling, so that one stays.
+	if got := items("Java on the JVM.", aliases); got != "Java" {
+		t.Errorf("Languages reads %q, want cv.md's Java kept", got)
+	}
+	// Without aliases nothing is named, so the floor prints cv.md's strings.
+	if got := items("Strong background in JVM languages.", nil); strings.Contains(got, "JVM") {
+		t.Errorf("Languages reads %q with no aliases, want cv.md's strings only", got)
 	}
 }

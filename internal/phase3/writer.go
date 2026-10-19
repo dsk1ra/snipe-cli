@@ -235,7 +235,12 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 // Tier 3 is the guard against optimising the metric into a lie: a block holding
 // only what the posting asked for drops the distinctive evidence, Rust vanishing
 // off a Java posting.
-func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []SkillPick {
+//
+// aliases are config/skills.yml's approved spellings, keyed by item lowercased.
+// An item the posting names only by an alias counts as named, and prints in the
+// posting's spelling: "REST APIs" ships as "RESTful APIs" to a posting that says
+// so. Nil keeps cv.md's own strings, which is what the oracle gates compare.
+func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliases map[string][]string) []SkillPick {
 	jd := map[string]bool{}
 	for _, t := range tokenize(jdText) {
 		jd[t] = true
@@ -258,16 +263,35 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 		}
 		return n
 	}
+	// spelling is the form the posting uses: the item itself when the posting
+	// writes it that way or not at all, else the longest approved alias it does
+	// write — so "RESTful APIs" beats "RESTful" on a posting that says the former.
+	spelling := func(item string) string {
+		if strings.Contains(jdNorm, NormPhrase(item)) {
+			return item
+		}
+		best := ""
+		for _, a := range aliases[strings.ToLower(item)] {
+			if len(a) > len(best) && strings.Contains(jdNorm, NormPhrase(a)) {
+				best = a
+			}
+		}
+		if best == "" {
+			return item
+		}
+		return best
+	}
+	named := func(item string) int { return hits(spelling(item)) }
 
 	cats := ParseSkillCategories(cvText)
 	var all []string
 	for _, c := range cats {
 		all = append(all, c.Items...)
 	}
-	related := relatedToJd(cvText, all, hits)
+	related := relatedToJd(cvText, all, named)
 
 	type ranked struct {
-		item  string
+		item  string // as the block prints it
 		i     int
 		score int
 		tier  int
@@ -284,7 +308,7 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 	for idx, c := range cats {
 		rows := make([]ranked, 0, len(c.Items))
 		for i, item := range c.Items {
-			h := hits(item)
+			h := named(item)
 			t := 0
 			switch {
 			case h > 0:
@@ -292,7 +316,7 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 			case related[item]:
 				t = 1
 			}
-			rows = append(rows, ranked{item: item, i: i, score: h, tier: t})
+			rows = append(rows, ranked{item: spelling(item), i: i, score: h, tier: t})
 		}
 		// Tier first, so a related item outranks a floor item but never
 		// displaces one the posting actually named. Stable on the CV's order.

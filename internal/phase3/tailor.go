@@ -162,7 +162,7 @@ func (t *Tailor) Build(score map[string]float64, jd string) fill.Content {
 	opt.MaxProjects = 3
 	sel := cvselect.Select(t.Cfg.CVRaw, func(b string) float64 { return score[b] }, opt)
 
-	c := VerbatimContent(sel.CV, t.Cfg.CVRaw, jd, 4)
+	c := VerbatimContent(sel.CV, t.Cfg.CVRaw, jd, 4, t.Cfg.Aliases)
 
 	// The length floor is asserted a second time, against the FULL cv.md, which
 	// is where local-pdf-offer.mjs asserts it — after the guards, not inside the

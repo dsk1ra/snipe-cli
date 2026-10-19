@@ -72,6 +72,7 @@ export function loadRun(dir) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === _resolve(process.argv[1])) {
+  const dirs = process.argv.slice(2);
   const runs = dirs.map(d => ({ dir: d, offers: loadRun(d) }));
   for (const { dir, offers } of runs) {
     if (!offers.length) { console.log(`\n=== ${dir}: no completed evals ===`); continue; }

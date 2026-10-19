@@ -116,6 +116,20 @@ could read and cost 4.4 rendered lines on a page whose entire evidence budget is
    a mirror of the posting. Without it the CV reads as pandering and loses the
    distinctive evidence, which is `docs/PHASE3-RETENTION-LEDGER.md` §1 all over
 
+**The block prints the posting's spelling** when `config/skills.yml` approves
+it (`config/skills.example.yml` has the rules). An item the posting names only by
+an alias — "RESTful" against cv.md's "REST APIs", "Golang" against "Go" — counts
+as named and prints as the posting wrote it, longest matching form first; when
+the posting also uses cv.md's spelling, that one stays. `go run ./cmd/gate skills
+.` scores it over every cached JD, paired with and without aliases: with the
+first nine aliases, **48 skill mentions in 351 JDs were named only by an alias and
+0 reached the page in that spelling; now all 48 do**, the 1,830 named in cv.md's
+own spelling are unmoved, and 46 of 351 blocks change. The Node harness's
+`skill_coverage` is blind to this by construction — it only knows cv.md's
+strings, so an alias-only mention is absent from its denominator, not a miss. An
+alias replaces the whole item, so a compound item (`Terraform / Infrastructure
+as Code`) must be split in cv.md before it can take one.
+
 `maxCats` (6) budgets only the categories the posting did *not* name; one it did
 is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0
 now passes no `--max-skills` at all. **Worth `skill_coverage` 0.932 → 1.000**

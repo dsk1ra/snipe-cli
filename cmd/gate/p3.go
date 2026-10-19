@@ -37,6 +37,9 @@ func gateP3(home, cvPath, reportPath, jdPath, outPath string) int {
 		return 2
 	}
 	cfg.CVRaw = string(cv)
+	// The oracle has no aliases. Comparing with the user's skills.yml loaded
+	// would diff their spellings, not the two selectors.
+	cfg.Aliases = nil
 
 	report, err := os.ReadFile(reportPath)
 	if err != nil {

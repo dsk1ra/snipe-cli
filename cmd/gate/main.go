@@ -19,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gate <salary|cleanjd|fit|atoms|select|tex|fill|p3|goldset> <dir-or-file> [js-output]")
+		fmt.Fprintln(os.Stderr, "usage: gate <salary|cleanjd|fit|atoms|select|tex|fill|p3|goldset|skills> <dir-or-file> [js-output]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -55,6 +55,8 @@ func main() {
 		os.Exit(gateAtoms(os.Args[2], os.Args[3]))
 	case "fit":
 		os.Exit(gateFit(os.Args[2], os.Args[3]))
+	case "skills":
+		os.Exit(gateSkills(os.Args[2]))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown gate %q\n", os.Args[1])
 		os.Exit(2)

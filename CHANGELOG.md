@@ -4,6 +4,18 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Added
+
+- `config/skills.yml`, approved spellings of cv.md's skills. The tailored skills
+  block prints the one the posting uses ("RESTful APIs" where cv.md says "REST
+  APIs"), and a skill named only by an alias now counts as named. Rules and the
+  traps (compound items, ordinary English words) are in
+  `config/skills.example.yml`.
+- `go run ./cmd/gate skills <home>` scores the skills block in the posting's own
+  spelling over every cached JD, with and without aliases. With the first nine,
+  48 alias-only mentions across 351 JDs went from 0 carried to all 48, and none
+  of the 1,830 cv.md-spelled ones moved.
+
 ### Changed
 
 - Phase 2's `north_star` is read from the archetype's `fit` tier in
@@ -15,6 +27,8 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Fixed
 
+- `batch/bench-tools/rho.mjs` crashed on an undefined `dirs` whenever it was run
+  from the command line.
 - The three model gates all ran the oracle from paths that no longer resolve.
   `gate-phase1.sh` and `gate-p3.sh` invoked `batch/ollama-scorer.mjs` and
   `batch/local-pdf-offer.mjs`, both cut from the 0.6.0 keep-list by mistake;
