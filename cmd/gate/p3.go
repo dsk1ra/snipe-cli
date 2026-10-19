@@ -37,9 +37,6 @@ func gateP3(home, cvPath, reportPath, jdPath, outPath string) int {
 		return 2
 	}
 	cfg.CVRaw = string(cv)
-	// The oracle has no aliases. Comparing with the user's skills.yml loaded
-	// would diff their spellings, not the two selectors.
-	cfg.Aliases = nil
 
 	report, err := os.ReadFile(reportPath)
 	if err != nil {
@@ -87,10 +84,13 @@ func gateP3(home, cvPath, reportPath, jdPath, outPath string) int {
 // LaTeX template has no slot for it, so it is dead on both sides and diffing it
 // would fail the gate over output neither implementation prints. `summary` is
 // excluded for the same reason — Jake's Resume has no summary section.
+//
+// `skills` left the comparison when the Go selector moved to whole-phrase naming
+// and 5/7/3 limits; the oracle still names by token overlap at 6/12/3, so the
+// two now differ on purpose. `gate skills` measures the block instead.
 type comparableContent struct {
 	Experience []fill.ContentExp  `json:"experience"`
 	Projects   []fill.ProjectPick `json:"projects"`
-	Skills     []phase3.SkillPick `json:"skills"`
 	Modules    []string           `json:"education_modules"`
 }
 
@@ -103,12 +103,8 @@ func comparable(c fill.Content) comparableContent {
 		out.Modules = []string{}
 	}
 	_ = json.Unmarshal(c.Projects, &out.Projects)
-	_ = json.Unmarshal(c.Skills, &out.Skills)
 	if out.Projects == nil {
 		out.Projects = []fill.ProjectPick{}
-	}
-	if out.Skills == nil {
-		out.Skills = []phase3.SkillPick{}
 	}
 	return out
 }

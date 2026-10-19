@@ -14,6 +14,7 @@ has not shipped.
 | 1b | `north_star` from the profile's `fit` tier, not the model | implemented, measured: its own moves all toward the labels |
 | 2 | Measure the skills block in the posting's own spelling (`gate skills`) | done |
 | 3 | Approved skill aliases (`config/skills.yml`) | done, measured |
+| 3b | Whole-form skill naming and 5/7/3 block limits | done, measured |
 | 4 | Embedding-suggested aliases and a review queue | not started: needs the GPU and a TUI decision |
 | 5 | Constrained keyword edit inside bullets | not started, and possibly unnecessary (see §5) |
 | 6 | Qwen3.5-35B-A3B as a Phase 2 benchmark arm | not started |
@@ -203,8 +204,8 @@ aliases:
 **Behaviour** (`phase3.SelectSkills`): an item the posting names only by an alias
 counts as named (tier 1, so it is kept and ranked) and prints as the posting
 wrote it. The longest matching form wins. If the posting also uses cv.md's own
-spelling, that one stays. With nil aliases the selector is unchanged, and
-`gate p3` nulls them so the oracle comparison is still like for like.
+spelling, that one stays. With nil aliases the selector is unchanged.
+`gate p3` no longer compares the skills block at all (§3b).
 
 **Measured** over 351 cached JDs with the first nine aliases:
 
@@ -233,6 +234,35 @@ counts of postings): RESTful 20, Postgres 10, Golang 13, IaC 9, JS 11, GenAI 10.
 Bullets were deliberately left alone. A recruiter's full-text search, which is
 the filter the research points at, finds the term in the skills block. Changing
 bullet text costs grounding for little search value; see §5.
+
+## 3b. Whole-form naming and the block limits
+
+The limits did nothing on their own. `SelectSkills` counted an item as named when
+it shared one token with the posting: "engineering" named "prompt and context
+engineering" in 241 of 351 cached postings, "design" named System Design. Named
+categories are never cut, so nearly every category survived any cap.
+
+An item is now named only when the posting contains one of its `SkillForms`
+whole: the item, either side of a spaced ` / `, or an approved alias. Token hits
+still rank items inside the tier, floored at 1 so "AI" (under the tokenizer's
+three characters) is not lost. Measured with `gate skills . --sweep` over the 351
+cached postings, aliases on:
+
+| naming, cats/items/floor | named kept | categories | items | lines (est.) |
+|---|---|---|---|---|
+| token overlap, 6/12/3 (before) | 98.5% | 7.3 | 37 | 9.8 |
+| whole form, 6/12/3 | 100% | 6.0 | 26 | 6.4 |
+| **whole form, 5/7/3 (ships)** | **99.8%** | **5.2** | **22** | **5.3** |
+| whole form, 5/7/5 | 99.8% | 5.2 | 28 | 6.2 |
+| whole form, 4/7/3 | 99.8% | 4.6 | 20 | 4.7 |
+
+The floor of 3 was chosen over 5: the goal's "5–7 items" read literally adds
+about six items per CV that the posting never mentions. 5/7/3 drops 6 of 2,574
+named mentions, all DevOps items on postings that name eight or more from one
+category. 16% of postings name more than five categories and keep them all.
+
+The Node selector still names by token overlap at 6/12/3, so `gate p3` stopped
+comparing `skills`; experience, projects and modules are still diffed.
 
 ## 4. Embedding-suggested aliases (next)
 
@@ -348,16 +378,16 @@ they differ by sample.
   would add 30–90 s for something that does not affect the CV.
 - **A vector database.** ~150 items; brute force is microseconds.
 - **LLM-chosen skill categories.** `SelectSkills` is deterministic and already
-  at `skill_coverage` 1.000. The 3–5 × 5–7 limits belong in code over fixed
-  categories. A model brings back the random-or-overconfident behaviour the user
+  at `skill_coverage` 1.000. The limits live in code over fixed categories
+  (§3b). A model brings back the random-or-overconfident behaviour the user
   wanted supervised.
 - **Free bullet generation from project descriptions.** §5.
 - **More bank variants.** Measured negative (`PHASE3-RETENTION-LEDGER.md` §4.3).
 
 ## Found on the way
 
-- `internal/providers/apify_test.go:75` hardcodes 2026-08-26 as "this week" and
-  has failed since that date passed. Unrelated to this work; not fixed.
+- `internal/providers/apify_test.go:75` hardcoded 2026-08-26 as "this week" and
+  had failed since that date passed. It compares against today now.
 - `batch/bench-tools/rho.mjs` referenced an undefined `dirs` and crashed from the
   command line. Fixed.
 - `scripts/gate-phase2.sh` now expects `p2.judgment`, the eval and the report to

@@ -130,6 +130,16 @@ strings, so an alias-only mention is absent from its denominator, not a miss. An
 alias replaces the whole item, so a compound item (`Terraform / Infrastructure
 as Code`) must be split in cv.md before it can take one.
 
+**The Go selector names by whole forms and ships 5/7/3** (`phase3.SkillCats`,
+`SkillItems`, `SkillFloor`). Token overlap let a single shared word name an item:
+"engineering" named a category in 241 of 351 cached postings, so nearly every
+category counted as named and the cap never bound (7.3 categories, 37 items).
+Now the posting must contain the item, one side of its ` / `, or an alias. `go
+run ./cmd/gate skills . --sweep` chose the limits; 5/7/3 keeps 2,568 of 2,574
+named mentions in about 22 items and an estimated 5.3 lines, down from 9.8. The
+`selectSkills` described here still names by token overlap at 6/12/3, which is
+why `gate p3` no longer diffs the skills block.
+
 `maxCats` (6) budgets only the categories the posting did *not* name; one it did
 is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0
 now passes no `--max-skills` at all. **Worth `skill_coverage` 0.932 → 1.000**

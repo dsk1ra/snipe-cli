@@ -33,6 +33,15 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   capped postings among 351 cached JDs fell from 52 to 14, every one of them
   full-time on-site, and pair accuracy on the 18 labelled offers rose from 63.3%
   to 77.7%.
+- The tailored skills block names a skill only when the posting contains one of
+  its forms whole (the item itself, a side of a ` / `, an approved alias). One
+  shared word used to be enough, so "engineering" named a category in 241 of 351
+  cached postings and the category cap never bound. The limits are now 5
+  categories, 7 items and a floor of 3, down from 6, 12 and 3. Over the 351
+  postings the block falls from 37 items to about 22 and from an estimated 9.8
+  lines to 5.3, and keeps 2,568 of 2,574 named mentions. `gate p3` stops
+  comparing skills with the Node oracle, which keeps the old rule; `gate skills
+  --sweep` measures the block instead.
 
 ### Fixed
 

@@ -116,6 +116,30 @@ func TestSelectSkillsKeepsWhatThePostingNamed(t *testing.T) {
 	}
 }
 
+// A word an item shares with the posting does not name it; a whole form does.
+// Token overlap had "engineering" naming a category in 241 of 351 postings.
+func TestSelectSkillsNamesWholeFormsOnly(t *testing.T) {
+	cv := strings.Replace(writerCV, "**Cloud:** AWS, Docker",
+		"**Cloud:** AWS, Docker\n**Practice:** System Design, TypeScript / JavaScript", 1)
+	cats := func(jd string) string {
+		var out []string
+		for _, c := range SelectSkills(cv, jd, 0, 12, 1, nil) {
+			out = append(out, c.Category)
+		}
+		return strings.Join(out, ",")
+	}
+	// With no budget for unnamed categories, only named ones survive.
+	if got := cats("A strong design and engineering culture."); got != "" {
+		t.Errorf("a shared word named %q, want nothing named", got)
+	}
+	if got := cats("You will own system design reviews."); got != "Practice" {
+		t.Errorf("named %q, want Practice by its whole phrase", got)
+	}
+	if got := cats("TypeScript on the frontend."); got != "Practice" {
+		t.Errorf("named %q, want Practice by one side of the slash", got)
+	}
+}
+
 // The real cv.md, so the parse is exercised against the file that actually ships.
 func TestSelectSkillsAgainstTheRealCV(t *testing.T) {
 	b, err := os.ReadFile("../../cv.md")
@@ -126,9 +150,9 @@ func TestSelectSkillsAgainstTheRealCV(t *testing.T) {
 	if len(cats) < 4 {
 		t.Fatalf("parsed %d skill categories out of cv.md, want the real block", len(cats))
 	}
-	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", 6, 12, 3, nil)
-	if len(got) == 0 || len(got) > 6 {
-		t.Fatalf("selected %d categories, want 1..6", len(got))
+	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", SkillCats, SkillItems, SkillFloor, nil)
+	if len(got) == 0 || len(got) > SkillCats {
+		t.Fatalf("selected %d categories, want 1..%d", len(got), SkillCats)
 	}
 	t.Logf("%d categories from %d:", len(got), len(cats))
 	for _, c := range got {

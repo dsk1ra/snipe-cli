@@ -56,7 +56,7 @@ func main() {
 	case "fit":
 		os.Exit(gateFit(os.Args[2], os.Args[3]))
 	case "skills":
-		os.Exit(gateSkills(os.Args[2]))
+		os.Exit(gateSkills(os.Args[2], len(os.Args) > 3 && os.Args[3] == "--sweep"))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown gate %q\n", os.Args[1])
 		os.Exit(2)

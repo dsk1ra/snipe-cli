@@ -57,7 +57,7 @@ func VerbatimContent(selectedCV, cvText, jdText string, projectBullets int, alia
 
 	c := fill.Content{Experience: exp}
 	c.Projects, _ = json.Marshal(picks)
-	c.Skills, _ = json.Marshal(SelectSkills(cvText, jdText, 6, 12, 3, aliases))
+	c.Skills, _ = json.Marshal(SelectSkills(cvText, jdText, SkillCats, SkillItems, SkillFloor, aliases))
 	return c
 }
 

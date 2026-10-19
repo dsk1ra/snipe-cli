@@ -220,6 +220,32 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 	return out
 }
 
+// SkillForms are the spellings that count as a posting naming an item: the item
+// itself, each side of a spaced slash ("TypeScript / JavaScript" lists two real
+// skills, and a posting asking for TypeScript has named it), and its approved
+// aliases. It mirrors cv-writers.mjs's skillForms, plus the aliases.
+func SkillForms(item string, aliases map[string][]string) []string {
+	forms := []string{item}
+	if parts := strings.Split(item, " / "); len(parts) > 1 {
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				forms = append(forms, p)
+			}
+		}
+	}
+	return append(forms, aliases[strings.ToLower(item)]...)
+}
+
+// The skills block as it ships: up to SkillCats categories the posting did not
+// name, up to SkillItems items in each, and a SkillFloor of cv.md's own. Chosen
+// with `gate skills <home> --sweep` over 351 cached postings: 99.8% of named
+// skills kept, 5.2 categories and ~22 items, against 37 items at the old 6/12/3.
+const (
+	SkillCats  = 5
+	SkillItems = 7
+	SkillFloor = 3
+)
+
 // SelectSkills ranks cv.md's skill categories by what the posting asked for, and
 // the items inside each the same way.
 //
@@ -228,7 +254,7 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 // shared a term with the posting: 75% of it bought nothing an ATS could read and
 // cost 4.4 rendered lines, on a page whose whole evidence budget is 21.
 //
-//  1. the posting's own terms — hits > 0
+//  1. the posting's own terms — one of SkillForms, as a whole phrase
 //  2. what cv.md ties to them — relatedToJd, so Java brings Spring Boot
 //  3. a floor in cv.md's order — minItems, so nothing reads as pandering
 //
@@ -239,7 +265,7 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 // aliases are config/skills.yml's approved spellings, keyed by item lowercased.
 // An item the posting names only by an alias counts as named, and prints in the
 // posting's spelling: "REST APIs" ships as "RESTful APIs" to a posting that says
-// so. Nil keeps cv.md's own strings, which is what the oracle gates compare.
+// so. Nil keeps cv.md's own strings.
 func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliases map[string][]string) []SkillPick {
 	jd := map[string]bool{}
 	for _, t := range tokenize(jdText) {
@@ -281,7 +307,20 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 		}
 		return best
 	}
-	named := func(item string) int { return hits(spelling(item)) }
+	// named was token overlap, and one shared word was enough: "engineering"
+	// named "prompt and context engineering" in 241 of 351 postings, "design"
+	// named System Design. Nearly every category read as named and named ones
+	// are never cut, so the caps never bound. Now a whole form must appear;
+	// hits only ranks within the tier, floored at 1 because "AI" is under
+	// tokenize's three characters and would otherwise score nothing.
+	named := func(item string) int {
+		for _, f := range SkillForms(item, aliases) {
+			if strings.Contains(jdNorm, NormPhrase(f)) {
+				return max(1, hits(spelling(item)))
+			}
+		}
+		return 0
+	}
 
 	cats := ParseSkillCategories(cvText)
 	var all []string
