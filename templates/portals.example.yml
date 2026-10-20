@@ -47,6 +47,23 @@
 # "Remote, New York or India" passes (New York wins), while "Remote, India" is
 # still rejected. Omit always_allow entirely and the filter behaves as before.
 #
+# UK: `regions` turns on a built-in UK gazetteer, which places each posting
+# before the keyword tiers run and fixes what substring matching gets wrong
+# ("Wales" in "New South Wales", "Birmingham, AL", a bare "Coventry"):
+#
+#   regions: [london, west-midlands, uk-wide]
+#
+#   london         London, its boroughs and districts, E/EC/N/NW/SE/SW/W/WC postcodes
+#   west-midlands  the metropolitan county: Birmingham, Coventry, Wolverhampton,
+#                  Solihull, Dudley, Walsall, Sandwell (not Warwick or Rugby)
+#   uk-wide        no UK town named ("United Kingdom", "Remote - UK"), or an
+#                  option that is remote ("Edinburgh or Remote (UK)")
+#   uk             anywhere in the UK, whatever the town
+#
+# A posting placed in a listed region passes; one placed in the UK outside them,
+# or only abroad, is dropped; one it cannot place ("Remote", an office name)
+# falls through to always_allow/allow/block. Without `regions` nothing changes.
+#
 # Example below targets US-based remote + a couple of US metros, blocking
 # common foreign hubs. Customize to your geography.
 
@@ -429,6 +446,21 @@ search_queries:
 #   workable        apply.workable.com/<slug>
 #   smartrecruiters (careers|jobs).smartrecruiters.com/<slug>
 #   recruitee       <slug>.recruitee.com
+#   workday         <tenant>.wdN.myworkdayjobs.com/<site>
+#                   wdN.myworkdaysite.com/recruiting/<tenant>/<site>
+#
+# Workday entries take an optional `country:` (e.g. United Kingdom). Where the
+# site has a country facet the board is filtered server-side; where it has none,
+# each office's country is read once and cached under ~/.cache/snipe-workday.
+# Either way the country is appended to the posting's location, so the
+# location_filter above sees it.
+#
+# Registry boards: once `snipe registry` has built data/registry.tsv, every scan
+# also fetches each board in it that a provider here can read — Workday,
+# Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee — with
+# `country: United Kingdom`. A board already listed under tracked_companies is
+# not fetched twice. The title, location and age filters apply to them as to
+# everything else.
 #
 # When the public careers URL is a branded custom domain (e.g.
 # careers.adyen.com), set `provider: smartrecruiters` explicitly to

@@ -6,6 +6,27 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Added
 
+- `snipe registry` builds `data/registry.tsv`, the scanner's company list from
+  public data instead of portals.yml: every employer the gender pay gap service
+  lists (all UK employers with 250+ staff, 11,231 in October 2026), and for each
+  one with a website, the ATS behind its careers page and the board URL it
+  answers on. It reads the home page, the careers link on it and the "search
+  jobs" link on that, and recognises 36 ATSs and career-site platforms. A
+  resolution is reused for 30 days, and a stopped build keeps what it resolved.
+  `snipe scan` fetches every registry board a provider can read, alongside
+  portals.yml's, whenever the registry exists.
+- A Workday provider. `careers_url: https://<tenant>.wdN.myworkdayjobs.com/<site>`
+  (or the `myworkdaysite.com/recruiting/` form) is detected like any other ATS,
+  and an optional `country:` keeps only that country's postings. 169 of the 305
+  reachable Workday boards in the registry have a country facet, which cuts
+  their 66,202 postings to 5,515 in the UK before anything is fetched; for the
+  other 136, each office's country is read off one posting and cached, and a
+  "3 Locations" posting is placed only once it has passed the title filter. On
+  the first full scan, 27 of a 60-posting sample of the new Workday matches were
+  multi-location ones that had passed the location filter blank, Juniper's Ohio
+  sales roles among them. Phase 1 reads Workday descriptions from the same API,
+  since the posting page is a script shell and the HTML fallback got nothing
+  from it.
 - `config/skills.yml`, approved spellings of cv.md's skills. The tailored skills
   block prints the one the posting uses ("RESTful APIs" where cv.md says "REST
   APIs"), and a skill named only by an alias now counts as named. Rules and the
@@ -26,6 +47,19 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Changed
 
+- The binary builds to `./snipe` at the repo root, which the docs now say: it
+  finds prompts/ and templates/ beside itself, so `./bin/snipe` only worked from
+  the repo root. CI also runs on pushes to `develop`, not only on pull requests
+  into it.
+- `location_filter.regions` places postings with a UK gazetteer before the
+  keyword tiers: `london`, `west-midlands` (the metropolitan county), `uk-wide`
+  and `uk`. Substring matching had kept "Sydney, New South Wales" on "Wales" and
+  "Birmingham, AL" on "Birmingham", and dropped a bare "Coventry" or "Solihull"
+  for naming no keyword. Without `regions` the filter is unchanged. The scan's
+  summary counts the new postings by place when it is on.
+- `snipe scan` fetches eight boards at a time instead of one. The postings are
+  still filtered in entry order once every fetch is in, so which copy of a
+  duplicate is kept does not depend on which board answered first.
 - Phase 2's `north_star` is read from the archetype's `fit` tier in
   `profile.yml` (primary 5, secondary 3, adjacent 2, unlisted 1) and then capped
   as before; the model no longer scores it. It had been doing the lookup anyway,
@@ -101,6 +135,9 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   token overlap ranks again. On the live CV's 394 postings, printed items
   sharing a word with the posting rose from 27% to 43%, and 7 of 8 "Security
   Engineer" postings get a Security row, up from 5.
+- Accepting an alias wrote `config/skills.yml` by renaming a temporary file
+  over it, which replaced a symlinked `skills.yml` with a plain file. It now
+  writes through the link to the file behind it.
 
 ### Removed
 

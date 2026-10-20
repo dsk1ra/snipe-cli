@@ -186,3 +186,53 @@ job_boards:
 		t.Fatalf("errors are %v, want one naming apify and none for the careers_url-only entry", res.Errors)
 	}
 }
+
+// lazy is a provider whose postings can only be placed by a further call.
+type lazy struct{ calls *int }
+
+func (lazy) ID() string                  { return "test-lazy" }
+func (lazy) Detect(providers.Entry) bool { return false }
+func (l lazy) Fetch(context.Context, providers.Entry, providers.Fetcher) ([]providers.Job, error) {
+	at := func(loc string) func(context.Context) string {
+		return func(context.Context) string { *l.calls++; return loc }
+	}
+	return []providers.Job{
+		{Title: "Backend Engineer", URL: "https://x/1", Locate: at("Paris, France")},
+		{Title: "Backend Engineer", URL: "https://x/2", Locate: at("London, United Kingdom")},
+		{Title: "Designer", URL: "https://x/3", Locate: at("London, United Kingdom")},
+	}, nil
+}
+
+var lazyCalls int
+
+func init() { providers.Register(lazy{&lazyCalls}) }
+
+func TestRunLocatesOnlyWhatTheTitleKeeps(t *testing.T) {
+	c := cfg(t, `
+max_age_hours: 0
+title_filter:
+  positive: [engineer]
+location_filter:
+  allow: [united kingdom]
+tracked_companies:
+  - name: Acme
+    provider: test-lazy
+`)
+	lazyCalls = 0
+	res := Run(context.Background(), c, stub{}, Known{}, time.Now())
+	if lazyCalls != 2 || len(res.Kept) != 1 || res.Kept[0].URL != "https://x/2" || res.Filtered.Location != 1 {
+		t.Errorf("%d locate calls, kept %+v, filtered %+v: want 2 calls, the London engineer kept, Paris dropped", lazyCalls, res.Kept, res.Filtered)
+	}
+}
+
+func TestAddBoardsSkipsWhatPortalsAlreadyTracks(t *testing.T) {
+	c := cfg(t, "tracked_companies:\n  - name: Intercom\n    careers_url: https://job-boards.greenhouse.io/intercom\n")
+	n := c.AddBoards([]providers.Entry{
+		{Name: "Intercom R&D", CareersURL: "https://job-boards.greenhouse.io/Intercom/"},
+		{Name: "Barclays", CareersURL: "https://barclays.wd3.myworkdayjobs.com/External"},
+		{Name: "Barclays again", CareersURL: "https://barclays.wd3.myworkdayjobs.com/External"},
+	})
+	if n != 1 || len(c.TrackedCompanies) != 2 || c.TrackedCompanies[1].Name != "Barclays" {
+		t.Errorf("added %d: %+v", n, c.TrackedCompanies)
+	}
+}

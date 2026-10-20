@@ -28,6 +28,12 @@ type Job struct {
 	// PostedAt is epoch milliseconds, zero when the source exposes no usable
 	// date. The age filter is fail-closed, so zero means dropped.
 	PostedAt int64
+	// Locate, when set, places a posting the list could not — Workday's
+	// "3 Locations" — and returns the location to filter on. It costs a
+	// request, so the scan calls it only for postings that pass the title
+	// filter, from the goroutine that fetched them. Not cached: it is a call,
+	// not data.
+	Locate func(context.Context) string `json:"-"`
 }
 
 // Entry is one tracked_companies entry.

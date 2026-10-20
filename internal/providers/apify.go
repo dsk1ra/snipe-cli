@@ -227,17 +227,23 @@ type apifyCache struct {
 
 func apifyCachePath(actor string, input []byte) string {
 	sum := sha1.Sum(append([]byte(actor), input...))
-	base := os.Getenv("XDG_CACHE_HOME")
-	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".cache")
-	}
 	slug := strings.Map(func(r rune) rune {
 		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			return r
 		}
 		return '-'
 	}, strings.ToLower(actor))
-	return filepath.Join(base, "snipe-apify", slug+"-"+hex.EncodeToString(sum[:])[:16]+".json")
+	return filepath.Join(cacheDir("snipe-apify"), slug+"-"+hex.EncodeToString(sum[:])[:16]+".json")
+}
+
+// cacheDir is a provider's directory under the user's cache: what it paid to
+// learn, kept outside the data root because losing it costs requests, not data.
+func cacheDir(name string) string {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		base = filepath.Join(os.Getenv("HOME"), ".cache")
+	}
+	return filepath.Join(base, name)
 }
 
 func readApifyCache(path string, ttl time.Duration) ([]Job, bool) {

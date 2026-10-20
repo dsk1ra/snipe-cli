@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -8,11 +9,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
@@ -22,6 +27,7 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/phase2"
 	"github.com/dsk1ra/snipe-cli/internal/phase3"
 	"github.com/dsk1ra/snipe-cli/internal/providers"
+	"github.com/dsk1ra/snipe-cli/internal/registry"
 	"github.com/dsk1ra/snipe-cli/internal/run"
 	"github.com/dsk1ra/snipe-cli/internal/scan"
 	"github.com/dsk1ra/snipe-cli/internal/state"
@@ -412,6 +418,13 @@ func cmdScan(args []string) error {
 	if err != nil {
 		return fmt.Errorf("portals.yml: %w — run onboarding first", err)
 	}
+	// The registry's boards are scanned whenever it exists: building it with
+	// `snipe registry` is the opt-in.
+	reg, err := registry.Load(l.Registry())
+	if err != nil {
+		return err
+	}
+	fromRegistry := cfg.AddBoards(registry.Entries(reg))
 	if *company != "" {
 		cfg.TrackedCompanies = filterByName(cfg.TrackedCompanies, *company)
 		cfg.JobBoards = filterByName(cfg.JobBoards, *company)
@@ -422,8 +435,8 @@ func cmdScan(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("scanning %d companies, %d boards — %d URLs, %d company+role pairs already known\n",
-		len(cfg.TrackedCompanies), len(cfg.JobBoards), len(known.URLs), len(known.Roles))
+	fmt.Printf("scanning %d companies (%d from the registry), %d boards — %d URLs, %d company+role pairs already known\n",
+		len(cfg.TrackedCompanies), fromRegistry, len(cfg.JobBoards), len(known.URLs), len(known.Roles))
 
 	ctx, cleanup := signalCtx(func() {})
 	defer cleanup()
@@ -435,10 +448,27 @@ func cmdScan(args []string) error {
 	fmt.Printf("%d fetched | dropped %d title, %d location, %d age, %d duplicate, %d same role | %d new\n",
 		res.Fetched, res.Filtered.Title, res.Filtered.Location, res.Filtered.Age,
 		res.Filtered.Duplicate, res.Filtered.Role, len(res.Kept))
+	if cfg.Placing() && len(res.Kept) > 0 {
+		by := map[string]int{}
+		for _, j := range res.Kept {
+			by[scan.Place(j.Location).Label()]++
+		}
+		var parts []string
+		for _, l := range []string{"West Midlands", "West Midlands + London", "London", "UK-wide", "elsewhere in the UK", "unplaced"} {
+			if by[l] > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", by[l], l))
+			}
+		}
+		fmt.Printf("new by place: %s\n", strings.Join(parts, ", "))
+	}
 
 	if *dryRun {
 		for _, j := range res.Kept {
-			fmt.Printf("  %s — %s (%s)\n", j.Company, j.Title, j.URL)
+			where := ""
+			if cfg.Placing() {
+				where = " [" + scan.Place(j.Location).Label() + "]"
+			}
+			fmt.Printf("  %s — %s · %s%s (%s)\n", j.Company, j.Title, cmp.Or(j.Location, "no location"), where, j.URL)
 		}
 		return nil
 	}
@@ -455,6 +485,100 @@ func cmdScan(args []string) error {
 	}
 	if n > 0 {
 		fmt.Printf("queued %d — `snipe run` scores them\n", n)
+	}
+	return nil
+}
+
+// cmdRegistry rebuilds data/registry.tsv: every employer the gender pay gap
+// service lists, and the ATS behind each one's careers page.
+//
+// A stop keeps what was resolved. The first signal finishes the sites in
+// flight, the second drops them, and either way the file is written; the next
+// build resolves only what is left.
+func cmdRegistry(args []string) error {
+	fs := flag.NewFlagSet("registry", flag.ExitOnError)
+	workers := fs.Int("workers", 24, "sites resolved at a time")
+	maxAge := fs.Int("max-age", 30, "days a site's resolution is reused before it is checked again")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	l := layout()
+	now := time.Now()
+	web := registry.NewWeb()
+	var stopping atomic.Bool
+	ctx, cleanup := signalCtx(func() { stopping.Store(true) })
+	defer cleanup()
+
+	prev, err := registry.Load(l.Registry())
+	if err != nil {
+		return err
+	}
+	es, err := registry.Download(ctx, web, now)
+	if err != nil {
+		return fmt.Errorf("pay gap data: %w", err)
+	}
+	todo := registry.Carry(es, prev, now, *maxAge)
+	withSite := 0
+	for _, e := range es {
+		if e.Site != "" {
+			withSite++
+		}
+	}
+	fmt.Printf("%d employers, %d with a website — %d sites to resolve, %d at a time\n", len(es), withSite, len(todo), *workers)
+
+	type outcome struct{ ats, board string }
+	var mu sync.Mutex
+	got := map[string]outcome{}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(*workers)
+	r := registry.Resolver{G: web}
+	for _, site := range todo {
+		if stopping.Load() || gctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if stopping.Load() {
+				return nil
+			}
+			ats, board := r.Resolve(gctx, site)
+			// A crawl cut short by the second signal reads as Unreachable,
+			// which is the cancel talking, not the site.
+			if gctx.Err() != nil {
+				return nil
+			}
+			mu.Lock()
+			got[site] = outcome{ats, board}
+			n := len(got)
+			mu.Unlock()
+			if n%250 == 0 {
+				fmt.Fprintf(os.Stderr, "  %d/%d resolved\n", n, len(todo))
+			}
+			return nil
+		})
+	}
+	_ = g.Wait() // workers never return an error
+
+	day := now.Format("2006-01-02")
+	tally := map[string]int{}
+	for i := range es {
+		if o, ok := got[es[i].Site]; ok {
+			es[i].ATS, es[i].Board, es[i].Checked = o.ats, o.board, day
+		}
+		if es[i].Site != "" {
+			tally[cmp.Or(es[i].ATS, "not yet resolved")]++
+		}
+	}
+	if err := registry.Save(l.Registry(), es); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(tally))
+	for k := range tally {
+		names = append(names, k)
+	}
+	sort.Slice(names, func(i, j int) bool { return tally[names[i]] > tally[names[j]] })
+	fmt.Printf("wrote %s — employers by ATS:\n", l.Registry())
+	for _, k := range names {
+		fmt.Printf("  %6d  %s\n", tally[k], k)
 	}
 	return nil
 }

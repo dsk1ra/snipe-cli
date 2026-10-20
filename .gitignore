@@ -7,6 +7,8 @@ data/applications.db
 data/follow-ups.md
 data/pipeline.md
 data/scan-history.tsv
+# Rebuilt from public data by `snipe registry`; a crawl of thousands of sites.
+data/registry.tsv
 data/parser-output/**/*.json
 !data/parser-output/.gitkeep
 !data/parser-output/**/.gitkeep
@@ -75,6 +77,7 @@ reports/*-RESERVED.md
 
 # Backup files (normalize-statuses.mjs, dedup-tracker.mjs, manual *.bak snapshots)
 *.bak
+*.bak-*
 # nano's emergency save on a crashed edit of an unnamed buffer
 nano.*.save
 
@@ -117,9 +120,10 @@ demo/snipe-demo.gif
 demo/snipe-hero.mp4
 
 # ── Go port ──────────────────────────────────────────────────────────────────
-# The Go binary cannot take ./snipe while the Node bash script of that name is
-# still tracked, so it builds to bin/ for the duration of the port and claims
-# the plain name when the script retires.
+# The Go binary builds to ./snipe, beside prompts/ and templates/: it takes its
+# code root from its own folder, so that is where it finds them from any
+# working directory. bin/ is where it lived while the Node script held the name.
+/snipe
 /bin/
 /gate
 /sandbox

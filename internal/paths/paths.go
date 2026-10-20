@@ -103,6 +103,11 @@ func (l Layout) Followups() string  { return filepath.Join(l.Data(), "follow-ups
 // cache — losing it means re-offering hundreds of postings already judged.
 func (l Layout) ScanHistory() string { return filepath.Join(l.Data(), "scan-history.tsv") }
 
+// Registry is every UK employer the scanner knows of and the ATS behind each
+// one's careers page. It is rebuilt from public data by `snipe registry`, but a
+// rebuild is a crawl of a few thousand sites, so it sits with the data.
+func (l Layout) Registry() string { return filepath.Join(l.Data(), "registry.tsv") }
+
 // Additions is batch/tracker-additions/, overridable so a fixture TSV cannot be
 // merged into the real tracker by the next run.
 func (l Layout) Additions() string {
