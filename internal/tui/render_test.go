@@ -261,11 +261,11 @@ func columnOf(line, sentinel string) int {
 // A focused row shows its routine actions whatever the width — they are what →
 // is about to walk. If the column were sized to whichever row happens to be
 // focused, moving between a row offering "proceed? | link" and one offering
-// "report | link" would shift every label on screen by two columns.
+// "skills | link" would shift every label on screen by two columns.
 func TestTheActionsColumnHoldsStillWhileNavigating(t *testing.T) {
 	const w = 64
 	rows := []rowCells{
-		{marker: "✓", mark: "  ", label: "a done row with a long enough name", score: "4.8", routine: "report | link"},
+		{marker: "✓", mark: "  ", label: "a done row with a long enough name", score: "4.8", routine: "skills | link"},
 		{marker: "·", mark: "  ", label: "a gated row with a long enough name", score: "P1 2.4", actions: "proceed?", routine: "link"},
 	}
 
@@ -287,16 +287,16 @@ func TestTheActionsColumnHoldsStillWhileNavigating(t *testing.T) {
 // truncated to nothing is not recoverable by any keystroke.
 func TestRoutineActionsYieldToTheLabel(t *testing.T) {
 	rows := []rowCells{
-		{marker: "✓", mark: "  ", label: "Information Tech Consultants Ltd — Java Developer", score: "4.8", routine: "report | link"},
+		{marker: "✓", mark: "  ", label: "Information Tech Consultants Ltd — Java Developer", score: "4.8", routine: "skills | link"},
 		{marker: "·", mark: "  ", label: "Engine by Starling — Staff Software Engineer", score: "P1 2.4", actions: "proceed?", routine: "link"},
 	}
 	wide := stripANSI(layoutRows(rows, 120, false)[0])
 	narrow := stripANSI(layoutRows(rows, 56, false)[0])
 
-	if !strings.Contains(wide, "report") {
+	if !strings.Contains(wide, "skills") {
 		t.Errorf("a wide window dropped the routine actions:\n%s", wide)
 	}
-	if strings.Contains(narrow, "report") {
+	if strings.Contains(narrow, "skills") {
 		t.Errorf("a narrow window kept them at the label's expense:\n%s", narrow)
 	}
 	// The row that is asking a question keeps its action at every width.
@@ -310,7 +310,7 @@ func TestRoutineActionsYieldToTheLabel(t *testing.T) {
 // The action index is per-list, not per-row, so "is this the focused action"
 // has to be asked together with "is this the focused row". Asking only the
 // first lit up the same slot on every row at once: with the cursor on one
-// row's "report", every other row's first action was inverted too.
+// row's "skills", every other row's first action was inverted too.
 func TestOnlyTheCursorsActionIsHighlighted(t *testing.T) {
 	rows := map[int]state.Row{}
 	offers := map[int]state.Offer{}

@@ -253,7 +253,7 @@ func TestFocusSurvivesARowChangingKind(t *testing.T) {
 	if q.act >= q.current().stops() {
 		t.Fatalf("act %d is past the %d stops the row now has", q.act, q.current().stops())
 	}
-	if got := q.current().actionAt(q.act); got != actDetail {
+	if got := q.current().actionAt(q.act); got != actSkills {
 		t.Errorf("focus landed on %q, want a stop that exists", got)
 	}
 }
@@ -484,9 +484,9 @@ func TestARowIsDoneOnlyOncePhaseThreeHasRun(t *testing.T) {
 	if describe(3, s).NoCV {
 		t.Error("#3 is still waiting for Phase 3, not refused by the gate")
 	}
-	// An eval that landed is worth reading whether or not the CV followed.
-	if !eq(actionIDs(describe(3, s)), actDetail) {
-		t.Errorf("#3 lost its report action: %v", actionIDs(describe(3, s)))
+	// An evaluated row keeps its skills review whether or not the CV followed.
+	if !eq(actionIDs(describe(3, s)), actSkills) {
+		t.Errorf("#3 lost its skills action: %v", actionIDs(describe(3, s)))
 	}
 
 	// A row awaiting Phase 3 is OPEN, and stays open whether or not a runner
@@ -730,7 +730,7 @@ func TestParseCommand(t *testing.T) {
 }
 
 // The reader pane lives on the queue tab and every tab can open one: the
-// follow-ups board reads a report the same way a row does. Update only reaches
+// follow-ups board reads its reports there. Update only reaches
 // the ACTIVE tab, so a detailMsg raised anywhere else has to be routed by the
 // root — without that, `o` on the follow-ups board opened nothing at all.
 func TestReaderIsBorrowedByOtherTabs(t *testing.T) {

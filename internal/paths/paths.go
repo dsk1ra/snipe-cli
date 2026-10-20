@@ -59,6 +59,12 @@ func (l Layout) Applied() string  { return filepath.Join(l.StateDir(), "applied.
 func (l Layout) Skipped() string  { return filepath.Join(l.StateDir(), "skipped.tsv") }
 func (l Layout) Declined() string { return filepath.Join(l.StateDir(), "declined.tsv") }
 
+// SkillSuggestions is the alias review queue. Its pending rows are rebuilt
+// after every run, but a rejection is a decision nothing else records.
+func (l Layout) SkillSuggestions() string {
+	return filepath.Join(l.StateDir(), "skill-suggestions.tsv")
+}
+
 // Lock lives with the state it guards. It is the only file in there that does
 // not survive the process, which is the point: a lock found in a tree copied
 // off another machine is a lie, and one found beside the state file is at least

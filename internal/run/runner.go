@@ -27,6 +27,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/dsk1ra/snipe-cli/internal/aliases"
+	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
@@ -151,9 +153,37 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Drain works through the queue file, one id at a time, so a JD pasted
 	// while a run is active is picked up rather than colliding with it.
 	if r.Opt.Drain {
-		return r.drain(ctx, offers)
+		err = r.drain(ctx, offers)
+	} else {
+		err = r.pipeline(ctx, offers)
 	}
-	return r.pipeline(ctx, offers)
+	if err == nil && !r.Opt.DryRun {
+		r.suggestAliases(ctx)
+	}
+	return err
+}
+
+// suggestAliases rebuilds the skills review queue once the run is over, when
+// the 30B has nothing left to do and the embedder can have the GPU. It is a
+// courtesy, not a phase: a failure is reported and the run still succeeds.
+// 8–10 s over 228 reports.
+func (r *Runner) suggestAliases(ctx context.Context) {
+	if r.Ollama == nil {
+		return
+	}
+	cfg, err := config.Load(r.L)
+	if err != nil {
+		r.out("skills: no suggestions (%v)", err)
+		return
+	}
+	n, err := aliases.Suggest(ctx, r.L, cfg, r.Ollama)
+	if err != nil {
+		r.out("skills: no suggestions (%v)", err)
+		return
+	}
+	if n > 0 {
+		r.out("skills: %d spellings to review — v on any finished row", n)
+	}
 }
 
 func (r *Runner) drain(ctx context.Context, offers map[int]state.Offer) error {

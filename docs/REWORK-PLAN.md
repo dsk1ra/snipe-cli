@@ -15,7 +15,7 @@ has not shipped.
 | 2 | Measure the skills block in the posting's own spelling (`gate skills`) | done |
 | 3 | Approved skill aliases (`config/skills.yml`) | done, measured |
 | 3b | Whole-form skill naming and 5/7/3 block limits | done, measured |
-| 4 | Embedding-suggested aliases and a review queue | not started: needs the GPU and a TUI decision |
+| 4 | Embedding-suggested aliases and a review screen | done: rebuilt after every run, reviewed on `v` |
 | 5 | Constrained keyword edit inside bullets | not started, and possibly unnecessary (see §5) |
 | 6 | Qwen3.5-35B-A3B as a Phase 2 benchmark arm | not started |
 
@@ -274,7 +274,7 @@ number the posting used. That names 82 more mentions, all real, with no change
 in block size. Differently worded matches (Kafka for Apache Kafka, mentorship
 for Mentoring) are left to step 4.
 
-## 4. Embedding-suggested aliases (next)
+## 4. Embedding-suggested aliases
 
 Hand-writing aliases does not scale. The plan is to let embeddings propose them
 and the user approve them once, so the approval cost is per pair, not per JD.
@@ -298,8 +298,9 @@ tools. With it most do separate, but React ~ React Native still beats several re
 aliases. **So embeddings propose, and the user accepts.** Nothing auto-applies.
 
 **Design.**
-- Source of posting terms: the stage-1 `keywords` and `tech_stack` (already
-  extracted; reports carry them under `## Keywords`). No new LLM call.
+- Source of posting terms: the stage-1 `keywords` and `tech_stack`, read from
+  each report's `## Keywords` line (the stage checkpoints are deleted once an
+  offer completes). No new LLM call.
 - For each posting term that is not a cv.md item or an approved alias, find the
   nearest cv.md item by cosine, with the prefix on the query side only (per the
   Qwen3 docs). Above a threshold set from the probe, it becomes a proposal.
@@ -309,17 +310,36 @@ aliases. **So embeddings propose, and the user accepts.** Nothing auto-applies.
   user approves.
 - Proposals go to a review queue. An approval appends to `config/skills.yml`; a
   rejection is remembered so it is not proposed again.
-- Bootstrap over the ~350 cached JDs once, then run incrementally.
+- Rebuilt from every report after each run: 8–10 s over 228 reports, so no
+  incremental bookkeeping.
 - No vector DB: ~150 items is microseconds of brute force, and `internal/embed`
   already has `Cosine`, `TopK` and a JSON cache.
 
 **Constraints.** Embedding calls time out while the 30B is benchmarking (GPU
 contention, `batch/labels/LEDGER.md`), so run it when nothing else is.
 
-**Open: the review UX.** It must stay a TUI. Proposed shape: Phases 1–2 stay
-headless; the review queue is a TUI screen worked through when convenient; Enter
-accepts. `charm.land/bubbles/v2` (list) is already a dependency. To be discussed
-before building.
+**Built** (`internal/aliases`, `internal/tui/skills.go`). The runner rebuilds
+`batch/state/skill-suggestions.tsv` when a run ends. A suggestion is a term in
+at least 2 postings whose nearest cv.md item scores at least 0.68 with the
+prefix on the query side. Over 228 reports that is 46 suggestions, led by C++ →
+C/C++ (29 postings), Kafka → Apache Kafka (25) and automated testing → Test
+Automation (17).
+
+The review replaced the report: `v`, or the row's "skills" action, opens the
+block the posting would get if tailored now and the whole queue, with this
+posting's terms first and quoted from the posting. Enter writes the spelling
+into `config/skills.yml` (a text edit that must parse back as exactly one added
+alias, so comments survive), `n` records a rejection, ←→ picks another of the
+three nearest items. A target with a spaced ` / ` is refused with "split it in
+cv.md first", since an alias replaces the whole item. A term most postings use
+only in lowercase is flagged ("Resilience": 23), which is the ordinary-word
+trap counted. CVs already rendered are left alone.
+
+The queue needs the reject key. On a read of the 46, 19 point at the wrong
+item outright (relational databases → RDS, OpenAI → Ollama, Containerization →
+Testcontainers, five flavours of resilience → Resilience4j) and seven more are
+arguable, mostly generic API phrases → REST APIs. A rejection is per term and
+permanent, so the cost is paid once.
 
 **Separate experiment, not part of this:** the pipeline sends no instruction
 prefix anywhere, including Phase 2 evidence retrieval and Phase 3 bullet ranking.

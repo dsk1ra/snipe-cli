@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +78,9 @@ type queueTab struct {
 	// due answers "how many follow-ups are actionable", asked of the tab that
 	// owns the data rather than copied from it. nil before the root binds it.
 	due func() int
+
+	// review is the skills screen, open over the list when non-nil.
+	review *skillsReview
 
 	detail      viewport.Model
 	detailOpen  bool
@@ -225,6 +227,23 @@ func (q *queueTab) Update(m tea.Msg) (bool, tea.Cmd) {
 		// framing, including the case where a chunk boundary split the marker.
 		return true, q.onPaste(m.Content)
 
+	case reviewMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.review = m.r
+		return true, nil
+
+	case reviewDoneMsg:
+		if q.review == nil {
+			return true, nil
+		}
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.review.done(m)
+		return true, notef("%s", m.note)
+
 	case detailMsg:
 		q.busy = ""
 		if m.err != nil {
@@ -309,6 +328,17 @@ func (q *queueTab) pasteJD(text string) {
 }
 
 func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
+	// The skills screen is modal like the reader pane, and closes the same way.
+	if q.review != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q", "v":
+			q.review = nil
+			return true, nil
+		}
+		return true, q.review.key(k)
+	}
 	// The reader pane owns every key while it is open, bar the ones that close
 	// it. ctrl+c is the exception: a modal must never trap a quit.
 	if q.detailOpen {
@@ -421,8 +451,8 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	switch {
 	case key.Matches(k, q.keys.Open):
 		return true, q.openResult(info)
-	case key.Matches(k, q.keys.Detail):
-		return true, q.openDetail(info)
+	case key.Matches(k, q.keys.Skills):
+		return true, openSkills(q.l, info)
 	case key.Matches(k, q.keys.Applied):
 		return true, q.markApplied(info)
 	case key.Matches(k, q.keys.Skip):
@@ -676,8 +706,8 @@ func (q *queueTab) fire() tea.Cmd {
 			return q.proceed(info)
 		case actDebug:
 			return q.openDebug(info)
-		case actDetail:
-			return q.openDetail(info)
+		case actSkills:
+			return openSkills(q.l, info)
 		default:
 			return q.openResult(info)
 		}
@@ -900,9 +930,9 @@ func (q *queueTab) openResult(info rowInfo) tea.Cmd {
 	}
 	switch {
 	case info.NoCV:
-		return failf("#%d made no CV — the score did not clear the gate. v reads the report", info.ID)
+		return failf("#%d made no CV — the score did not clear the gate", info.ID)
 	case info.AwaitingCV:
-		return failf("#%d has no CV: phase 3 never ran for it. v reads the report", info.ID)
+		return failf("#%d has no CV: phase 3 never ran for it", info.ID)
 	case info.Kind != kindDone:
 		return failf("#%d has no CV yet — it has not been evaluated", info.ID)
 	}
@@ -927,24 +957,12 @@ func (q *queueTab) openDebug(info rowInfo) tea.Cmd {
 	return openExternal(target)
 }
 
-func (q *queueTab) openDetail(info rowInfo) tea.Cmd {
-	path, ok := q.cache.ReportFile(q.l.Reports(), info.Report)
-	if !ok {
-		return failf("#%d has no report", info.ID)
-	}
-	return func() tea.Msg {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return detailMsg{err: err}
-		}
-		return detailMsg{title: info.Label, body: string(b)}
-	}
-}
-
 // ShortHelp and FullHelp answer for whatever is focused right now, which is how
 // the footer stays contextual with no hintFor() switch.
 func (q *queueTab) ShortHelp() []key.Binding {
 	switch {
+	case q.review != nil:
+		return q.review.help()
 	case q.detailOpen:
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("up/down"), key.WithHelp("↑↓", "scroll")),
@@ -988,7 +1006,7 @@ func (q *queueTab) ShortHelp() []key.Binding {
 func (q *queueTab) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{q.keys.Cycle, q.keys.Step, q.keys.In, q.keys.Out, q.keys.Fire, q.keys.Slash, q.keys.Find},
-		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Detail},
+		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Skills},
 		{q.keys.Applied, q.keys.Skip, q.keys.Yes, q.keys.No},
 	}
 }
@@ -1009,6 +1027,9 @@ const inputBlockHeight = 7
 const queueMinW = 4 + 8 + minLabelW + 10
 
 func (q *queueTab) View() string {
+	if q.review != nil {
+		return q.review.view(q.width, q.height)
+	}
 	if q.detailOpen {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			styHeading.Render(truncate(q.detailTitle, q.width)),

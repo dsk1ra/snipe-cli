@@ -27,7 +27,7 @@ const (
 	actDebug    actionID = "debug"
 	actProceed  actionID = "proceed"
 	actLink     actionID = "link"
-	actDetail   actionID = "detail"
+	actSkills   actionID = "skills"
 	actNoAction actionID = ""
 )
 
@@ -112,7 +112,7 @@ func describe(id int, s snapshot) rowInfo {
 
 	case r.P3Status == state.P3Completed:
 		info.Kind = kindDone
-		info.Actions = append([]action{{actDetail, "report"}}, linkOnly(info.Link)...)
+		info.Actions = append([]action{{actSkills, "skills"}}, linkOnly(info.Link)...)
 
 	// An evaluated row is done on exactly the terms state.Lifetime counts as
 	// completed. It used to be done as soon as the eval landed, which wore the
@@ -129,7 +129,7 @@ func describe(id int, s snapshot) rowInfo {
 		// auto-PDF gate. Worth saying: the row is finished, not unfinished.
 		// scoreText says it, in the score column.
 		info.NoCV = r.P3Status == state.P3Skipped
-		info.Actions = append([]action{{actDetail, "report"}}, linkOnly(info.Link)...)
+		info.Actions = append([]action{{actSkills, "skills"}}, linkOnly(info.Link)...)
 
 	// Evaluated, with no Phase 3 behind it. It keeps its report — that much did
 	// land and is worth reading now — but there is no CV and no decision not to
@@ -144,7 +144,7 @@ func describe(id int, s snapshot) rowInfo {
 	case r.P2Status == state.P2Evaled:
 		info.Kind = kindPending
 		info.AwaitingCV = true
-		info.Actions = append([]action{{actDetail, "report"}}, linkOnly(info.Link)...)
+		info.Actions = append([]action{{actSkills, "skills"}}, linkOnly(info.Link)...)
 
 	case r.P1Status == state.P1Scored, r.P2Status == state.P2Evaluating:
 		info.Kind = kindRunning

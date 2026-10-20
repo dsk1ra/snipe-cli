@@ -15,6 +15,14 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   spelling over every cached JD, with and without aliases. With the first nine,
   48 alias-only mentions across 351 JDs went from 0 carried to all 48, and none
   of the 1,830 cv.md-spelled ones moved.
+- Skill spellings are suggested from the postings and approved in the TUI.
+  When a run ends, report keywords that name nothing in cv.md are matched to the
+  nearest cv.md item by embedding; those in two or more postings scoring 0.68
+  or better are queued (46 over 228 reports, in 8–10 s). The review shows the
+  skills block the posting would get and the whole queue, this posting's terms
+  first and quoted. Enter adds the spelling to `config/skills.yml` and `n`
+  rejects it for good. Nothing applies itself, and an item with a spaced ` / `
+  is refused until it is split in cv.md.
 
 ### Changed
 
@@ -42,6 +50,9 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   lines to 5.3, and keeps 2,568 of 2,574 named mentions. `gate p3` stops
   comparing skills with the Node oracle, which keeps the old rule; `gate skills
   --sweep` measures the block instead.
+- `v`, and a finished row's action (now "skills", was "report"), open that
+  review instead of the report. Reports are still written to `reports/`, and
+  the follow-ups board still opens them.
 
 ### Fixed
 
