@@ -429,6 +429,14 @@ search_queries:
 #   workable        apply.workable.com/<slug>
 #   smartrecruiters (careers|jobs).smartrecruiters.com/<slug>
 #   recruitee       <slug>.recruitee.com
+#   workday         <tenant>.wdN.myworkdayjobs.com/<site>
+#                   wdN.myworkdaysite.com/recruiting/<tenant>/<site>
+#
+# Workday entries take an optional `country:` (e.g. United Kingdom). Where the
+# site has a country facet the board is filtered server-side; where it has none,
+# each office's country is read once and cached under ~/.cache/snipe-workday.
+# Either way the country is appended to the posting's location, so the
+# location_filter above sees it.
 #
 # When the public careers URL is a branded custom domain (e.g.
 # careers.adyen.com), set `provider: smartrecruiters` explicitly to

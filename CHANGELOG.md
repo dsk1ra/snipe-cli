@@ -6,6 +6,18 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Added
 
+- A Workday provider. `careers_url: https://<tenant>.wdN.myworkdayjobs.com/<site>`
+  (or the `myworkdaysite.com/recruiting/` form) is detected like any other ATS,
+  and an optional `country:` keeps only that country's postings. 169 of the 305
+  reachable Workday boards in the registry have a country facet, which cuts
+  their 66,202 postings to 5,515 in the UK before anything is fetched; for the
+  other 136, each office's country is read off one posting and cached, and a
+  "3 Locations" posting is placed only once it has passed the title filter. On
+  the first full scan, 27 of a 60-posting sample of the new Workday matches were
+  multi-location ones that had passed the location filter blank, Juniper's Ohio
+  sales roles among them. Phase 1 reads Workday descriptions from the same API,
+  since the posting page is a script shell and the HTML fallback got nothing
+  from it.
 - `config/skills.yml`, approved spellings of cv.md's skills. The tailored skills
   block prints the one the posting uses ("RESTful APIs" where cv.md says "REST
   APIs"), and a skill named only by an alias now counts as named. Rules and the
