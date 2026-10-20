@@ -47,6 +47,10 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Changed
 
+- The binary builds to `./snipe` at the repo root, which the docs now say: it
+  finds prompts/ and templates/ beside itself, so `./bin/snipe` only worked from
+  the repo root. CI also runs on pushes to `develop`, not only on pull requests
+  into it.
 - `location_filter.regions` places postings with a UK gazetteer before the
   keyword tiers: `london`, `west-midlands` (the metropolitan county), `uk-wide`
   and `uk`. Substring matching had kept "Sydney, New South Wales" on "Wales" and

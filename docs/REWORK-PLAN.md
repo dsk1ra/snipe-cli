@@ -243,10 +243,13 @@ engineering" in 241 of 351 cached postings, "design" named System Design. Named
 categories are never cut, so nearly every category survived any cap.
 
 An item is now named only when the posting contains one of its `SkillForms`
-whole: the item, either side of a spaced ` / `, or an approved alias. Token hits
-still rank items inside the tier, floored at 1 so "AI" (under the tokenizer's
-three characters) is not lost. Measured with `gate skills . --sweep` over the 351
-cached postings, aliases on:
+whole: the item, either side of a spaced ` / `, or an approved alias. That sets
+the tier and nothing else. Token overlap still ranks items within a category and
+categories within the unnamed budget, floored at 1 for a named item so "AI"
+(under the tokenizer's three characters) is not lost. The first version ranked
+by whole-phrase naming too, and a posting that named no tool in full got cv.md's
+first five categories in order (fixed in `93b216e`). Measured with `gate skills
+. --sweep` over the 351 cached postings, aliases on:
 
 | naming, cats/items/floor | named kept | categories | items | lines (est.) |
 |---|---|---|---|---|
@@ -260,6 +263,12 @@ The floor of 3 was chosen over 5: the goal's "5–7 items" read literally adds
 about six items per CV that the posting never mentions. 5/7/3 drops 6 of 2,574
 named mentions, all DevOps items on postings that name eight or more from one
 category. 16% of postings name more than five categories and keep them all.
+
+These figures came from the dev checkout's cv.md of 2026-08-24, not the live one.
+On the live cv.md and its 394 postings, 5/7/3 with overlap ranking prints 5.1
+categories and 20.8 items (about 5.2 lines), and keeps 99.4% of named mentions
+in the posting's spelling. The dev checkout now links its cv.md and config to the
+live install's, so later measurements use the real CV.
 
 The Node selector still names by token overlap at 6/12/3, so `gate p3` stopped
 comparing `skills`; experience, projects and modules are still diffed.
@@ -321,7 +330,8 @@ contention, `batch/labels/LEDGER.md`), so run it when nothing else is.
 **Built** (`internal/aliases`, `internal/tui/skills.go`). The runner rebuilds
 `batch/state/skill-suggestions.tsv` when a run ends. A suggestion is a term in
 at least 2 postings whose nearest cv.md item scores at least 0.68 with the
-prefix on the query side. Over 228 reports that is 46 suggestions, led by C++ →
+prefix on the query side. Over 228 reports that is 46 suggestions (54 over the
+live install's 334), led by C++ →
 C/C++ (29 postings), Kafka → Apache Kafka (25) and automated testing → Test
 Automation (17).
 

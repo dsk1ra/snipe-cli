@@ -97,7 +97,7 @@ against a run made before the pin existed.
 ## Entry points
 
 ```
-bin/snipe                    the TUI (default)
+./snipe                      the TUI (default)
   ├─ snipe run               the three-phase pipeline
   ├─ snipe scan              portals.yml + data/registry.tsv → internal/providers → the queue
   ├─ snipe registry          pay gap data → careers-page crawl → data/registry.tsv

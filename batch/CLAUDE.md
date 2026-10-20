@@ -134,7 +134,9 @@ as Code`) must be split in cv.md before it can take one.
 `SkillItems`, `SkillFloor`). Token overlap let a single shared word name an item:
 "engineering" named a category in 241 of 351 cached postings, so nearly every
 category counted as named and the cap never bound (7.3 categories, 37 items).
-Now the posting must contain the item, one side of its ` / `, or an alias. `go
+Now the posting must contain the item, one side of its ` / `, an alias or its
+other number, and that decides only what may not be cut: token overlap still
+ranks, or a posting naming no tool in full gets cv.md's order. `go
 run ./cmd/gate skills . --sweep` chose the limits; 5/7/3 keeps 2,568 of 2,574
 named mentions in about 22 items and an estimated 5.3 lines, down from 9.8. The
 `selectSkills` described here still names by token overlap at 6/12/3, which is

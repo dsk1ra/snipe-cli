@@ -121,7 +121,7 @@ OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 ## Using the TUI
 
 ```bash
-go build -o bin/snipe ./cmd/snipe && ./bin/snipe
+go build -o snipe ./cmd/snipe && ./snipe
 ```
 
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
@@ -223,16 +223,16 @@ pipeline (the row had already finished) and is recorded in
 You don't need the TUI. Every command works standalone:
 
 ```bash
-./bin/snipe add -jd "<paste JD text>"    # add one JD and run it
-./bin/snipe add -f job.txt -link <url>   # same, JD read from a file
-./bin/snipe add -queue "<text>"          # queue only, don't run yet
-./bin/snipe run                          # process everything queued
-./bin/snipe scan                         # scan the configured boards
-./bin/snipe status                       # what is running, and where
-./bin/snipe stop                         # stop after the current stage
-./bin/snipe pause                        # drop the stage in flight; resume reruns it
-./bin/snipe doctor                       # setup, state and tracker integrity
-./bin/snipe tracker fix                  # canonical statuses, one row per opening
+./snipe add -jd "<paste JD text>"    # add one JD and run it
+./snipe add -f job.txt -link <url>   # same, JD read from a file
+./snipe add -queue "<text>"          # queue only, don't run yet
+./snipe run                          # process everything queued
+./snipe scan                         # scan the configured boards
+./snipe status                       # what is running, and where
+./snipe stop                         # stop after the current stage
+./snipe pause                        # drop the stage in flight; resume reruns it
+./snipe doctor                       # setup, state and tracker integrity
+./snipe tracker fix                  # canonical statuses, one row per opening
 ```
 
 Run any subcommand with `-h` for its flags.
@@ -254,8 +254,8 @@ reads its cadence from there. Runs merge into it automatically. Editing an exist
 fine.
 
 ```bash
-./bin/snipe doctor          # setup, state and tracker integrity
-./bin/snipe tracker fix     # canonical statuses, one row per opening, working links
+./snipe doctor          # setup, state and tracker integrity
+./snipe tracker fix     # canonical statuses, one row per opening, working links
 ```
 
 ## Tests

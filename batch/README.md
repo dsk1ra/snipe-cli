@@ -13,13 +13,13 @@ Process multiple job offers in a 3-phase local pipeline — all LLM work runs on
 2. **Dry run** to preview what will be processed:
 
    ```bash
-   ./bin/snipe run -dry-run
+   ./snipe run -dry-run
    ```
 
 3. **Run the batch**:
 
    ```bash
-   ./bin/snipe run
+   ./snipe run
    ```
 
 4. **Results** are automatically merged into `data/applications.md` and verified by the tracker integrity pass at the end of the run.
