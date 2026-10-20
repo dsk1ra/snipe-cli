@@ -61,6 +61,23 @@ other: 1
 		}
 	})
 
+	t.Run("through a symlink, leaving the link in place", func(t *testing.T) {
+		d := t.TempDir()
+		live := filepath.Join(d, "live.yml")
+		os.WriteFile(live, []byte("aliases:\n  Go: [Golang]\n"), 0o644)
+		link := filepath.Join(d, "dev.yml")
+		os.Symlink(live, link)
+		if err := AddAlias(link, "Apache Kafka", "Kafka"); err != nil {
+			t.Fatal(err)
+		}
+		if fi, _ := os.Lstat(link); fi.Mode()&os.ModeSymlink == 0 {
+			t.Error("the link was replaced by a file")
+		}
+		if b, _ := os.ReadFile(live); !strings.Contains(string(b), "Apache Kafka: [Kafka]") {
+			t.Errorf("the linked file is %q", b)
+		}
+	})
+
 	t.Run("a block list is refused, not rewritten", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "skills.yml")
 		const block = "aliases:\n  Go:\n    - Golang\n"

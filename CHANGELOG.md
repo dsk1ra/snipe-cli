@@ -131,6 +131,9 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   token overlap ranks again. On the live CV's 394 postings, printed items
   sharing a word with the posting rose from 27% to 43%, and 7 of 8 "Security
   Engineer" postings get a Security row, up from 5.
+- Accepting an alias wrote `config/skills.yml` by renaming a temporary file
+  over it, which replaced a symlinked `skills.yml` with a plain file. It now
+  writes through the link to the file behind it.
 
 ### Removed
 

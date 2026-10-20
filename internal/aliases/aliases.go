@@ -388,6 +388,12 @@ func update(path, term string, fn func(*Suggestion) bool) error {
 }
 
 func writeAtomic(path, s string) error {
+	// Through a symlink, not over it. The dev checkout links config/skills.yml
+	// to the live install's, and a rename onto the link replaced it with a
+	// plain file: the alias landed in dev only and the two copies forked.
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
