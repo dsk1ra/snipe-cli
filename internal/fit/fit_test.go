@@ -73,6 +73,41 @@ func TestLocationMismatchCap(t *testing.T) {
 	}
 }
 
+// A place the candidate will commute to part of the week. Hybrid there is fine;
+// full-time attendance is still capped.
+func TestLocationHybridTier(t *testing.T) {
+	const prof = `location:
+  city: "Ashcombe"
+  search_locations:
+    - "Ashcombe / Mereside — on-site, hybrid or remote"
+    - "London — hybrid or remote"
+    - "United Kingdom — fully remote only"
+`
+	full, hybrid := commuteTiers(prof)
+	if got := strings.Join(hybrid, ","); got != "london" {
+		t.Errorf("hybrid terms %q, want \"london\"", got)
+	}
+	if got := strings.Join(full, ","); got != "ashcombe,mereside" {
+		t.Errorf("commutable terms %q — a hybrid-only place is not a full-time base", got)
+	}
+	for _, tc := range []struct {
+		name, jd, wantCity string
+	}{
+		{"hybrid in a hybrid-tier city", "Location: London (Hybrid Working). Rust as a main language.", ""},
+		{"three days a week is hybrid", "Location & Work Model: London, UK | 3 days per week in the office", ""},
+		{"words between days and week", "Location: London, UK (2 Days Onsite Per Week)", ""},
+		{"five days on-site is not", "Location: Gloucester, Manchester or London (5 days onsite)", "london"},
+		{"on-site with no hybrid word", "Location: London. This role is on-site.", "london"},
+		{"hybrid elsewhere is still capped", "Location: Glasgow. Work Setup: Hybrid - 3 days in the office", "glasgow"},
+		{"an acceptable option among others", "Location: London or Manchester – Hybrid working offered", ""},
+		{"a London station is not Liverpool", "Our team is based in central London, near Liverpool Street station. Hybrid working model.", ""},
+	} {
+		if _, city := LocationMismatchCap(tc.jd, prof); city != tc.wantCity {
+			t.Errorf("%s: got city %q, want %q", tc.name, city, tc.wantCity)
+		}
+	}
+}
+
 // The proximity rule. One vendor posting says it has no in-office requirement
 // and names London 1.7k characters away in a list of global offices; testing
 // the two signals independently capped it at 2.0 from a score of 5.0.

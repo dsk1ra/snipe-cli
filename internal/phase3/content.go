@@ -23,7 +23,7 @@ import (
 // Grounded by construction — every string it emits came out of the CV — which
 // is why the fabrication guards are not on this path. They exist to catch what
 // a model invents, and nothing here invents anything.
-func VerbatimContent(selectedCV, cvText, jdText string, projectBullets int) fill.Content {
+func VerbatimContent(selectedCV, cvText, jdText string, projectBullets int, aliases map[string][]string) fill.Content {
 	sel := fill.ParseCV(selectedCV)
 
 	exp := make([]fill.ContentExp, 0, len(sel.Exp))
@@ -57,7 +57,7 @@ func VerbatimContent(selectedCV, cvText, jdText string, projectBullets int) fill
 
 	c := fill.Content{Experience: exp}
 	c.Projects, _ = json.Marshal(picks)
-	c.Skills, _ = json.Marshal(SelectSkills(cvText, jdText, 6, 12, 3))
+	c.Skills, _ = json.Marshal(SelectSkills(cvText, jdText, SkillCats, SkillItems, SkillFloor, aliases))
 	return c
 }
 

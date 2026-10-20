@@ -308,13 +308,23 @@ var ukCities = []string{
 }
 
 var (
-	onsiteSignal    = regexp.MustCompile(`(?i)\bon-?site\b|\bhybrid\b|\bin[- ]office\b|\boffice[- ]based\b|\d\s*days?\s*(?:a|per)\s*week\s*(?:in|at|from)\b`)
-	fullyRemote     = regexp.MustCompile(`(?i)\b(?:fully|100%|entirely|permanently)\s+remote\b|\bremote[- ]first\b|\bwork\s+from\s+anywhere\b`)
-	monthlyCadence  = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*month|\bmonthly\s+(?:travel|visit|on-?site)`)
-	weeklyCadence   = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*week|\bweekly\s+(?:travel|visit|on-?site)`)
-	profileCityRe   = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
-	searchLocsRe    = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|$)`)
-	remoteOnlyRe    = regexp.MustCompile(`(?i)remote\s+only`)
+	onsiteSignal   = regexp.MustCompile(`(?i)\bon-?site\b|\bhybrid\b|\bin[- ]office\b|\boffice[- ]based\b|\d\s*days?\s*(?:a|per)\s*week\s*(?:in|at|from)\b`)
+	fullyRemote    = regexp.MustCompile(`(?i)\b(?:fully|100%|entirely|permanently)\s+remote\b|\bremote[- ]first\b|\bwork\s+from\s+anywhere\b`)
+	monthlyCadence = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*month|\bmonthly\s+(?:travel|visit|on-?site)`)
+	weeklyCadence  = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*week|\bweekly\s+(?:travel|visit|on-?site)`)
+	profileCityRe  = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
+	// \z, not $: under (?m) the lazy group stopped at the first end of line,
+	// so only the first search_locations entry was ever read.
+	searchLocsRe = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|\z)`)
+	remoteOnlyRe = regexp.MustCompile(`(?i)remote\s+only`)
+	onsiteOKRe   = regexp.MustCompile(`(?i)on-?site`)
+	hybridOKRe   = regexp.MustCompile(`(?i)\bhybrid\b`)
+	// hybridDemand is office presence short of full time: the word, or one to
+	// four days a week.
+	hybridDemand = regexp.MustCompile(`(?i)\bhybrid\b|\b[1-4]\s*(?:-\s*[1-4]\s*)?days?\b[^.\n]{0,25}?\b(?:a|per|each)?\s*week|\bflexible\b`)
+	// fullOnsite is a full-time attendance demand, which outranks the word
+	// hybrid in the same breath ("hybrid for the first year, then 5 days").
+	fullOnsite      = regexp.MustCompile(`(?i)\b5\s*days?\s*(?:a\s*week|per\s*week|on-?site|in[- ]office|in\s+the\s+office)|\b(?:fully|100%)\s+(?:on-?site|office[- ]based|in[- ]office)|\bon-?site\s+only\b`)
 	listItemRe      = regexp.MustCompile(`^\s*-\s`)
 	listItemStripRe = regexp.MustCompile(`^\s*-\s*["']?`)
 )
@@ -323,39 +333,50 @@ var (
 const proximity = 160
 
 // CommutableTerms are the places the candidate will physically attend an
-// office, from config/profile.yml: location.city plus any search_locations
-// entry that is not remote-only.
+// office full time, from config/profile.yml: location.city plus any
+// search_locations entry that allows on-site, or names no mode at all.
 //
-// That is the whole policy — one commutable base, everywhere else remote — so
+// That is most of the policy — one commutable base, everywhere else remote — so
 // it is read from the user layer rather than hardcoded here.
 func CommutableTerms(profileYML string) []string {
+	full, _ := commuteTiers(profileYML)
+	return full
+}
+
+// commuteTiers splits the places the candidate will attend: full are full-time
+// bases, hybrid are search_locations entries that allow hybrid and not on-site
+// ("London — hybrid or remote"), commuted to part of the week only.
+func commuteTiers(profileYML string) (full, hybrid []string) {
 	seen := map[string]bool{}
-	var terms []string
-	add := func(s string) {
+	add := func(to *[]string, s string) {
 		s = strings.ToLower(strings.TrimSpace(s))
 		if s != "" && !seen[s] {
 			seen[s] = true
-			terms = append(terms, s)
+			*to = append(*to, s)
 		}
 	}
 	if m := profileCityRe.FindStringSubmatch(profileYML); m != nil {
-		add(m[1])
+		add(&full, m[1])
 	}
 	if m := searchLocsRe.FindStringSubmatch(profileYML); m != nil {
 		for _, line := range strings.Split(m[1], "\n") {
 			if !listItemRe.MatchString(line) || remoteOnlyRe.MatchString(line) {
 				continue
 			}
+			to := &full
+			if hybridOKRe.MatchString(line) && !onsiteOKRe.MatchString(line) {
+				to = &hybrid
+			}
 			place := listItemStripRe.ReplaceAllString(line, "")
 			place = strings.FieldsFunc(place, func(r rune) bool {
 				return r == '—' || r == '–' || r == '"' || r == '\''
 			})[0]
 			for _, part := range strings.Split(place, "/") {
-				add(part)
+				add(to, part)
 			}
 		}
 	}
-	return terms
+	return full, hybrid
 }
 
 // LocationMismatchCap caps hard when the JD requires office presence somewhere
@@ -373,15 +394,18 @@ func CommutableTerms(profileYML string) []string {
 // independently capped a posting that says it has *no* in-office requirement
 // and lists London among its global offices, 1.7k characters apart.
 //
+// A hybrid-tier place (HybridTerms) is capped only when the text near it
+// demands full-time attendance; hybrid, or one to four days a week, is fine.
+//
 // ponytail: a JD saying both "hybrid" and "fully remote" is left uncapped.
 // Telling the two apart needs more than proximity, and no such offer has shown
 // up yet.
 func LocationMismatchCap(jdText, profileYML string) (Caps, string) {
 	none := Caps{CV: 5, NS: 5}
 	jd := strings.ToLower(jdText)
-	commutable := CommutableTerms(profileYML)
+	commutable, hybridOK := commuteTiers(profileYML)
 
-	if len(commutable) == 0 {
+	if len(commutable) == 0 && len(hybridOK) == 0 {
 		return none, "" // no stated policy, no gate
 	}
 	if !onsiteSignal.MatchString(jd) {
@@ -394,6 +418,20 @@ func LocationMismatchCap(jdText, profileYML string) (Caps, string) {
 	}
 	if fullyRemote.MatchString(jd) {
 		return none, ""
+	}
+	// A posting that offers a hybrid-tier place part-time is acceptable whatever
+	// else it names: "London or Manchester, hybrid" is a London role to this
+	// candidate. Checked before the capping loop so the city list's order cannot
+	// cap on Manchester first. It also keeps "Liverpool Street" (a London
+	// station) from reading as Liverpool.
+	for _, city := range hybridOK {
+		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(city) + `\b`)
+		for _, loc := range re.FindAllStringIndex(jd, -1) {
+			w := window(jd, loc[0], loc[1], proximity)
+			if hybridDemand.MatchString(w) && !fullOnsite.MatchString(w) {
+				return none, ""
+			}
+		}
 	}
 	for _, city := range ukCities {
 		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(city) + `\b`)

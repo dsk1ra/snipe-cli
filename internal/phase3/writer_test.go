@@ -88,7 +88,7 @@ func TestASentenceFinalDotDoesNotHideAMatch(t *testing.T) {
 // one the posting named is never cut for budget.
 func TestSelectSkillsKeepsWhatThePostingNamed(t *testing.T) {
 	jd := "We need Rust and AES-256-GCM encryption experience."
-	got := SelectSkills(writerCV, jd, 6, 12, 3)
+	got := SelectSkills(writerCV, jd, 6, 12, 3, nil)
 
 	if len(got) != 3 {
 		t.Fatalf("got %d categories, want all 3 within budget: %+v", len(got), got)
@@ -108,10 +108,62 @@ func TestSelectSkillsKeepsWhatThePostingNamed(t *testing.T) {
 	}
 
 	// A tight budget drops what the posting did not name, and only that.
-	tight := SelectSkills(writerCV, jd, 2, 12, 3)
+	tight := SelectSkills(writerCV, jd, 2, 12, 3, nil)
 	for _, c := range tight {
 		if c.Category == "Cloud" {
 			t.Errorf("dropped a named category before an unnamed one: %+v", tight)
+		}
+	}
+}
+
+// A word an item shares with the posting does not name it; a whole form does.
+// Token overlap had "engineering" naming a category in 241 of 351 postings.
+func TestSelectSkillsNamesWholeFormsOnly(t *testing.T) {
+	cv := strings.Replace(writerCV, "**Cloud:** AWS, Docker",
+		"**Cloud:** AWS, Docker\n**Practice:** System Design, TypeScript / JavaScript", 1)
+	cats := func(jd string) string {
+		var out []string
+		for _, c := range SelectSkills(cv, jd, 0, 12, 1, nil) {
+			out = append(out, c.Category)
+		}
+		return strings.Join(out, ",")
+	}
+	// With no budget for unnamed categories, only named ones survive.
+	if got := cats("A strong design and engineering culture."); got != "" {
+		t.Errorf("a shared word named %q, want nothing named", got)
+	}
+	if got := cats("You will own system design reviews."); got != "Practice" {
+		t.Errorf("named %q, want Practice by its whole phrase", got)
+	}
+	if got := cats("TypeScript on the frontend."); got != "Practice" {
+		t.Errorf("named %q, want Practice by one side of the slash", got)
+	}
+	if got := cats("You will lead system designs."); got != "Practice" {
+		t.Errorf("named %q, want Practice by the plural", got)
+	}
+}
+
+// A shared word does not name a category, but it still ranks one: the slot
+// for an unnamed category goes to the one the posting is about.
+func TestSelectSkillsRanksUnnamedByOverlap(t *testing.T) {
+	cv := "## Skills\n\n**Data:** PostgreSQL, MySQL\n**Security:** supply chain security, threat modelling\n"
+	got := SelectSkills(cv, "Help us keep the company's security strong.", 1, 7, 1, nil)
+	if len(got) != 1 || got[0].Category != "Security" {
+		t.Errorf("picked %+v, want Security over Data, which only comes first in cv.md", got)
+	}
+}
+
+func TestOtherNumber(t *testing.T) {
+	for in, want := range map[string]string{
+		"Code Review": "Code Reviews",
+		"WebSockets":  "WebSocket",
+		"AWS":         "", // not a plural
+		"CSS":         "",
+		"React":       "", // one word: "reacts" is a verb
+		"Serverless":  "",
+	} {
+		if got := otherNumber(in); got != want {
+			t.Errorf("otherNumber(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -126,12 +178,40 @@ func TestSelectSkillsAgainstTheRealCV(t *testing.T) {
 	if len(cats) < 4 {
 		t.Fatalf("parsed %d skill categories out of cv.md, want the real block", len(cats))
 	}
-	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", 6, 12, 3)
-	if len(got) == 0 || len(got) > 6 {
-		t.Fatalf("selected %d categories, want 1..6", len(got))
+	got := SelectSkills(string(b), "Backend engineer: Java, Spring Boot, Kafka, PostgreSQL, Kubernetes on AWS.", SkillCats, SkillItems, SkillFloor, nil)
+	if len(got) == 0 || len(got) > SkillCats {
+		t.Fatalf("selected %d categories, want 1..%d", len(got), SkillCats)
 	}
 	t.Logf("%d categories from %d:", len(got), len(cats))
 	for _, c := range got {
 		t.Logf("  %-28s %s", c.Category, c.Items)
+	}
+}
+
+// An approved alias makes a skill count as named and prints it the way the
+// posting spells it — the one thing an ATS keyword search can actually see.
+func TestSelectSkillsPrintsThePostingsSpelling(t *testing.T) {
+	aliases := map[string][]string{"java": {"JVM", "JVM languages"}}
+	items := func(jd string, aliases map[string][]string) string {
+		for _, c := range SelectSkills(writerCV, jd, 6, 12, 1, aliases) {
+			if c.Category == "Languages" {
+				return c.Items
+			}
+		}
+		return ""
+	}
+
+	// Named only by an alias: kept and printed as the posting wrote it, the
+	// longest matching form winning.
+	if got := items("Strong background in JVM languages.", aliases); got != "JVM languages" {
+		t.Errorf("Languages reads %q, want the posting's longest spelling", got)
+	}
+	// The posting also uses cv.md's own spelling, so that one stays.
+	if got := items("Java on the JVM.", aliases); got != "Java" {
+		t.Errorf("Languages reads %q, want cv.md's Java kept", got)
+	}
+	// Without aliases nothing is named, so the floor prints cv.md's strings.
+	if got := items("Strong background in JVM languages.", nil); strings.Contains(got, "JVM") {
+		t.Errorf("Languages reads %q with no aliases, want cv.md's strings only", got)
 	}
 }

@@ -220,6 +220,59 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 	return out
 }
 
+// SkillForms are the spellings that count as a posting naming an item: the item
+// itself, each side of a spaced slash ("TypeScript / JavaScript" lists two real
+// skills, and a posting asking for TypeScript has named it), and its approved
+// aliases. It mirrors cv-writers.mjs's skillForms, plus the aliases and the
+// other grammatical number of each (otherNumber).
+func SkillForms(item string, aliases map[string][]string) []string {
+	forms := []string{item}
+	if parts := strings.Split(item, " / "); len(parts) > 1 {
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				forms = append(forms, p)
+			}
+		}
+	}
+	forms = append(forms, aliases[strings.ToLower(item)]...)
+	for _, f := range forms {
+		if v := otherNumber(f); v != "" {
+			forms = append(forms, v)
+		}
+	}
+	return forms
+}
+
+// otherNumber is a form's singular or plural, or "" when guessing would be
+// unsafe. Whole-phrase naming lost "code reviews" against Code Review in 51 of
+// 351 postings, which token overlap had caught on "code" alone.
+//
+// Only a lowercase final s is dropped (AWS and CSS are not plurals, and "CS"
+// would name HTML / CSS), and an s is added only to a phrase of two words or
+// more: "reacts" is a verb before it is React. Over the cached postings this
+// names Code Review 51 times, Event-Driven Architecture 21, Microservices 6,
+// WebSockets 3 and System Design once, and nothing else.
+func otherNumber(f string) string {
+	n := len(f)
+	switch {
+	case n >= 4 && f[n-1] == 's' && f[n-2] >= 'a' && f[n-2] <= 'z' && f[n-2] != 's':
+		return f[:n-1]
+	case strings.Contains(f, " ") && f[n-1] >= 'a' && f[n-1] <= 'z' && f[n-1] != 's':
+		return f + "s"
+	}
+	return ""
+}
+
+// The skills block as it ships: up to SkillCats categories the posting did not
+// name, up to SkillItems items in each, and a SkillFloor of cv.md's own. Chosen
+// with `gate skills <home> --sweep` over 351 cached postings: 99.8% of named
+// skills kept, 5.2 categories and ~22 items, against 37 items at the old 6/12/3.
+const (
+	SkillCats  = 5
+	SkillItems = 7
+	SkillFloor = 3
+)
+
 // SelectSkills ranks cv.md's skill categories by what the posting asked for, and
 // the items inside each the same way.
 //
@@ -228,14 +281,19 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 // shared a term with the posting: 75% of it bought nothing an ATS could read and
 // cost 4.4 rendered lines, on a page whose whole evidence budget is 21.
 //
-//  1. the posting's own terms — hits > 0
+//  1. the posting's own terms — one of SkillForms, as a whole phrase
 //  2. what cv.md ties to them — relatedToJd, so Java brings Spring Boot
 //  3. a floor in cv.md's order — minItems, so nothing reads as pandering
 //
 // Tier 3 is the guard against optimising the metric into a lie: a block holding
 // only what the posting asked for drops the distinctive evidence, Rust vanishing
 // off a Java posting.
-func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []SkillPick {
+//
+// aliases are config/skills.yml's approved spellings, keyed by item lowercased.
+// An item the posting names only by an alias counts as named, and prints in the
+// posting's spelling: "REST APIs" ships as "RESTful APIs" to a posting that says
+// so. Nil keeps cv.md's own strings.
+func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliases map[string][]string) []SkillPick {
 	jd := map[string]bool{}
 	for _, t := range tokenize(jdText) {
 		jd[t] = true
@@ -258,16 +316,56 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 		}
 		return n
 	}
+	// spelling is the form the posting uses: the item itself when the posting
+	// writes it that way or not at all, else the longest approved alias or
+	// other number it does write — so "RESTful APIs" beats "RESTful" on a
+	// posting that says the former. Never one side of a slash, which would
+	// print half the item.
+	spelling := func(item string) string {
+		if strings.Contains(jdNorm, NormPhrase(item)) {
+			return item
+		}
+		cands := append([]string{item}, aliases[strings.ToLower(item)]...)
+		for _, c := range cands {
+			if v := otherNumber(c); v != "" {
+				cands = append(cands, v)
+			}
+		}
+		best := ""
+		for _, a := range cands[1:] {
+			if len(a) > len(best) && strings.Contains(jdNorm, NormPhrase(a)) {
+				best = a
+			}
+		}
+		if best == "" {
+			return item
+		}
+		return best
+	}
+	// named was token overlap, and one shared word was enough: "engineering"
+	// named "prompt and context engineering" in 241 of 351 postings, "design"
+	// named System Design. Nearly every category read as named and named ones
+	// are never cut, so the caps never bound. Now a whole form must appear;
+	// hits only ranks within the tier, floored at 1 because "AI" is under
+	// tokenize's three characters and would otherwise score nothing.
+	named := func(item string) int {
+		for _, f := range SkillForms(item, aliases) {
+			if strings.Contains(jdNorm, NormPhrase(f)) {
+				return max(1, hits(spelling(item)))
+			}
+		}
+		return 0
+	}
 
 	cats := ParseSkillCategories(cvText)
 	var all []string
 	for _, c := range cats {
 		all = append(all, c.Items...)
 	}
-	related := relatedToJd(cvText, all, hits)
+	related := relatedToJd(cvText, all, named)
 
 	type ranked struct {
-		item  string
+		item  string // as the block prints it
 		i     int
 		score int
 		tier  int
@@ -284,7 +382,7 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 	for idx, c := range cats {
 		rows := make([]ranked, 0, len(c.Items))
 		for i, item := range c.Items {
-			h := hits(item)
+			h := named(item)
 			t := 0
 			switch {
 			case h > 0:
@@ -292,7 +390,12 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int) []Skil
 			case related[item]:
 				t = 1
 			}
-			rows = append(rows, ranked{item: item, i: i, score: h, tier: t})
+			// Whole-phrase naming decides the tier, which nothing may cut;
+			// token overlap still ranks. Without it an unnamed item scored 0,
+			// and a posting naming no tool by its full name (Spotify's
+			// enterprise security role: "identity, devices, networks") got
+			// cv.md's first five categories in order, Data before Security.
+			rows = append(rows, ranked{item: spelling(item), i: i, score: max(h, hits(spelling(item))), tier: t})
 		}
 		// Tier first, so a related item outranks a floor item but never
 		// displaces one the posting actually named. Stable on the CV's order.

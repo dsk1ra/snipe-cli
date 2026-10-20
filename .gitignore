@@ -45,6 +45,7 @@ interview-prep/*
 # User config and customization (never auto-updated; *.template.md / *.example.yml stay tracked)
 config/profile.yml
 config/profile.md
+config/skills.yml
 portals.yml
 
 # Personal model-prompt overrides (real metrics; shipped *.md is the generic placeholder)

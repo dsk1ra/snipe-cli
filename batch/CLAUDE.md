@@ -38,6 +38,16 @@ never guessed; when present the weights become `cv×0.50 + ns×0.30 + comp×0.20
 Seniority, stack-mismatch, language and **location** caps (`fit-rules.mjs`) are
 code-enforced in both phases.
 
+**The judgment writes only what decides the CV** — dimensions, gaps, strengths,
+strategy and the personalisation table. STAR stories, hard questions, LinkedIn
+tweaks and the legitimacy verdict are gone: output 3,022 → 982 tokens, the call
+158 s → 57 s, about 95 s off every offer, with pair accuracy on the 18 labels
+moved by one `cv_match` flip on one offer. **`north_star` is not judged** in
+Phase 2: it is the archetype's `fit` tier from `profile.yml` (primary 5,
+secondary 3, adjacent 2, unlisted 1), then capped. Stage 3's `archetype` is an
+enum of the profile's list for that reason. Numbers and the per-offer reading:
+`docs/REWORK-PLAN.md` §1.
+
 The location cap exists because `hard_stops` never reaches `final_decision`:
 Phase 2 printed the profile's "hybrid or on-site outside the commutable base"
 hard stop verbatim on offers it then scored 4.9 and told the user to Apply to,
@@ -105,6 +115,30 @@ could read and cost 4.4 rendered lines on a page whose entire evidence budget is
 3. **floor** — `minItems` (3) in `cv.md`'s own order, so a block never shrinks to
    a mirror of the posting. Without it the CV reads as pandering and loses the
    distinctive evidence, which is `docs/PHASE3-RETENTION-LEDGER.md` §1 all over
+
+**The block prints the posting's spelling** when `config/skills.yml` approves
+it (`config/skills.example.yml` has the rules). An item the posting names only by
+an alias — "RESTful" against cv.md's "REST APIs", "Golang" against "Go" — counts
+as named and prints as the posting wrote it, longest matching form first; when
+the posting also uses cv.md's spelling, that one stays. `go run ./cmd/gate skills
+.` scores it over every cached JD, paired with and without aliases: with the
+first nine aliases, **48 skill mentions in 351 JDs were named only by an alias and
+0 reached the page in that spelling; now all 48 do**, the 1,830 named in cv.md's
+own spelling are unmoved, and 46 of 351 blocks change. The Node harness's
+`skill_coverage` is blind to this by construction — it only knows cv.md's
+strings, so an alias-only mention is absent from its denominator, not a miss. An
+alias replaces the whole item, so a compound item (`Terraform / Infrastructure
+as Code`) must be split in cv.md before it can take one.
+
+**The Go selector names by whole forms and ships 5/7/3** (`phase3.SkillCats`,
+`SkillItems`, `SkillFloor`). Token overlap let a single shared word name an item:
+"engineering" named a category in 241 of 351 cached postings, so nearly every
+category counted as named and the cap never bound (7.3 categories, 37 items).
+Now the posting must contain the item, one side of its ` / `, or an alias. `go
+run ./cmd/gate skills . --sweep` chose the limits; 5/7/3 keeps 2,568 of 2,574
+named mentions in about 22 items and an estimated 5.3 lines, down from 9.8. The
+`selectSkills` described here still names by token overlap at 6/12/3, which is
+why `gate p3` no longer diffs the skills block.
 
 `maxCats` (6) budgets only the categories the posting did *not* name; one it did
 is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0

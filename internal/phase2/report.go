@@ -29,7 +29,13 @@ func assembleReport(in reportInput) string {
 	// Phase 1's score is reported but was withheld from every prompt, so the
 	// evaluation could not anchor on it.
 	p("**Score pre-screening (local model):** %s/5", pre)
-	p("**Legitimacy:** %s", in.J.LegitimacyTier)
+	// One line where the Comp & Demand block was: a posted salary still carries
+	// 20% of the score, and a report that drops the reason drops the explanation.
+	if in.HasComp {
+		p("**Salary:** %s — comp %d/5 in the score", text.FormatSalary(in.Salary), in.CompDim)
+	} else {
+		p("**Salary:** not stated — score is fit only")
+	}
 	p("**URL:** %s", in.URL)
 	p("**PDF:** %s", in.PDFNote)
 	p("**Batch ID:** %d", in.ID)
@@ -89,9 +95,7 @@ func assembleReport(in reportInput) string {
 	p("**If downlevelled:** accept if comp is fair; set a written 6-month review criteria.")
 	p("")
 
-	md.WriteString(compBlock(in.Salary, in.CompDim, in.HasComp, in.CompTargets))
-
-	p("## E) Personalisation Plan")
+	p("## D) Personalisation Plan")
 	p("")
 	p("Top CV changes for this specific role:")
 	p("")
@@ -100,51 +104,6 @@ func assembleReport(in reportInput) string {
 	for i, x := range in.J.Personalisation {
 		p("| %d | %s | %s | %s | %s |", i+1, pipeSafe(x.Section), pipeSafe(x.Current), pipeSafe(x.Proposed), pipeSafe(x.Why))
 	}
-	p("")
-	p("Top LinkedIn changes:")
-	for i, l := range in.J.LinkedIn {
-		p("%d. %s", i+1, l)
-	}
-	p("")
-
-	p("## F) Interview Prep")
-	p("")
-	if len(in.J.Stories) == 0 {
-		p("_No STAR stories: no JD requirement has supporting evidence in cv.md. Inventing one here would put experience you do not have in front of an interviewer._")
-		p("")
-	} else {
-		p("STAR stories mapped to JD requirements:")
-		p("")
-		p("| # | JD Requirement | Story | S | T | A | R |")
-		p("|---|----------------|-------|---|---|---|---|")
-		for i, s := range in.J.Stories {
-			p("| %d | %s | %s | %s | %s | %s | %s |", i+1,
-				pipeSafe(s.Requirement), pipeSafe(s.Story), pipeSafe(s.Situation),
-				pipeSafe(s.Task), pipeSafe(s.Action), pipeSafe(s.Result))
-		}
-	}
-	if len(in.J.HardQuestions) > 0 {
-		p("")
-		p("**Likely hard questions:**")
-		for i, q := range in.J.HardQuestions {
-			p("%d. Q: %q → A: %s", i+1, q.Q, q.A)
-		}
-	}
-	p("")
-
-	p("## G) Posting Legitimacy")
-	p("")
-	p("**Verification:** unconfirmed (batch mode — Playwright unavailable)")
-	p("")
-	p("| Signal | Assessment |")
-	p("|--------|------------|")
-	p("| Salary transparency | %s |", ifElse(in.Salary != nil, "Disclosed", "Not disclosed"))
-	p("| Requirements | %d parsed, %d must-have |", len(in.Rows), in.Coverage.MustCount)
-	p("| Reposting | check scan-history.tsv manually |")
-	p("")
-	p("**Tier:** %s", in.J.LegitimacyTier)
-	p("")
-	p("**Reason:** %s", in.J.LegitimacyReason)
 	p("")
 
 	if len(in.Calib) > 0 {
@@ -182,34 +141,12 @@ type reportInput struct {
 	Salary         *text.Salary
 	CompDim        int
 	HasComp        bool
-	CompTargets    *text.CompTargets
 	Score          float64
 	PreScore       float64
 	HasPreScore    bool
 	PDFNote        string
 	MachineSummary string
 	Calib          []Calibration
-}
-
-func compBlock(s *text.Salary, dim int, hasComp bool, t *text.CompTargets) string {
-	var b strings.Builder
-	b.WriteString("## D) Comp & Demand\n\n")
-	b.WriteString("| Source | Salary range | Confidence |\n")
-	b.WriteString("|--------|-------------|------------|\n")
-	if s == nil {
-		b.WriteString("| Job posting | Not stated | — |\n\n")
-		b.WriteString("**Comp score:** excluded from the composite — no salary stated in the posting (score = cv_match × 0.625 + north_star × 0.375).\n")
-		b.WriteString("\n")
-		return b.String()
-	}
-	fmt.Fprintf(&b, "| Job posting (parsed) | %s | High |\n\n", text.FormatSalary(s))
-	note := "— no comp targets configured, scored neutral"
-	if t != nil {
-		note = fmt.Sprintf("vs target %s%s–%s%s (floor %s%s)",
-			s.Currency, commas(t.TargetLow), s.Currency, commas(t.TargetHigh), s.Currency, commas(t.Floor))
-	}
-	fmt.Fprintf(&b, "**Comp score (1–5):** %d — posted salary %s.\n\n", dim, note)
-	return b.String()
 }
 
 // pipeSafe substitutes a literal pipe. One in any cell corrupts the row and
@@ -221,13 +158,6 @@ func yearsSuffix(n int) string {
 		return ""
 	}
 	return fmt.Sprintf(" (%d+ yrs)", n)
-}
-
-func ifElse(cond bool, a, b string) string {
-	if cond {
-		return a
-	}
-	return b
 }
 
 func dedupe(in []string, cap int) []string {
@@ -248,18 +178,6 @@ func dedupe(in []string, cap int) []string {
 
 // trimFloat renders a score the way JSON.stringify does: no trailing zeros.
 func trimFloat(f float64) string { return fmt.Sprintf("%g", f) }
-
-func commas(n int) string {
-	s := fmt.Sprint(n)
-	var out []byte
-	for i := 0; i < len(s); i++ {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			out = append(out, ',')
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
-}
 
 func mustJSON(v any) string {
 	b, err := json.Marshal(v)

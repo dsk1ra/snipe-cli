@@ -76,7 +76,6 @@ type Eval struct {
 	HardStops      []string     `json:"hard_stops"`
 	SoftGaps       []string     `json:"soft_gaps"`
 	TopStrengths   []string     `json:"top_strengths"`
-	LegitimacyTier string       `json:"legitimacy_tier"`
 	PDFDecision    bool         `json:"pdf_decision"`
 	Notes          string       `json:"notes"`
 	SalaryPosted   *text.Salary `json:"salary_posted"`
@@ -152,7 +151,7 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	compDim, hasComp := text.CompScore(salary, e.Cfg.Comp)
 
 	judgment, err := state.Staged(ctx, ck, "p2.judgment",
-		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash},
+		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash, Profile: e.Cfg.ProfileMD},
 		func(ctx context.Context, in stage3Input) (Judgment, error) { return e.stage3(ctx, id, in) })
 	if err != nil {
 		return err
@@ -186,7 +185,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	j Judgment, salary *text.Salary, compDim int, hasComp bool) composed {
 
 	modelCV := clampDim(j.CVMatch, 1)
-	ns := clampDim(j.NorthStar, 1)
+	ns := e.Cfg.NorthStar(j.Archetype)
 	rf := clampDim(j.RedFlagsScore, 5)
 
 	// Blend the continuous coverage metric into cv_match.
@@ -223,9 +222,6 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	if !parsed.IsSinglePosting || fit.LooksMultiPosting(jd) {
 		cvBlend = math.Min(cvBlend, 2)
 		ns = minInt(ns, 2)
-		j.LegitimacyTier = "Suspicious"
-		j.LegitimacyReason = strings.TrimSpace(
-			"NOT a single job posting (thread/list/blog/homepage) — evaluation unreliable. " + j.LegitimacyReason)
 		j.HardStops = prepend(j.HardStops, "Not a single job posting — verify the URL manually")
 	}
 	cvBlend = round(cvBlend, 2)
@@ -255,8 +251,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 		NorthStar: ns, CompInferred: comp, RedFlagsScore: rf, Score: score,
 		Archetype: j.Archetype, FinalDecision: final,
 		HardStops: nonNil(j.HardStops), SoftGaps: nonNil(j.SoftGaps), TopStrengths: nonNil(j.TopStrengths),
-		LegitimacyTier: j.LegitimacyTier, Notes: j.Notes,
-		SalaryPosted: salary, Evaluator: "staged",
+		Notes: j.Notes, SalaryPosted: salary, Evaluator: "staged",
 	}
 	today := time.Now().Format("2006-01-02")
 	slug := slugify(orNone(parsed.Company, "unknown"))
@@ -279,8 +274,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 		CVBlended: ev.CVBlended, NorthStar: ev.NorthStar, CompInferred: ev.CompInferred,
 		RedFlagsScore: ev.RedFlagsScore, Score: ev.Score, Archetype: ev.Archetype,
 		FinalDecision: ev.FinalDecision, HardStops: ev.HardStops, SoftGaps: ev.SoftGaps,
-		TopStrengths: ev.TopStrengths, LegitimacyTier: ev.LegitimacyTier,
-		PDFDecision: ev.PDFDecision, Notes: ev.Notes,
+		TopStrengths: ev.TopStrengths, PDFDecision: ev.PDFDecision, Notes: ev.Notes,
 	})
 
 	pre, hasPre := 0.0, false
@@ -290,7 +284,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 
 	report := assembleReport(reportInput{
 		ID: id, URL: url, Today: today, Parsed: parsed, Rows: rows, Coverage: coverage,
-		J: j, Salary: salary, CompDim: compDim, HasComp: hasComp, CompTargets: e.Cfg.Comp,
+		J: j, Salary: salary, CompDim: compDim, HasComp: hasComp,
 		Score: score, PreScore: pre, HasPreScore: hasPre, PDFNote: pdfNote,
 		MachineSummary: machine, Calib: e.calib,
 	})
@@ -300,23 +294,22 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 // machineSummary is the compact block the report header carries and everything
 // downstream reads instead of re-parsing the prose.
 type machineSummary struct {
-	Company        string   `json:"company"`
-	Role           string   `json:"role"`
-	CVMatch        int      `json:"cv_match"`
-	CVCoverage     float64  `json:"cv_coverage"`
-	CVBlended      float64  `json:"cv_blended"`
-	NorthStar      int      `json:"north_star"`
-	CompInferred   *int     `json:"comp_inferred"`
-	RedFlagsScore  int      `json:"red_flags_score"`
-	Score          float64  `json:"score"`
-	Archetype      string   `json:"archetype"`
-	FinalDecision  string   `json:"final_decision"`
-	HardStops      []string `json:"hard_stops"`
-	SoftGaps       []string `json:"soft_gaps"`
-	TopStrengths   []string `json:"top_strengths"`
-	LegitimacyTier string   `json:"legitimacy_tier"`
-	PDFDecision    bool     `json:"pdf_decision"`
-	Notes          string   `json:"notes"`
+	Company       string   `json:"company"`
+	Role          string   `json:"role"`
+	CVMatch       int      `json:"cv_match"`
+	CVCoverage    float64  `json:"cv_coverage"`
+	CVBlended     float64  `json:"cv_blended"`
+	NorthStar     int      `json:"north_star"`
+	CompInferred  *int     `json:"comp_inferred"`
+	RedFlagsScore int      `json:"red_flags_score"`
+	Score         float64  `json:"score"`
+	Archetype     string   `json:"archetype"`
+	FinalDecision string   `json:"final_decision"`
+	HardStops     []string `json:"hard_stops"`
+	SoftGaps      []string `json:"soft_gaps"`
+	TopStrengths  []string `json:"top_strengths"`
+	PDFDecision   bool     `json:"pdf_decision"`
+	Notes         string   `json:"notes"`
 }
 
 // commit writes the report and the artifact, then the state row — in that

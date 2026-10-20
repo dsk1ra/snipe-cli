@@ -170,6 +170,12 @@ func (m *Model) Update(raw tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case reviewMsg, reviewDoneMsg:
+		// The skills screen lives on the queue, like the reader pane; a key
+		// that changed tabs before the files were read must not drop it.
+		_, cmd := m.queue.Update(t)
+		return m, cmd
+
 	case refreshMsg:
 		// Something the UI is waiting on changed out of process — a spawned run
 		// taking the lock. Nothing to say, only something to look at again.

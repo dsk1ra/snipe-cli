@@ -4,8 +4,60 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
+### Added
+
+- `config/skills.yml`, approved spellings of cv.md's skills. The tailored skills
+  block prints the one the posting uses ("RESTful APIs" where cv.md says "REST
+  APIs"), and a skill named only by an alias now counts as named. Rules and the
+  traps (compound items, ordinary English words) are in
+  `config/skills.example.yml`.
+- `go run ./cmd/gate skills <home>` scores the skills block in the posting's own
+  spelling over every cached JD, with and without aliases. With the first nine,
+  48 alias-only mentions across 351 JDs went from 0 carried to all 48, and none
+  of the 1,830 cv.md-spelled ones moved.
+- Skill spellings are suggested from the postings and approved in the TUI.
+  When a run ends, report keywords that name nothing in cv.md are matched to the
+  nearest cv.md item by embedding; those in two or more postings scoring 0.68
+  or better are queued (46 over 228 reports, in 8–10 s). The review shows the
+  skills block the posting would get and the whole queue, this posting's terms
+  first and quoted. Enter adds the spelling to `config/skills.yml` and `n`
+  rejects it for good. Nothing applies itself, and an item with a spaced ` / `
+  is refused until it is split in cv.md.
+
+### Changed
+
+- Phase 2's `north_star` is read from the archetype's `fit` tier in
+  `profile.yml` (primary 5, secondary 3, adjacent 2, unlisted 1) and then capped
+  as before; the model no longer scores it. It had been doing the lookup anyway,
+  scoring every primary archetype 5. Stage 3's `archetype` is now an enum of the
+  profile's list, as Phase 1's already was, so the lookup gets an exact label. On
+  the 18 labelled offers the lookup's own moves all went toward the labels.
+- The location cap has a hybrid tier. A `search_locations` entry that allows
+  hybrid but not on-site, such as `London — hybrid or remote`, makes a posting
+  there acceptable unless it asks for full-time attendance (five days a week, or
+  on-site only). A hybrid posting offering that city alongside another ("London
+  or Manchester, hybrid") is read as the acceptable one, and a hybrid office near
+  Liverpool Street no longer reads as Liverpool. With London set to hybrid, the
+  capped postings among 351 cached JDs fell from 52 to 14, every one of them
+  full-time on-site, and pair accuracy on the 18 labelled offers rose from 63.3%
+  to 77.7%.
+- The tailored skills block names a skill only when the posting contains one of
+  its forms whole (the item itself, a side of a ` / `, an approved alias). One
+  shared word used to be enough, so "engineering" named a category in 241 of 351
+  cached postings and the category cap never bound. The limits are now 5
+  categories, 7 items and a floor of 3, down from 6, 12 and 3. Over the 351
+  postings the block falls from 37 items to about 22 and from an estimated 9.8
+  lines to 5.3, and keeps 2,568 of 2,574 named mentions. `gate p3` stops
+  comparing skills with the Node oracle, which keeps the old rule; `gate skills
+  --sweep` measures the block instead.
+- `v`, and a finished row's action (now "skills", was "report"), open that
+  review instead of the report. Reports are still written to `reports/`, and
+  the follow-ups board still opens them.
+
 ### Fixed
 
+- `batch/bench-tools/rho.mjs` crashed on an undefined `dirs` whenever it was run
+  from the command line.
 - The three model gates all ran the oracle from paths that no longer resolve.
   `gate-phase1.sh` and `gate-p3.sh` invoked `batch/ollama-scorer.mjs` and
   `batch/local-pdf-offer.mjs`, both cut from the 0.6.0 keep-list by mistake;
@@ -27,9 +79,38 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   everywhere else.
 - The demo fixture wrote a real person's name into a PDF filename while seeding
   a profile that calls the candidate "A. Candidate".
+- `TestApifyPostedAtAcceptsBothShapes` hardcoded 2026-08-26 as a date "this
+  week" and had failed every day since. It compares against today.
+- Only the first `search_locations` entry in `profile.yml` was ever read: the
+  pattern ended at `$`, and under multi-line mode the lazy match stopped at the
+  first line end. `batch/fit-rules.mjs` has the same bug, so `gate fit` now
+  differs from the Node oracle wherever a later entry matters.
+- Editing `profile.md` did not re-run a cached Phase 2 judgment. The judgment
+  prompt includes the profile but its checkpoint key did not, so an offer
+  re-run after a profile edit kept the judgment written under the old one. The
+  key changed shape, so every cached judgment re-runs once on its next pass.
+- Whole-phrase skill naming missed the posting's other grammatical number:
+  "code reviews" never named Code Review (51 of 351 cached postings), nor
+  "event-driven architectures" Event-Driven Architecture (21). Token overlap
+  had caught both on a single shared word. A form now matches its singular or
+  plural too, within limits that keep AWS, CSS and "reacts" out, and the block
+  prints the number the posting used.
+- A posting that names no tool by its full name got cv.md's first five skill
+  categories in order, because an item not named whole scored nothing for
+  ranking either. Whole-phrase naming still decides what may not be cut, and
+  token overlap ranks again. On the live CV's 394 postings, printed items
+  sharing a word with the posting rose from 27% to 43%, and 7 of 8 "Security
+  Engineer" postings get a Security row, up from 5.
 
 ### Removed
 
+- Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
+  Posting Legitimacy, and the judgment call stops writing them. Nothing
+  downstream read them, yet they were most of that call's output: on the 18
+  labelled offers it fell from 3,022 to 982 tokens and from 158 s to 57 s, about
+  95 s off every offer once the stage reload is counted. Pair accuracy moved by
+  one offer. The report runs A–D now; a posted salary keeps one header line,
+  since it still carries a fifth of the score.
 - `scripts/import-data.sh`. It copied the user layer out of the Node checkout,
   and its own guard refuses when source and destination are the same tree.
 

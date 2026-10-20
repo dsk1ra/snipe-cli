@@ -1,0 +1,23 @@
+# config/skills.yml — approved spellings of your cv.md skills.
+#
+# Copy to config/skills.yml (gitignored, like profile.yml). The tailored CV's
+# skills block prints whichever spelling the posting uses, so an ATS or a
+# recruiter searching for the posting's own word finds it. cv.md keeps one
+# spelling; this file is where the others live.
+#
+# Rules:
+# - The key is a skill item exactly as the skills block parses it from cv.md
+#   (case does not matter). `go run ./cmd/gate skills .` lists any key that
+#   matches no item.
+# - An alias replaces the WHOLE item on the page. Do not alias a compound item:
+#   "Terraform / Infrastructure as Code" → "IaC" would print IaC and drop
+#   Terraform. Split the item in cv.md first.
+# - Avoid aliases that are ordinary English words. Bare "REST" matches "the rest
+#   of the team", "Next" matches "next steps".
+# - Only list spellings you would defend in an interview as the same skill.
+#   This file is the only place a word that is not in cv.md can reach the page.
+aliases:
+  REST APIs: [RESTful APIs, RESTful, REST API]
+  PostgreSQL: [Postgres]
+  Kubernetes: [K8s]
+  Go: [Golang]
