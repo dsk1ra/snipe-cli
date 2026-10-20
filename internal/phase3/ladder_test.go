@@ -70,7 +70,9 @@ func TestEveryStepTrimsFromTheFullList(t *testing.T) {
 func TestLadderProducesAOnePagePDF(t *testing.T) {
 	repo := os.Getenv("SNIPE_NODE_REPO")
 	if repo == "" {
-		repo = filepath.Join(os.Getenv("HOME"), "projects", "snipe")
+		// go test runs in the package directory, so the checkout is two up. It
+		// used to be $HOME/projects/snipe, which only resolved on one machine.
+		repo, _ = filepath.Abs(filepath.Join("..", ".."))
 	}
 	if _, err := os.Stat(filepath.Join(repo, "cv.md")); err != nil {
 		t.Skip("no CV checkout to render")
@@ -87,7 +89,14 @@ func TestLadderProducesAOnePagePDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, "output", "2026-07-30_wise_104", "cv-content.json"))
+	// Any cached offer renders. Naming one pinned this to a single past
+	// application, so the only check that the emitted .tex compiles skipped
+	// itself on every machine but the one that produced that folder.
+	cached, _ := filepath.Glob(filepath.Join(repo, "output", "*", "cv-content.json"))
+	if len(cached) == 0 {
+		t.Skip("no cached content to render")
+	}
+	raw, err := os.ReadFile(cached[0])
 	if err != nil {
 		t.Skip("no cached content to render")
 	}

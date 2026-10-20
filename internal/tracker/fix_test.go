@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 )
 
 // fixTracker writes a tracker whose body is the rows given, and returns the
@@ -12,7 +14,7 @@ import (
 func fixTracker(t *testing.T, rows ...string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
-	data := filepath.Join(root, "data")
+	data := paths.Layout{Home: root, Code: root}.Data()
 	if err := os.MkdirAll(data, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,16 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/state"
 )
 
+// The demo candidate. Everything the sandbox writes is invented, so the fixture
+// names its PDFs after this rather than after whoever built the recording. It
+// used to be a real name, which put a real person into a committed fixture.
+const demoCandidate = "A. Candidate"
+
+// demoCVFile mirrors the derivation in internal/phase3: spaces become dashes.
+func demoCVFile() string {
+	return strings.ReplaceAll(demoCandidate, " ", "-") + "-CV.pdf"
+}
+
 // seed builds demo/.sandbox: a self-contained fake snipe install for the VHS
 // tapes. Everything in it is invented — companies, roles, scores, dates,
 // applications, follow-ups. Nothing reads the real cv.md, the real tracker, or
@@ -144,9 +154,9 @@ func (g *gen) fixedFiles() error {
 		// cv.md only has to exist and be non-empty: config.Load refuses to
 		// answer without one, and the goals in the side pane come through it.
 		g.l.CV(): "# Demo CV\n\nInvented. The demo pipeline never reads this file.\n",
-		g.l.ProfileYML(): `# Demo profile — invented, for the recording only.
+		g.l.ProfileYML(): fmt.Sprintf(`# Demo profile — invented, for the recording only.
 candidate:
-  full_name: "A. Candidate"
+  full_name: %q
   location: "Remote (EU)"
 
 auto_pdf_score_threshold: 3.0
@@ -163,7 +173,7 @@ followup_cadence:
   responded_initial_days: 1
   responded_subsequent_days: 3
   interview_thankyou_days: 1
-`,
+`, demoCandidate),
 		g.l.Portals(): "tracked_companies: []\njob_boards: []\n",
 	}
 	for path, body := range files {
@@ -329,7 +339,7 @@ func (g *gen) writeReport(h *hist, date string, p1 float64) {
 func (g *gen) writeOutput(h *hist, date string) {
 	dir := filepath.Join(g.l.Output(), fmt.Sprintf("%s_%s_%s", date, slug(h.company), h.rnum))
 	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "Denys-Skira-CV.pdf"), []byte("%PDF-1.4\n% demo placeholder\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, demoCVFile()), []byte("%PDF-1.4\n% demo placeholder\n"), 0o644)
 }
 
 // breakApplicationTies leaves the applications heatmap one busiest day too.
