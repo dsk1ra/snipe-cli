@@ -169,6 +169,9 @@ type Calibration struct {
 	Sim          float64 `json:"sim"`
 }
 
+// stage3Input is the checkpoint key for the judgment, so whatever the call reads
+// belongs in here. profile.md was read from the config instead, and an edited
+// location policy kept serving judgments written under the old one.
 type stage3Input struct {
 	Parsed   Parsed        `json:"parsed"`
 	Rows     []Row         `json:"rows"`
@@ -177,6 +180,7 @@ type stage3Input struct {
 	Salary   *text.Salary  `json:"salary"`
 	JD       string        `json:"jd"`
 	CVHash   string        `json:"cv_hash"`
+	Profile  string        `json:"profile"`
 }
 
 func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgment, error) {
@@ -203,7 +207,7 @@ func (e *Evaluator) stage3(ctx context.Context, id int, in stage3Input) (Judgmen
 		fmt.Sprintf("Coverage of must-have requirements: %s%%", text.Fixed(in.Coverage.Coverage*100, 0)),
 		"",
 		"## Similar past offers (calibration anchors)", calibLines, "",
-		"## Candidate profile (archetypes, framing, deal-breakers)", orNone(e.Cfg.ProfileMD, "(no profile)"), "",
+		"## Candidate profile (archetypes, framing, deal-breakers)", orNone(in.Profile, "(no profile)"), "",
 		"## Candidate CV (cite real lines only)", e.Cfg.CV, "",
 		"## JD excerpt (context)", text.CleanJD(in.JD, 2500),
 	}, "\n")

@@ -151,7 +151,7 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	compDim, hasComp := text.CompScore(salary, e.Cfg.Comp)
 
 	judgment, err := state.Staged(ctx, ck, "p2.judgment",
-		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash},
+		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash, Profile: e.Cfg.ProfileMD},
 		func(ctx context.Context, in stage3Input) (Judgment, error) { return e.stage3(ctx, id, in) })
 	if err != nil {
 		return err

@@ -74,6 +74,10 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   pattern ended at `$`, and under multi-line mode the lazy match stopped at the
   first line end. `batch/fit-rules.mjs` has the same bug, so `gate fit` now
   differs from the Node oracle wherever a later entry matters.
+- Editing `profile.md` did not re-run a cached Phase 2 judgment. The judgment
+  prompt includes the profile but its checkpoint key did not, so an offer
+  re-run after a profile edit kept the judgment written under the old one. The
+  key changed shape, so every cached judgment re-runs once on its next pass.
 
 ### Removed
 
