@@ -33,6 +33,12 @@ type Config struct {
 		Negative []string `yaml:"negative"`
 	} `yaml:"title_filter"`
 	LocationFilter *struct {
+		// Regions turns on the UK gazetteer (place.go): london,
+		// west-midlands, uk-wide, uk. A posting it places in the UK passes
+		// when it is in a listed region, one it places only abroad is
+		// dropped, and one it cannot place falls through to the keyword tiers
+		// below.
+		Regions     []string `yaml:"regions"`
 		AlwaysAllow []string `yaml:"always_allow"`
 		Allow       []string `yaml:"allow"`
 		Block       []string `yaml:"block"`
@@ -42,7 +48,13 @@ type Config struct {
 	} `yaml:"scan_history"`
 	TrackedCompanies []providers.Entry `yaml:"tracked_companies"`
 	JobBoards        []providers.Entry `yaml:"job_boards"`
+
+	want Where // location_filter.regions, read once at load
 }
+
+// Placing reports whether the gazetteer is on, which is when the scan can say
+// where its postings are.
+func (c *Config) Placing() bool { return c.want != 0 }
 
 // RecheckAfterDays is how long an `added` history row keeps suppressing its URL.
 // -1 — no stated window, which is every shipped config — means forever: without
@@ -62,6 +74,18 @@ func LoadConfig(path string) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// A misspelt region is an error rather than skipped: skipping it would
+	// filter on the regions left, and "west midlands" without its hyphen would
+	// quietly drop Birmingham.
+	if c.LocationFilter != nil {
+		for _, r := range c.LocationFilter.Regions {
+			bit, ok := regionBits[strings.ToLower(strings.TrimSpace(r))]
+			if !ok {
+				return nil, fmt.Errorf("%s: location_filter.regions: unknown region %q — use london, west-midlands, uk-wide or uk", path, r)
+			}
+			c.want |= bit
+		}
 	}
 	return &c, nil
 }
@@ -99,7 +123,9 @@ func (c *Config) TitleOK(title string) bool {
 	return !containsAny(t, neg)
 }
 
-// LocationOK is the location gate, in tier order.
+// LocationOK is the location gate, in tier order: the gazetteer when
+// location_filter.regions is set, then the keyword tiers for what it could not
+// place.
 //
 // A blank location passes: providers expose location inconsistently at list
 // level, and penalising a missing field would drop real hits. always_allow
@@ -108,6 +134,14 @@ func (c *Config) TitleOK(title string) bool {
 func (c *Config) LocationOK(loc string) bool {
 	if c.LocationFilter == nil || strings.TrimSpace(loc) == "" {
 		return true
+	}
+	if c.want != 0 {
+		switch w := Place(loc); {
+		case w&Placed != 0:
+			return w&c.want != 0
+		case w&Abroad != 0:
+			return false
+		}
 	}
 	l := strings.ToLower(loc)
 	always, allow, block := lower(c.LocationFilter.AlwaysAllow), lower(c.LocationFilter.Allow), lower(c.LocationFilter.Block)

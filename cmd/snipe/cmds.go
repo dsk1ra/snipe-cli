@@ -448,10 +448,27 @@ func cmdScan(args []string) error {
 	fmt.Printf("%d fetched | dropped %d title, %d location, %d age, %d duplicate, %d same role | %d new\n",
 		res.Fetched, res.Filtered.Title, res.Filtered.Location, res.Filtered.Age,
 		res.Filtered.Duplicate, res.Filtered.Role, len(res.Kept))
+	if cfg.Placing() && len(res.Kept) > 0 {
+		by := map[string]int{}
+		for _, j := range res.Kept {
+			by[scan.Place(j.Location).Label()]++
+		}
+		var parts []string
+		for _, l := range []string{"West Midlands", "West Midlands + London", "London", "UK-wide", "elsewhere in the UK", "unplaced"} {
+			if by[l] > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", by[l], l))
+			}
+		}
+		fmt.Printf("new by place: %s\n", strings.Join(parts, ", "))
+	}
 
 	if *dryRun {
 		for _, j := range res.Kept {
-			fmt.Printf("  %s — %s (%s)\n", j.Company, j.Title, j.URL)
+			where := ""
+			if cfg.Placing() {
+				where = " [" + scan.Place(j.Location).Label() + "]"
+			}
+			fmt.Printf("  %s — %s · %s%s (%s)\n", j.Company, j.Title, cmp.Or(j.Location, "no location"), where, j.URL)
 		}
 		return nil
 	}

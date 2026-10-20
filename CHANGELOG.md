@@ -47,6 +47,12 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Changed
 
+- `location_filter.regions` places postings with a UK gazetteer before the
+  keyword tiers: `london`, `west-midlands` (the metropolitan county), `uk-wide`
+  and `uk`. Substring matching had kept "Sydney, New South Wales" on "Wales" and
+  "Birmingham, AL" on "Birmingham", and dropped a bare "Coventry" or "Solihull"
+  for naming no keyword. Without `regions` the filter is unchanged. The scan's
+  summary counts the new postings by place when it is on.
 - `snipe scan` fetches eight boards at a time instead of one. The postings are
   still filtered in entry order once every fetch is in, so which copy of a
   duplicate is kept does not depend on which board answered first.
