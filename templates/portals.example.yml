@@ -438,6 +438,13 @@ search_queries:
 # Either way the country is appended to the posting's location, so the
 # location_filter above sees it.
 #
+# Registry boards: once `snipe registry` has built data/registry.tsv, every scan
+# also fetches each board in it that a provider here can read — Workday,
+# Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Recruitee — with
+# `country: United Kingdom`. A board already listed under tracked_companies is
+# not fetched twice. The title, location and age filters apply to them as to
+# everything else.
+#
 # When the public careers URL is a branded custom domain (e.g.
 # careers.adyen.com), set `provider: smartrecruiters` explicitly to
 # bypass detect(). The `provider:` field wins over auto-detection.

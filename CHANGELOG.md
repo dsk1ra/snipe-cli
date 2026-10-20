@@ -6,6 +6,15 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Added
 
+- `snipe registry` builds `data/registry.tsv`, the scanner's company list from
+  public data instead of portals.yml: every employer the gender pay gap service
+  lists (all UK employers with 250+ staff, 11,231 in October 2026), and for each
+  one with a website, the ATS behind its careers page and the board URL it
+  answers on. It reads the home page, the careers link on it and the "search
+  jobs" link on that, and recognises 36 ATSs and career-site platforms. A
+  resolution is reused for 30 days, and a stopped build keeps what it resolved.
+  `snipe scan` fetches every registry board a provider can read, alongside
+  portals.yml's, whenever the registry exists.
 - A Workday provider. `careers_url: https://<tenant>.wdN.myworkdayjobs.com/<site>`
   (or the `myworkdaysite.com/recruiting/` form) is detected like any other ATS,
   and an optional `country:` keeps only that country's postings. 169 of the 305
@@ -38,6 +47,9 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Changed
 
+- `snipe scan` fetches eight boards at a time instead of one. The postings are
+  still filtered in entry order once every fetch is in, so which copy of a
+  duplicate is kept does not depend on which board answered first.
 - Phase 2's `north_star` is read from the archetype's `fit` tier in
   `profile.yml` (primary 5, secondary 3, adjacent 2, unlisted 1) and then capped
   as before; the model no longer scores it. It had been doing the lookup anyway,

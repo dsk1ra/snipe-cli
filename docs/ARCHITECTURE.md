@@ -46,7 +46,7 @@ One Go binary. `internal/` is a package per concern, `cmd/snipe` is the binary,
 | phases | `internal/phase1`, `internal/phase2`, `internal/phase3` |
 | CV selection | `internal/cvselect` |
 | render | `internal/latex`, `internal/fill`, `internal/pdf` |
-| providers | `internal/providers`, `internal/scan` |
+| providers | `internal/providers`, `internal/scan`, `internal/registry` |
 | tracker | `internal/tracker` |
 | TUI | `internal/tui` |
 
@@ -99,7 +99,8 @@ against a run made before the pin existed.
 ```
 bin/snipe                    the TUI (default)
   ├─ snipe run               the three-phase pipeline
-  ├─ snipe scan              portals.yml → internal/providers → the queue
+  ├─ snipe scan              portals.yml + data/registry.tsv → internal/providers → the queue
+  ├─ snipe registry          pay gap data → careers-page crawl → data/registry.tsv
   ├─ snipe add               one pasted JD, queued or run
   └─ snipe tracker fix       canonical statuses, one row per opening
 ```
@@ -161,6 +162,7 @@ cv.md                    →  Evaluation context
 article-digest.md        →  Proof points for matching
 config/profile.yml       →  Candidate identity
 portals.yml              →  Scanner configuration
+data/registry.tsv        →  UK employers (250+ staff) and the ATS behind each careers page
 templates/states.yml     →  Canonical status values
 templates/cv-template.tex  → PDF generation template (Jake's Resume, pdflatex)
 ```

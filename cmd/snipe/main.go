@@ -26,7 +26,8 @@ const usage = `snipe — local job-search pipeline, fully offline against Ollama
 
   snipe               the TUI (default)
   snipe run           the three-phase pipeline
-  snipe scan          fetch portals.yml's boards and queue what is new
+  snipe scan          fetch portals.yml's and the registry's boards, queue what is new
+  snipe registry      list UK employers from public data, and the ATS behind each careers page
   snipe add           add a pasted JD and run it
   snipe stop          ask the active run to stop after its current stage
   snipe pause         drop the stage in flight; resume runs it again
@@ -60,6 +61,8 @@ func dispatch() error {
 		return cmdRun(args)
 	case "scan":
 		return cmdScan(args)
+	case "registry":
+		return cmdRegistry(args)
 	case "add":
 		return cmdAdd(args)
 	case "stop":

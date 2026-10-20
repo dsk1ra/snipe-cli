@@ -7,6 +7,8 @@ data/applications.db
 data/follow-ups.md
 data/pipeline.md
 data/scan-history.tsv
+# Rebuilt from public data by `snipe registry`; a crawl of thousands of sites.
+data/registry.tsv
 data/parser-output/**/*.json
 !data/parser-output/.gitkeep
 !data/parser-output/**/.gitkeep
