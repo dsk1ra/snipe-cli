@@ -78,6 +78,12 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   prompt includes the profile but its checkpoint key did not, so an offer
   re-run after a profile edit kept the judgment written under the old one. The
   key changed shape, so every cached judgment re-runs once on its next pass.
+- Whole-phrase skill naming missed the posting's other grammatical number:
+  "code reviews" never named Code Review (51 of 351 cached postings), nor
+  "event-driven architectures" Event-Driven Architecture (21). Token overlap
+  had caught both on a single shared word. A form now matches its singular or
+  plural too, within limits that keep AWS, CSS and "reacts" out, and the block
+  prints the number the posting used.
 
 ### Removed
 

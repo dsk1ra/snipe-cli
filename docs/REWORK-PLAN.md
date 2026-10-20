@@ -264,6 +264,16 @@ category. 16% of postings name more than five categories and keep them all.
 The Node selector still names by token overlap at 6/12/3, so `gate p3` stopped
 comparing `skills`; experience, projects and modules are still diffed.
 
+**Singular and plural.** The sweep defined "asked" by the forms cv.md already
+knows, so it could not see what whole-phrase naming lost to spelling. Step 4's
+first probe did: "code reviews" no longer named Code Review in 51 postings,
+"event-driven architectures" missed Event-Driven Architecture in 21. Each form
+now also matches its other number (`otherNumber`: a lowercase final s dropped,
+an s added only to phrases of two words or more), and the page prints the
+number the posting used. That names 82 more mentions, all real, with no change
+in block size. Differently worded matches (Kafka for Apache Kafka, mentorship
+for Mentoring) are left to step 4.
+
 ## 4. Embedding-suggested aliases (next)
 
 Hand-writing aliases does not scale. The plan is to let embeddings propose them

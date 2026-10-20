@@ -223,7 +223,8 @@ func relatedToJd(cvText string, allItems []string, hits func(string) int) map[st
 // SkillForms are the spellings that count as a posting naming an item: the item
 // itself, each side of a spaced slash ("TypeScript / JavaScript" lists two real
 // skills, and a posting asking for TypeScript has named it), and its approved
-// aliases. It mirrors cv-writers.mjs's skillForms, plus the aliases.
+// aliases. It mirrors cv-writers.mjs's skillForms, plus the aliases and the
+// other grammatical number of each (otherNumber).
 func SkillForms(item string, aliases map[string][]string) []string {
 	forms := []string{item}
 	if parts := strings.Split(item, " / "); len(parts) > 1 {
@@ -233,7 +234,33 @@ func SkillForms(item string, aliases map[string][]string) []string {
 			}
 		}
 	}
-	return append(forms, aliases[strings.ToLower(item)]...)
+	forms = append(forms, aliases[strings.ToLower(item)]...)
+	for _, f := range forms {
+		if v := otherNumber(f); v != "" {
+			forms = append(forms, v)
+		}
+	}
+	return forms
+}
+
+// otherNumber is a form's singular or plural, or "" when guessing would be
+// unsafe. Whole-phrase naming lost "code reviews" against Code Review in 51 of
+// 351 postings, which token overlap had caught on "code" alone.
+//
+// Only a lowercase final s is dropped (AWS and CSS are not plurals, and "CS"
+// would name HTML / CSS), and an s is added only to a phrase of two words or
+// more: "reacts" is a verb before it is React. Over the cached postings this
+// names Code Review 51 times, Event-Driven Architecture 21, Microservices 6,
+// WebSockets 3 and System Design once, and nothing else.
+func otherNumber(f string) string {
+	n := len(f)
+	switch {
+	case n >= 4 && f[n-1] == 's' && f[n-2] >= 'a' && f[n-2] <= 'z' && f[n-2] != 's':
+		return f[:n-1]
+	case strings.Contains(f, " ") && f[n-1] >= 'a' && f[n-1] <= 'z' && f[n-1] != 's':
+		return f + "s"
+	}
+	return ""
 }
 
 // The skills block as it ships: up to SkillCats categories the posting did not
@@ -290,14 +317,22 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 		return n
 	}
 	// spelling is the form the posting uses: the item itself when the posting
-	// writes it that way or not at all, else the longest approved alias it does
-	// write — so "RESTful APIs" beats "RESTful" on a posting that says the former.
+	// writes it that way or not at all, else the longest approved alias or
+	// other number it does write — so "RESTful APIs" beats "RESTful" on a
+	// posting that says the former. Never one side of a slash, which would
+	// print half the item.
 	spelling := func(item string) string {
 		if strings.Contains(jdNorm, NormPhrase(item)) {
 			return item
 		}
+		cands := append([]string{item}, aliases[strings.ToLower(item)]...)
+		for _, c := range cands {
+			if v := otherNumber(c); v != "" {
+				cands = append(cands, v)
+			}
+		}
 		best := ""
-		for _, a := range aliases[strings.ToLower(item)] {
+		for _, a := range cands[1:] {
 			if len(a) > len(best) && strings.Contains(jdNorm, NormPhrase(a)) {
 				best = a
 			}

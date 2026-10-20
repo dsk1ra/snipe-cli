@@ -138,6 +138,24 @@ func TestSelectSkillsNamesWholeFormsOnly(t *testing.T) {
 	if got := cats("TypeScript on the frontend."); got != "Practice" {
 		t.Errorf("named %q, want Practice by one side of the slash", got)
 	}
+	if got := cats("You will lead system designs."); got != "Practice" {
+		t.Errorf("named %q, want Practice by the plural", got)
+	}
+}
+
+func TestOtherNumber(t *testing.T) {
+	for in, want := range map[string]string{
+		"Code Review": "Code Reviews",
+		"WebSockets":  "WebSocket",
+		"AWS":         "", // not a plural
+		"CSS":         "",
+		"React":       "", // one word: "reacts" is a verb
+		"Serverless":  "",
+	} {
+		if got := otherNumber(in); got != want {
+			t.Errorf("otherNumber(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 // The real cv.md, so the parse is exercised against the file that actually ships.
