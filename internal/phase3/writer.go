@@ -390,7 +390,12 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 			case related[item]:
 				t = 1
 			}
-			rows = append(rows, ranked{item: spelling(item), i: i, score: h, tier: t})
+			// Whole-phrase naming decides the tier, which nothing may cut;
+			// token overlap still ranks. Without it an unnamed item scored 0,
+			// and a posting naming no tool by its full name (Spotify's
+			// enterprise security role: "identity, devices, networks") got
+			// cv.md's first five categories in order, Data before Security.
+			rows = append(rows, ranked{item: spelling(item), i: i, score: max(h, hits(spelling(item))), tier: t})
 		}
 		// Tier first, so a related item outranks a floor item but never
 		// displaces one the posting actually named. Stable on the CV's order.

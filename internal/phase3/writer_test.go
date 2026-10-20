@@ -143,6 +143,16 @@ func TestSelectSkillsNamesWholeFormsOnly(t *testing.T) {
 	}
 }
 
+// A shared word does not name a category, but it still ranks one: the slot
+// for an unnamed category goes to the one the posting is about.
+func TestSelectSkillsRanksUnnamedByOverlap(t *testing.T) {
+	cv := "## Skills\n\n**Data:** PostgreSQL, MySQL\n**Security:** supply chain security, threat modelling\n"
+	got := SelectSkills(cv, "Help us keep the company's security strong.", 1, 7, 1, nil)
+	if len(got) != 1 || got[0].Category != "Security" {
+		t.Errorf("picked %+v, want Security over Data, which only comes first in cv.md", got)
+	}
+}
+
 func TestOtherNumber(t *testing.T) {
 	for in, want := range map[string]string{
 		"Code Review": "Code Reviews",

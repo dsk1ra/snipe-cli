@@ -95,6 +95,12 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   had caught both on a single shared word. A form now matches its singular or
   plural too, within limits that keep AWS, CSS and "reacts" out, and the block
   prints the number the posting used.
+- A posting that names no tool by its full name got cv.md's first five skill
+  categories in order, because an item not named whole scored nothing for
+  ranking either. Whole-phrase naming still decides what may not be cut, and
+  token overlap ranks again. On the live CV's 394 postings, printed items
+  sharing a word with the posting rose from 27% to 43%, and 7 of 8 "Security
+  Engineer" postings get a Security row, up from 5.
 
 ### Removed
 
