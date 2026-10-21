@@ -59,17 +59,21 @@ type Options struct {
 	NumGPU      int     `json:"num_gpu,omitempty"`
 }
 
-type message struct {
+// Message is one turn of a chat. Request.Messages carries a few-shot history.
+type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
 type chatRequest struct {
 	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
+	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
 	Format   any       `json:"format,omitempty"`
 	Options  Options   `json:"options"`
+	// Think is a pointer so that only an explicit false is sent: every other
+	// caller's body stays byte-identical to what the equivalence gate dumped.
+	Think *bool `json:"think,omitempty"`
 }
 
 type chatResponse struct {
@@ -98,15 +102,22 @@ type metrics struct {
 //
 // out must be a pointer; the reply is unmarshalled into it.
 func (c *Client) Chat(ctx context.Context, req Request, out any) error {
+	msgs := req.Messages
+	if len(msgs) == 0 {
+		msgs = []Message{{Role: "system", Content: req.System}, {Role: "user", Content: req.User}}
+	}
+	var think *bool
+	if req.NoThink {
+		off := false
+		think = &off
+	}
 	body, err := json.Marshal(chatRequest{
-		Model: req.Model,
-		Messages: []message{
-			{Role: "system", Content: req.System},
-			{Role: "user", Content: req.User},
-		},
-		Stream:  false,
-		Format:  req.Schema,
-		Options: req.Options,
+		Model:    req.Model,
+		Messages: msgs,
+		Stream:   false,
+		Format:   req.Schema,
+		Options:  req.Options,
+		Think:    think,
 	})
 	if err != nil {
 		return err
@@ -140,11 +151,17 @@ func (c *Client) Chat(ctx context.Context, req Request, out any) error {
 
 // Request is one model call.
 type Request struct {
-	Model   string
-	System  string
-	User    string
-	Schema  any // JSON Schema; nil for free-form prose
-	Options Options
+	Model  string
+	System string
+	User   string
+	// Messages, when set, is the whole conversation and System/User are ignored:
+	// the Phase 3 judge sends its exemplars as user/assistant turns.
+	Messages []Message
+	Schema   any // JSON Schema; nil for free-form prose
+	Options  Options
+	// NoThink sends `think: false`. The Phase 3 rewrite sets it so a reasoning
+	// model cannot spend the output cap before it writes a draft.
+	NoThink bool
 	Timeout time.Duration
 	Label   string // the phase, for the timing log: "p1.score", "p2.judge", …
 	ID      int    // the offer, for the timing log
@@ -152,9 +169,16 @@ type Request struct {
 
 // Text is Chat without a schema, for the one caller that wants prose.
 func (c *Client) Text(ctx context.Context, req Request) (string, error) {
+	// An empty system message is not "no system message": the template renders
+	// it and it replaces the model's own default. bespoke-minicheck keeps its
+	// instruction there, and with it blanked the model answered in prose.
+	msgs := []Message{{Role: "user", Content: req.User}}
+	if req.System != "" {
+		msgs = []Message{{Role: "system", Content: req.System}, msgs[0]}
+	}
 	body, err := json.Marshal(chatRequest{
 		Model:    req.Model,
-		Messages: []message{{Role: "system", Content: req.System}, {Role: "user", Content: req.User}},
+		Messages: msgs,
 		Stream:   false,
 		Options:  req.Options,
 	})

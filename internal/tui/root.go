@@ -170,7 +170,7 @@ func (m *Model) Update(raw tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
-	case reviewMsg, reviewDoneMsg, tailorMsg, tailorOpMsg:
+	case reviewMsg, reviewDoneMsg, tailorMsg, tailorOpMsg, ledgerMsg:
 		// The skills screen lives on the queue, like the reader pane; a key
 		// that changed tabs before the files were read must not drop it.
 		_, cmd := m.queue.Update(t)

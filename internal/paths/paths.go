@@ -65,6 +65,11 @@ func (l Layout) SkillSuggestions() string {
 	return filepath.Join(l.StateDir(), "skill-suggestions.tsv")
 }
 
+// CVLedger is the fact ledger. It carries the facts, framings and inferences you
+// approved, which nothing else records, so it is state and never rebuilt from
+// scratch: `snipe ledger` merges into it.
+func (l Layout) CVLedger() string { return filepath.Join(l.StateDir(), "cv-ledger.json") }
+
 // Lock lives with the state it guards. It is the only file in there that does
 // not survive the process, which is the point: a lock found in a tree copied
 // off another machine is a lie, and one found beside the state file is at least

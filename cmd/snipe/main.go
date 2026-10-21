@@ -36,6 +36,7 @@ const usage = `snipe — local job-search pipeline, fully offline against Ollama
   snipe status        what is running, and where it is
   snipe doctor        check the setup and reconcile state against the artifacts
   snipe tracker fix   canonical statuses, one row per opening, working report links
+  snipe ledger        build or merge the fact ledger from cv.md (--check lists what is stale)
   snipe build         rebuild the binary from this checkout, then run it
 
 Run a subcommand with -h for its flags.
@@ -79,6 +80,8 @@ func dispatch() error {
 		return cmdTracker(args)
 	case "suggest", "rebuild":
 		return cmdTailor(cmd, args)
+	case "ledger":
+		return cmdLedger(args)
 	case "build":
 		return cmdBuild(args)
 	case "-h", "--help", "help":

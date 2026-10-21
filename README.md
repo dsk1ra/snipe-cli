@@ -237,6 +237,27 @@ You don't need the TUI. Every command works standalone:
 
 Run any subcommand with `-h` for its flags.
 
+### `snipe run --writer adapt`
+
+Phase 3 prints your CV's lines as `cv.md` words them (`--writer verbatim`, the
+default). `--writer adapt` lets the 30B reword the selected lines toward the
+posting, only where the facts behind each line allow it. Every draft is checked
+by code and by MiniCheck before it can ship, and the original line wins any tie.
+Each offer's folder gets a `truth.json` saying what changed and what licensed it.
+
+It needs three things, and an offer missing any of them ships verbatim with one
+line saying why, never failing:
+
+- a current fact ledger: `snipe ledger`, then `snipe ledger --framings`, then
+  approve the facts and framings in the TUI's ledger screen
+- the verifier: `ollama pull bespoke-minicheck` (CC BY-NC 4.0, so it is not
+  shipped with this repo)
+- `cv.md` unchanged since the ledger was built; rerun `snipe ledger` after edits
+
+Tools the posting names that your CV does not, but that your work suggests, are
+queued as pending inferences in the ledger. None reaches a PDF until you approve
+it. Design: `docs/PRD-TAILORING-REWORK.md` §6.
+
 ---
 
 ## Hardware

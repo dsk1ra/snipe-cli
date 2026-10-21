@@ -24,6 +24,8 @@ func TestNothingIrreplaceableLivesInTheCache(t *testing.T) {
 		// redo deliberately, expensive enough that it must not be swept up by a
 		// cache clear that is otherwise free.
 		"cv-bank": l.CVBank(),
+		// Carries approvals nothing else records.
+		"cv-ledger": l.CVLedger(),
 	}
 	for name, p := range record {
 		if strings.HasPrefix(p, l.CacheDir()+string(filepath.Separator)) {

@@ -109,3 +109,31 @@ itself uses. The model's habit is to append an outcome the CV never states, so
 most proposals are dropped, and an empty list is a normal answer. A fresh
 `snipe run` for the offer deletes the file, because the text it was about is
 gone.
+
+## Fact ledger review
+
+`g` on the queue opens `batch/state/cv-ledger.json` (built by `snipe ledger`):
+every claim `cv.md` makes, one per screen, in file order. The header counts
+facts decided (`37/144 reviewed`), the source bullet is drawn whole with the
+focused fact marked in it where it appears word for word, and the lines under
+it are the other facts of that bullet. Facts are cut as growing prefixes of the
+bullet, so the detail below the rule is the only place one is shown in full,
+with its entities, figures and whether it must be kept. The screen opens on the
+first undecided fact, so closing it and coming back resumes.
+
+- `a` or `enter` approves, `x` rejects, and either moves to the next undecided
+  fact. `u` takes back the last change, of any kind, and lands on it.
+- `e` retypes the fact's text and `enter` saves it as approved. `m` flips
+  must-keep. `d` then a digit removes that entity or figure; they are numbered
+  across both lists, entities first, because the model's lists are noisy.
+- `tab` / `shift+tab` jump to the next / previous undecided item, `f` to the
+  next rejected or edited one, `↑↓` / `j` `k` move one at a time. `esc` or `q`
+  closes it. Framings, if a bullet has any, follow its facts and take `a`, `x`,
+  `u` and the movement keys.
+
+Every change is written to the file (a temp file and a rename) before the next
+key is read. A rejected fact stays in the file with `status: "rejected"`, which
+is how a rebuild knows not to propose it again. "Edited" is remembered for the
+session only, since the file records no such thing, so `f` forgets edits on
+reopening. `k` moves rather than flipping must-keep, as it does in every other
+list.

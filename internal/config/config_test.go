@@ -114,3 +114,34 @@ func TestNorthStarFollowsFitTier(t *testing.T) {
 		t.Errorf("with no archetype list NorthStar = %d, want neutral 3", got)
 	}
 }
+
+// infer_min_score gates which postings may propose inferences about the CV, so
+// a profile without it must get the PRD's 4.0 and not a zero that proposes on
+// every offer.
+func TestInferMinScore(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yml  string
+		want float64
+	}{
+		"absent": {"goals:\n  daily_scans: 15\n", DefaultInferMinScore},
+		"set":    {"infer_min_score: 4.5\n", 4.5},
+		"zero":   {"infer_min_score: 0\n", DefaultInferMinScore},
+	} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "config"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for f, body := range map[string]string{"cv.md": "# CV\n", "config/profile.yml": tc.yml} {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		c, err := Load(paths.Layout{Home: dir, Code: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Thresholds.InferMinScore != tc.want {
+			t.Errorf("%s: InferMinScore = %v, want %v", name, c.Thresholds.InferMinScore, tc.want)
+		}
+	}
+}

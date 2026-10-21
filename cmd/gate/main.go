@@ -19,7 +19,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gate <salary|cleanjd|fit|atoms|select|tex|fill|p3|goldset|skills> <dir-or-file> [js-output]")
+		fmt.Fprintln(os.Stderr, "usage: gate <salary|cleanjd|fit|atoms|select|tex|fill|p3|goldset|skills|tailor> <dir-or-file> [js-output]\n       gate e2 <home> [--checker minicheck|eval] [--split whole|clause] [--n 150] [--out report.json]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -55,6 +55,10 @@ func main() {
 		os.Exit(gateAtoms(os.Args[2], os.Args[3]))
 	case "fit":
 		os.Exit(gateFit(os.Args[2], os.Args[3]))
+	case "tailor":
+		os.Exit(gateTailor(os.Args[2:]))
+	case "e2":
+		os.Exit(gateE2(os.Args[2:]))
 	case "skills":
 		os.Exit(gateSkills(os.Args[2], len(os.Args) > 3 && os.Args[3] == "--sweep"))
 	default:

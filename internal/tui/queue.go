@@ -83,6 +83,9 @@ type queueTab struct {
 	review *skillsReview
 	// tailor is the tailored-text screen, open over the list when non-nil.
 	tailor *tailorScreen
+	// ledger is the fact-ledger review, open over the list when non-nil. Not
+	// about a row, so it opens from the list or the tab bar rather than a row.
+	ledger *ledgerScreen
 
 	detail      viewport.Model
 	detailOpen  bool
@@ -246,6 +249,13 @@ func (q *queueTab) Update(m tea.Msg) (bool, tea.Cmd) {
 		q.tailor = m.s
 		return true, nil
 
+	case ledgerMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.ledger = m.s
+		return true, nil
+
 	case tailorOpMsg:
 		if q.tailor == nil {
 			return true, nil
@@ -357,6 +367,18 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		return true, q.review.key(k)
 	}
+	if q.ledger != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q":
+			if !q.ledger.capturing() {
+				q.ledger = nil
+				return true, nil
+			}
+		}
+		return true, q.ledger.key(k)
+	}
 	if q.tailor != nil {
 		switch k.String() {
 		case "ctrl+c":
@@ -403,6 +425,12 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	if !q.focus.typing() && key.Matches(k, q.keys.Find) {
 		q.setFocus(fFind)
 		return true, nil
+	}
+
+	// g opens the fact ledger. Guarded on typing() like / and f: a g typed
+	// into a job description is a g.
+	if !q.focus.typing() && key.Matches(k, q.keys.Ledger) {
+		return true, openLedger(q.l)
 	}
 
 	// A focused text field claims every printable key and the arrows. This is
@@ -1006,6 +1034,8 @@ func (q *queueTab) ShortHelp() []key.Binding {
 		return q.review.help()
 	case q.tailor != nil:
 		return q.tailor.help()
+	case q.ledger != nil:
+		return q.ledger.help()
 	case q.detailOpen:
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("up/down"), key.WithHelp("↑↓", "scroll")),
@@ -1049,7 +1079,7 @@ func (q *queueTab) ShortHelp() []key.Binding {
 func (q *queueTab) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{q.keys.Cycle, q.keys.Step, q.keys.In, q.keys.Out, q.keys.Fire, q.keys.Slash, q.keys.Find},
-		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Tailor, q.keys.Skills},
+		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Tailor, q.keys.Skills, q.keys.Ledger},
 		{q.keys.Applied, q.keys.Skip, q.keys.Yes, q.keys.No},
 	}
 }
@@ -1075,6 +1105,9 @@ func (q *queueTab) View() string {
 	}
 	if q.tailor != nil {
 		return q.tailor.view(q.width, q.height)
+	}
+	if q.ledger != nil {
+		return q.ledger.view(q.width, q.height)
 	}
 	if q.detailOpen {
 		return lipgloss.JoinVertical(lipgloss.Left,

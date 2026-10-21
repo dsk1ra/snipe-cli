@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/minicheck"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/phase1"
@@ -41,7 +43,9 @@ func cmdTUI() error {
 	return err
 }
 
-func cmdRun(args []string) error {
+// parseRun reads `snipe run`'s flags. The writer is validated here, before any
+// model is touched.
+func parseRun(args []string) (run.Options, string, error) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	opt := run.DefaultOptions()
 	fs.IntVar(&opt.OnlyID, "only-id", 0, "process just this offer")
@@ -58,7 +62,17 @@ func cmdRun(args []string) error {
 	fs.IntVar(&opt.ParallelEval, "parallel-eval", opt.ParallelEval, "Phase 2 workers")
 	fs.IntVar(&opt.ParallelPDF, "parallel-pdf", opt.ParallelPDF, "Phase 3 workers (VRAM-shared — keep low)")
 	fs.StringVar(&opt.OllamaURL, "ollama-url", ollama.DefaultURL, "Ollama base URL")
+	writer := fs.String("writer", phase3.WriterVerbatim, "how Phase 3 words the CV's lines: verbatim, or adapt (needs snipe ledger and ollama pull bespoke-minicheck)")
 	if err := fs.Parse(args); err != nil {
+		return opt, "", err
+	}
+	w, err := phase3.ParseWriter(*writer)
+	return opt, w, err
+}
+
+func cmdRun(args []string) error {
+	opt, writer, err := parseRun(args)
+	if err != nil {
 		return err
 	}
 
@@ -89,6 +103,11 @@ func cmdRun(args []string) error {
 		}
 		if err := requireModels(models, opt, cfg); err != nil {
 			return err
+		}
+		// Not required: an offer without it ships verbatim, and says so. Said
+		// once here so it is not a surprise on the first offer.
+		if writer == phase3.WriterAdapt && !opt.SkipPhase3 && !hasModel(models, minicheck.Model) {
+			fmt.Printf("warning: --writer adapt needs %s to verify drafts; offers will ship verbatim until: ollama pull %s\n", minicheck.Model, minicheck.Model)
 		}
 	}
 
@@ -132,7 +151,7 @@ func cmdRun(args []string) error {
 		},
 	}
 
-	tailor := &phase3.Tailor{L: l, Cfg: cfg, OL: cl, Store: st, Cache: cache}
+	tailor := &phase3.Tailor{L: l, Cfg: cfg, OL: cl, Store: st, Cache: cache, Writer: writer}
 	ph.PDF = tailor.Run
 
 	r := run.New(l, opt, ph, st, cl, tl)
@@ -145,6 +164,12 @@ func cmdRun(args []string) error {
 		return nil
 	}
 	return err
+}
+
+func hasModel(available []string, want string) bool {
+	return slices.ContainsFunc(available, func(got string) bool {
+		return got == want || strings.HasPrefix(got, want+":")
+	})
 }
 
 // requireModels fails before the first offer rather than during it.
@@ -162,14 +187,7 @@ func requireModels(available []string, opt run.Options, cfg *config.Config) erro
 		need = append(need, ollama.ModelEmbed)
 	}
 	for _, want := range need {
-		found := false
-		for _, got := range available {
-			if got == want || strings.HasPrefix(got, want+":") {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !hasModel(available, want) {
 			return fmt.Errorf("model %q not in Ollama (have: %s)\nbuild it: ollama create %s -f prompts/Modelfile.%s",
 				want, strings.Join(available, ", "), want, want)
 		}

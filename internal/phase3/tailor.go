@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dsk1ra/snipe-cli/internal/adapt"
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/cvselect"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
@@ -23,6 +24,7 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/state"
 	"github.com/dsk1ra/snipe-cli/internal/suggest"
 	"github.com/dsk1ra/snipe-cli/internal/text"
+	"github.com/dsk1ra/snipe-cli/internal/verify"
 )
 
 // Tailor is the Phase 3 worker: one evaluated offer in, one tailored PDF out.
@@ -37,11 +39,21 @@ type Tailor struct {
 	Store *state.Store
 	Cache *state.Cache
 
+	// Writer is "verbatim" (the default, and what "" means) or "adapt", which
+	// rewrites the selected lines from the fact ledger (adapt.go).
+	Writer string
+	// Checker answers MiniCheck's question for adapt; nil means the real model.
+	Checker verify.Checker
+	check   func([]adapt.EntryTruth) error // the kill rule's test; nil is adapt.Check
+
 	// spikeMu serialises the spike rebuild across Phase 3 workers. The runner
 	// runs two by default and the background is the same for both, so without it
 	// they rebuild it simultaneously — twice the GPU, and the loser's write
 	// lands on a file the winner had already made correct.
 	spikeMu sync.Mutex
+
+	// ledgerMu serialises queueing inferences into the ledger across workers.
+	ledgerMu sync.Mutex
 }
 
 // Run tailors one offer. It is a run.Phase.
@@ -86,16 +98,34 @@ func (t *Tailor) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 	// between a stop and the resume and every reworded bullet misses the map,
 	// scores 0, sorts last and gets cut — silently, on the offer the pause was
 	// protecting.
+	//
+	// So are the judge's prompt and exemplars, hashed, or "" when it is off. The
+	// cached value is the blended score, and a run scored before exemplars
+	// existed, or against a sheet since re-ticked, would otherwise be replayed.
+	system, shots := t.judgeSetup()
 	score, err := state.Staged(ctx, ck, "p3.select",
-		selectInput{Reqs: reqs, CVHash: t.Cfg.Hash()},
+		selectInput{Reqs: reqs, CVHash: t.Cfg.Hash(), Judge: judgeKey(system, shots)},
 		func(ctx context.Context, in selectInput) (map[string]float64, error) {
-			return t.ScoreBullets(ctx, in.Reqs)
+			return t.scoreBullets(ctx, in.Reqs, string(jd), system, shots)
 		})
 	if err != nil {
 		return err
 	}
 
 	content := t.Build(score, string(jd))
+
+	// A nil truth is verbatim, either by choice or because adapt fell back.
+	var truth *adapt.TruthFile
+	if t.Writer == WriterAdapt {
+		content, truth, err = t.Adapt(ctx, ck, AdaptJob{
+			ID: id, Report: row.ReportNum, Score: ev.Score, JD: string(jd),
+			Rows: adapt.RowsFromReport(string(report)), Terms: PostingTerms(ck, string(report)),
+			Content: content, Queue: true,
+		})
+		if err != nil {
+			return err
+		}
+	}
 
 	date := time.Now().Format("2006-01-02")
 	dir := filepath.Join(t.L.Output(), fmt.Sprintf("%s_%s_%s", date, slugify(orUnknown(ev.Company)), row.ReportNum))
@@ -110,6 +140,9 @@ func (t *Tailor) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 		return err
 	}
 	if err := state.WriteAtomic(filepath.Join(dir, "job-description.txt"), jd); err != nil {
+		return err
+	}
+	if err := saveTruth(dir, truth); err != nil {
 		return err
 	}
 	// Suggestions are about the text just replaced.
@@ -158,6 +191,7 @@ func (t *Tailor) compile(ctx context.Context, dir string, content fill.Content, 
 type selectInput struct {
 	Reqs   []string `json:"reqs"`
 	CVHash string   `json:"cv_hash"`
+	Judge  string   `json:"judge"`
 }
 
 // Build turns a scored CV into the tailored content the template is filled
@@ -205,7 +239,16 @@ func (t *Tailor) Build(score map[string]float64, jd string) fill.Content {
 // constant into every vector of that entry, which pulls the whole entry toward
 // one point and flattens the ranking: pair accuracy 0.689 prefixed against
 // 0.757 bare, better on 11 of 12 offers.
+//
+// The 30B judge's grades are added after the spike subtraction when exemplars
+// exist (see judge.go). This entry point has no posting text to show it, so it
+// grades against the requirements alone; Run uses scoreBullets with the JD.
 func (t *Tailor) ScoreBullets(ctx context.Context, reqs []string) (map[string]float64, error) {
+	system, shots := t.judgeSetup()
+	return t.scoreBullets(ctx, reqs, "", system, shots)
+}
+
+func (t *Tailor) scoreBullets(ctx context.Context, reqs []string, jd, system string, shots []Shot) (map[string]float64, error) {
 	bullets := cvBullets(t.Cfg.CVRaw)
 	out := make(map[string]float64, len(bullets))
 	if len(bullets) == 0 || len(reqs) == 0 {
@@ -237,8 +280,21 @@ func (t *Tailor) ScoreBullets(ctx context.Context, reqs []string) (map[string]fl
 			}
 		}
 	}
+
+	// Rerank with the judge, if there are exemplars. Measured on the gold set at
+	// +0.10 pair accuracy over cosine alone (CI [0.027, 0.190], 7 offers better,
+	// 0 worse), and the gain held when the exemplar pair was swapped. It is added
+	// last because the weight was benchmarked against unscaled cosine. A failure
+	// of any kind leaves cosine and the spike term standing.
+	var grades map[string]float64
+	if len(shots) > 0 {
+		var err error
+		if grades, err = judgeGrades(ctx, t.OL, system, shots, bullets, reqs, jd); err != nil {
+			fmt.Printf("  judge failed, scoring by cosine alone: %v\n", err)
+		}
+	}
 	for i, b := range bullets {
-		out[b] = scores[i]
+		out[b] = scores[i] + cvselect.JudgeBlend*grades[b]
 	}
 	return out, nil
 }

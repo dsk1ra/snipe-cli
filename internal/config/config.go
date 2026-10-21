@@ -87,13 +87,22 @@ func (s scalar) String() string { return string(s) }
 // Thresholds are the profile's own gates, overriding the built-in defaults.
 type Thresholds struct {
 	AutoPDFScore float64
+	// InferMinScore is the lowest Phase 2 score at which a posting's tool may be
+	// proposed as an inference about the CV (PRD-TAILORING-REWORK §1.1). The 4.0
+	// default is a guess; E7 tunes it.
+	InferMinScore float64
 }
+
+// DefaultInferMinScore is Thresholds.InferMinScore until profile.yml says
+// otherwise.
+const DefaultInferMinScore = 4.0
 
 type profileDoc struct {
 	TargetRoles struct {
 		Archetypes []archetype `yaml:"archetypes"`
 	} `yaml:"target_roles"`
 	AutoPDFScoreThreshold float64   `yaml:"auto_pdf_score_threshold"`
+	InferMinScore         float64   `yaml:"infer_min_score"`
 	Candidate             Candidate `yaml:"candidate"`
 	Goals                 Goals     `yaml:"goals"`
 	CV                    struct {
@@ -141,6 +150,7 @@ func Load(l paths.Layout) (*Config, error) {
 	c.ProfileYML = readSafe(l.ProfileYML())
 	c.Comp = text.ParseCompTargets(c.ProfileYML)
 	c.Thresholds.AutoPDFScore = 3.0
+	c.Thresholds.InferMinScore = DefaultInferMinScore
 	c.Goals = DefaultGoals
 
 	var doc profileDoc
@@ -154,6 +164,9 @@ func Load(l paths.Layout) (*Config, error) {
 		}
 		if doc.AutoPDFScoreThreshold > 0 {
 			c.Thresholds.AutoPDFScore = doc.AutoPDFScoreThreshold
+		}
+		if doc.InferMinScore > 0 {
+			c.Thresholds.InferMinScore = doc.InferMinScore
 		}
 		// Per field, so a profile that sets one goal does not zero the other
 		// two back to nothing.
