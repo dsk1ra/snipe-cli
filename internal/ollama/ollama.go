@@ -176,11 +176,17 @@ func (c *Client) Text(ctx context.Context, req Request) (string, error) {
 	if req.System != "" {
 		msgs = []Message{{Role: "system", Content: req.System}, msgs[0]}
 	}
+	var think *bool
+	if req.NoThink {
+		off := false
+		think = &off
+	}
 	body, err := json.Marshal(chatRequest{
 		Model:    req.Model,
 		Messages: msgs,
 		Stream:   false,
 		Options:  req.Options,
+		Think:    think,
 	})
 	if err != nil {
 		return "", err

@@ -840,6 +840,7 @@ func gateTailor(args []string) int {
 	rs := r.do(ids)
 
 	base := loadE3(e3Path(env.l, "verbatim")).Offers
+	withCachedATS(env.l, func(id string) (string, error) { o, err := env.offer(id); return o.Text, err }, rs, base)
 	report(os.Stdout, armName, rs, base)
 	fmt.Println()
 	code := killRule(os.Stdout, rs)
