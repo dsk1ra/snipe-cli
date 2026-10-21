@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/aliases"
 	"github.com/dsk1ra/snipe-cli/internal/config"
+	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/phase3"
 )
@@ -45,8 +48,9 @@ type skillsReview struct {
 }
 
 type reviewMsg struct {
-	r   *skillsReview
-	err error
+	r       *skillsReview
+	err     error
+	rebuild error // the queue predates cv.md and could not be rebuilt
 }
 
 // reviewDoneMsg is one decision landing on disk.
@@ -58,11 +62,23 @@ type reviewDoneMsg struct {
 	err   error
 }
 
+// openSkills rebuilds the queue first when cv.md or skills.yml changed after
+// it was written: a run is what rebuilds it, so splitting an item in cv.md left
+// the screen offering the old compound item until the next run.
 func openSkills(l paths.Layout, info rowInfo) tea.Cmd {
-	return func() tea.Msg {
+	stale := queueStale(l)
+	open := func() tea.Msg {
 		cfg, err := config.Load(l)
 		if err != nil {
 			return reviewMsg{err: err}
+		}
+		var rebuild error
+		if stale {
+			// ponytail: no check for a run holding the GPU; Ollama swaps the
+			// embedder in beside the 30B, slower but correct.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			_, rebuild = aliases.Suggest(ctx, l, cfg, ollama.New("", nil))
+			cancel()
 		}
 		all, err := aliases.Load(l.SkillSuggestions())
 		if err != nil {
@@ -87,8 +103,27 @@ func openSkills(l paths.Layout, info rowInfo) tea.Cmd {
 			jds: map[int]string{info.ID: string(jd)},
 		}
 		r.quote()
-		return reviewMsg{r: r}
+		return reviewMsg{r: r, rebuild: rebuild}
 	}
+	if stale {
+		return tea.Batch(notef("cv.md or skills.yml changed since the last run: rebuilding the skills queue"), open)
+	}
+	return open
+}
+
+// queueStale is whether cv.md or skills.yml is newer than the queue. No queue
+// yet means no run yet, and nothing to rebuild.
+func queueStale(l paths.Layout) bool {
+	q, err := os.Stat(l.SkillSuggestions())
+	if err != nil {
+		return false
+	}
+	for _, p := range []string{l.CV(), l.SkillsYML()} {
+		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(q.ModTime()) {
+			return true
+		}
+	}
+	return false
 }
 
 var reviewKeys = struct {

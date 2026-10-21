@@ -636,3 +636,50 @@ func cmdTracker(args []string) error {
 	fmt.Printf("\n%d change(s) written to %s\n", res.Changed(), l.Tracker())
 	return nil
 }
+
+// cmdTailor is the two after-the-fact steps on a finished CV: suggest asks the
+// model for rewordings, rebuild renders the PDF with the accepted ones. They are
+// separate commands because the person decides between them.
+func cmdTailor(name string, args []string) error {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	ollamaURL := fs.String("ollama-url", ollama.DefaultURL, "Ollama base URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: snipe %s <id>", name)
+	}
+	id, err := strconv.Atoi(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("%q is not an offer id", fs.Arg(0))
+	}
+
+	l := layout()
+	cfg, err := config.Load(l)
+	if err != nil {
+		return err
+	}
+	st, err := state.Open(l.State())
+	if err != nil {
+		return err
+	}
+	t := &phase3.Tailor{L: l, Cfg: cfg, Store: st, Cache: state.NewCache(),
+		OL: ollama.New(*ollamaURL, ollama.NewTimingLog(l.Timings()))}
+	ctx, cleanup := signalCtx(func() {})
+	defer cleanup()
+
+	if name == "suggest" {
+		n, err := t.Suggest(ctx, id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("#%d: %d suggestion(s)\n", id, n)
+		return nil
+	}
+	n, pages, err := t.Rebuild(ctx, id)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("#%d: rebuilt with %d accepted change(s), %d page(s)\n", id, n, pages)
+	return nil
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
+	"github.com/dsk1ra/snipe-cli/internal/suggest"
 	"github.com/dsk1ra/snipe-cli/internal/text"
 )
 
@@ -111,21 +112,11 @@ func (t *Tailor) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 	if err := state.WriteAtomic(filepath.Join(dir, "job-description.txt"), jd); err != nil {
 		return err
 	}
+	// Suggestions are about the text just replaced.
+	_ = os.Remove(filepath.Join(dir, suggest.File))
 
-	name := strings.ReplaceAll(strings.TrimSpace(t.Cfg.Candidate.FullName), " ", "-")
-	if name == "" {
-		name = "Candidate"
-	}
-	pdfPath := filepath.Join(dir, name+"-CV.pdf")
-	fit, err := Run(ctx, Params{
-		Template: string(tpl), CV: fill.ParseCV(t.Cfg.CVRaw), Content: content,
-		Candidate: t.Cfg.Candidate, CVText: t.Cfg.CVRaw, JDText: string(jd),
-		TargetRole: ev.Role, OutPath: pdfPath,
-	})
+	fit, pdfPath, err := t.compile(ctx, dir, content, string(jd), ev.Role, string(tpl), nil)
 	if err != nil {
-		return err
-	}
-	if err := state.WriteAtomic(filepath.Join(dir, "source.tex"), []byte(fit.Tex)); err != nil {
 		return err
 	}
 
@@ -138,6 +129,30 @@ func (t *Tailor) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 		r.P3Status = state.P3Completed
 		r.Error = ""
 	})
+}
+
+// compile fills the template from content and walks the density ladder, leaving
+// the PDF and its source.tex in dir. extra are spellings accepted by hand, on
+// top of the aliases in config/skills.yml.
+func (t *Tailor) compile(ctx context.Context, dir string, content fill.Content, jd, role, tpl string, extra []string) (Fit, string, error) {
+	name := strings.ReplaceAll(strings.TrimSpace(t.Cfg.Candidate.FullName), " ", "-")
+	if name == "" {
+		name = "Candidate"
+	}
+	var approved []string
+	for _, forms := range t.Cfg.Aliases {
+		approved = append(approved, forms...)
+	}
+	pdfPath := filepath.Join(dir, name+"-CV.pdf")
+	fit, err := Run(ctx, Params{
+		Template: tpl, CV: fill.ParseCV(t.Cfg.CVRaw), Content: content,
+		Candidate: t.Cfg.Candidate, CVText: t.Cfg.CVRaw, JDText: jd,
+		TargetRole: role, OutPath: pdfPath, Approved: append(approved, extra...),
+	})
+	if err != nil {
+		return Fit{}, "", err
+	}
+	return fit, pdfPath, state.WriteAtomic(filepath.Join(dir, "source.tex"), []byte(fit.Tex))
 }
 
 type selectInput struct {

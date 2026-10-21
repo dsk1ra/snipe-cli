@@ -29,6 +29,8 @@ const usage = `snipe — local job-search pipeline, fully offline against Ollama
   snipe scan          fetch portals.yml's and the registry's boards, queue what is new
   snipe registry      list UK employers from public data, and the ATS behind each careers page
   snipe add           add a pasted JD and run it
+  snipe suggest <id>  ask for ATS rewordings of a finished CV's bullets and skills
+  snipe rebuild <id>  render the PDF again with the rewordings you accepted
   snipe stop          ask the active run to stop after its current stage
   snipe pause         drop the stage in flight; resume runs it again
   snipe status        what is running, and where it is
@@ -75,6 +77,8 @@ func dispatch() error {
 		return cmdDoctor()
 	case "tracker":
 		return cmdTracker(args)
+	case "suggest", "rebuild":
+		return cmdTailor(cmd, args)
 	case "build":
 		return cmdBuild(args)
 	case "-h", "--help", "help":

@@ -120,3 +120,19 @@ func TestLadderProducesAOnePagePDF(t *testing.T) {
 	}
 	t.Logf("step %d, %d page(s), fill %.3f, %d KB", fit.Step, fit.Pages, fit.PDF.Fill, fit.PDF.Size/1024)
 }
+
+// A respelling from config/skills.yml or a hand-accepted suggestion is a word
+// cv.md does not write, so grounding would drop it and take the item with it.
+func TestApprovedSpellingsSurviveGrounding(t *testing.T) {
+	cv := "# X\n\n## Skills\n\n**Data:** PostgreSQL, Redis\n"
+	c := fill.Content{}
+	c.Skills = []byte(`[{"category":"Data","items":"Postgres, Redis"}]`)
+	p := Params{Template: "{{SKILLS}}", CV: fill.ParseCV(cv), Content: c, CVText: cv}
+	if tex := Fill(p, Step{}); strings.Contains(tex, "Postgres,") {
+		t.Fatalf("setup: an unapproved spelling printed:\n%s", tex)
+	}
+	p.Approved = []string{"Postgres"}
+	if tex := Fill(p, Step{}); !strings.Contains(tex, "Postgres, Redis") {
+		t.Errorf("approved spelling dropped:\n%s", tex)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dsk1ra/snipe-cli/internal/aliases"
 	"github.com/dsk1ra/snipe-cli/internal/config"
@@ -77,5 +78,26 @@ func TestSkillsReview(t *testing.T) {
 	press("esc")
 	if q.review != nil {
 		t.Error("esc did not close the screen")
+	}
+}
+
+// An edit to cv.md after the last run marks the queue stale; the run that
+// rebuilds it clears that.
+func TestQueueStale(t *testing.T) {
+	home := t.TempDir()
+	l := paths.Layout{Home: home, Code: home}
+	if queueStale(l) {
+		t.Fatal("no queue yet is not stale")
+	}
+	os.WriteFile(l.CV(), []byte("cv"), 0o644)
+	aliases.Save(l.SkillSuggestions(), nil)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(l.CV(), old, old)
+	if queueStale(l) {
+		t.Fatal("queue written after cv.md is stale")
+	}
+	os.Chtimes(l.CV(), time.Now().Add(time.Hour), time.Now().Add(time.Hour))
+	if !queueStale(l) {
+		t.Fatal("cv.md edited after the queue is not stale")
 	}
 }

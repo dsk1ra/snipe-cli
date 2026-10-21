@@ -28,6 +28,7 @@ const (
 	actProceed  actionID = "proceed"
 	actLink     actionID = "link"
 	actSkills   actionID = "skills"
+	actTailor   actionID = "tailor"
 	actNoAction actionID = ""
 )
 
@@ -112,7 +113,7 @@ func describe(id int, s snapshot) rowInfo {
 
 	case r.P3Status == state.P3Completed:
 		info.Kind = kindDone
-		info.Actions = append([]action{{actSkills, "skills"}}, linkOnly(info.Link)...)
+		info.Actions = append([]action{{actTailor, "tailor"}}, linkOnly(info.Link)...)
 
 	// An evaluated row is done on exactly the terms state.Lifetime counts as
 	// completed. It used to be done as soon as the eval landed, which wore the

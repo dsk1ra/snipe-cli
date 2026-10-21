@@ -81,6 +81,8 @@ type queueTab struct {
 
 	// review is the skills screen, open over the list when non-nil.
 	review *skillsReview
+	// tailor is the tailored-text screen, open over the list when non-nil.
+	tailor *tailorScreen
 
 	detail      viewport.Model
 	detailOpen  bool
@@ -232,7 +234,23 @@ func (q *queueTab) Update(m tea.Msg) (bool, tea.Cmd) {
 			return true, failf("%v", m.err)
 		}
 		q.review = m.r
+		if m.rebuild != nil {
+			return true, failf("skills queue is from before the cv.md edit, could not rebuild: %v", m.rebuild)
+		}
 		return true, nil
+
+	case tailorMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.tailor = m.s
+		return true, nil
+
+	case tailorOpMsg:
+		if q.tailor == nil {
+			return true, nil
+		}
+		return true, q.tailor.done(m)
 
 	case reviewDoneMsg:
 		if q.review == nil {
@@ -338,6 +356,18 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return true, q.review.key(k)
+	}
+	if q.tailor != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q", "t":
+			// A subcommand in flight finishes into nothing; its files land
+			// either way.
+			q.tailor = nil
+			return true, nil
+		}
+		return true, q.tailor.key(k)
 	}
 	// The reader pane owns every key while it is open, bar the ones that close
 	// it. ctrl+c is the exception: a modal must never trap a quit.
@@ -453,6 +483,8 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, q.openResult(info)
 	case key.Matches(k, q.keys.Skills):
 		return true, openSkills(q.l, info)
+	case key.Matches(k, q.keys.Tailor):
+		return true, q.openTailor(info)
 	case key.Matches(k, q.keys.Applied):
 		return true, q.markApplied(info)
 	case key.Matches(k, q.keys.Skip):
@@ -708,6 +740,8 @@ func (q *queueTab) fire() tea.Cmd {
 			return q.openDebug(info)
 		case actSkills:
 			return openSkills(q.l, info)
+		case actTailor:
+			return q.openTailor(info)
 		default:
 			return q.openResult(info)
 		}
@@ -939,6 +973,13 @@ func (q *queueTab) openResult(info rowInfo) tea.Cmd {
 	return failf("#%d says it made a CV, but output/ has no folder for it", info.ID)
 }
 
+func (q *queueTab) openTailor(info rowInfo) tea.Cmd {
+	if _, ok := q.cache.ResultDir(q.l.Output(), info.Report); !ok {
+		return q.openResult(info) // says why there is no CV
+	}
+	return openTailor(q.l, q.cache, info)
+}
+
 func (q *queueTab) openError(info rowInfo) tea.Cmd {
 	r := q.snap.rows[info.ID]
 	body := q.cache.ErrorText(q.l.Scores(), q.l.Evals(), q.l.Logs(), info.ID, r)
@@ -963,6 +1004,8 @@ func (q *queueTab) ShortHelp() []key.Binding {
 	switch {
 	case q.review != nil:
 		return q.review.help()
+	case q.tailor != nil:
+		return q.tailor.help()
 	case q.detailOpen:
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("up/down"), key.WithHelp("↑↓", "scroll")),
@@ -1006,7 +1049,7 @@ func (q *queueTab) ShortHelp() []key.Binding {
 func (q *queueTab) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{q.keys.Cycle, q.keys.Step, q.keys.In, q.keys.Out, q.keys.Fire, q.keys.Slash, q.keys.Find},
-		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Skills},
+		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Tailor, q.keys.Skills},
 		{q.keys.Applied, q.keys.Skip, q.keys.Yes, q.keys.No},
 	}
 }
@@ -1029,6 +1072,9 @@ const queueMinW = 4 + 8 + minLabelW + 10
 func (q *queueTab) View() string {
 	if q.review != nil {
 		return q.review.view(q.width, q.height)
+	}
+	if q.tailor != nil {
+		return q.tailor.view(q.width, q.height)
 	}
 	if q.detailOpen {
 		return lipgloss.JoinVertical(lipgloss.Left,

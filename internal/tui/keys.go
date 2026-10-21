@@ -53,6 +53,7 @@ type queueKeys struct {
 	Start   key.Binding
 	Open    key.Binding
 	Skills  key.Binding
+	Tailor  key.Binding
 	Applied key.Binding
 	Skip    key.Binding
 	Yes     key.Binding
@@ -75,6 +76,7 @@ func newQueueKeys() queueKeys {
 		Start:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "start / resume")),
 		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the folder")),
 		Skills:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "review skills")),
+		Tailor:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tailored text")),
 		Applied: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "mark applied")),
 		Skip:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "mark skipped")),
 		Yes:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "evaluate anyway")),

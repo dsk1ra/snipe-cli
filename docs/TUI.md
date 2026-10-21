@@ -84,3 +84,28 @@ while it is the focused stop, so no new global hotkeys and `q` still quits:
   but only if the eval scores *higher* than the P1 pre-score; below it, the merge
   keeps the older row and the stale "no report — P1-gated" note with it.
 
+
+## Tailored text and suggestions
+
+A finished row's `tailor` action (or `t`) opens the CV as Phase 3 wrote it:
+every bullet and skill item, grouped by employer, project and skills category.
+The text is complete without any suggestion. `v` still opens the global alias
+queue, and rows without a CV keep their `skills` action.
+
+- `g` asks the model (`snipe suggest <id>`, about 30–60 s) for ATS rewordings
+  of bullets and skill items. Marked lines are `•`; the focused one shows what
+  is on the page, the proposal and the posting wording it matches.
+- `enter` accepts, `n` rejects; the same key again takes it back. A decision is
+  written to `suggestions.json` in the offer's output folder and changes nothing
+  else.
+- `r` rebuilds the PDF (`snipe rebuild <id>`) with the accepted ones. Nothing
+  rebuilds on its own. `cv-content.json` is never rewritten, so rejecting and
+  rebuilding again gets the original back. `o` opens the PDF.
+
+Suggestions are vetted in code (`internal/suggest`): a bullet keeps every figure
+and adds none, names no product `cv.md` lacks, swaps at most three words and
+may not grow by more than an eighth; a skill must be a spelling the posting
+itself uses. The model's habit is to append an outcome the CV never states, so
+most proposals are dropped, and an empty list is a normal answer. A fresh
+`snipe run` for the offer deletes the file, because the text it was about is
+gone.

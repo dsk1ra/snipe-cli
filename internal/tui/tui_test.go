@@ -253,7 +253,7 @@ func TestFocusSurvivesARowChangingKind(t *testing.T) {
 	if q.act >= q.current().stops() {
 		t.Fatalf("act %d is past the %d stops the row now has", q.act, q.current().stops())
 	}
-	if got := q.current().actionAt(q.act); got != actSkills {
+	if got := q.current().actionAt(q.act); got != actTailor {
 		t.Errorf("focus landed on %q, want a stop that exists", got)
 	}
 }
