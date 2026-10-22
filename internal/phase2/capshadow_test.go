@@ -22,11 +22,11 @@ func TestComposeLetsExtractedFactsDecideAndReportsTheLists(t *testing.T) {
 	j := Judgment{CVMatch: 5}
 	facts := &extract.Facts{Attendance: extract.Attendance{Mode: extract.Onsite, Place: "West Drayton", DaysPerWeek: 4}}
 
-	old := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, nil).eval
+	old := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, nil, nil).eval
 	if len(old.CapShadow) != 0 || old.CVBlended > 2 {
 		t.Fatalf("no facts: the lists cap the company age and nothing is reported: %+v", old)
 	}
-	got := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, facts).eval
+	got := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, facts, nil).eval
 	if len(got.HardStops) != 1 || !strings.Contains(got.HardStops[0], "west drayton") || got.CVBlended > 2 {
 		t.Errorf("location fact did not cap: %+v", got)
 	}

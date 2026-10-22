@@ -181,7 +181,12 @@ func (s *Scorer) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 			facts = &f
 		}
 	}
-	out := s.validate(reply, jd, url, id, facts)
+	// nil when there is no ledger to classify, and then the stack table decides.
+	var cvLangs []string
+	if facts != nil {
+		cvLangs, _ = s.Extract.CVLanguages(ctx)
+	}
+	out := s.validate(reply, jd, url, id, facts, cvLangs)
 	if err := s.write(id, out); err != nil {
 		return err
 	}
@@ -225,7 +230,7 @@ func (s *Scorer) call(ctx context.Context, id int, jd, url string) (modelReply, 
 // hallucinates deal-breakers — and comp is not collected at Phase 1 at all,
 // since with no salary data it was a dead constant. The score is pure fit, in
 // the same 5:3 ratio Phase 2 uses, so the two phases stay consistent.
-func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.Facts) *Score {
+func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.Facts, cvLangs []string) *Score {
 	cvRaw, nsRaw := clampDim(m.CVMatch, 3), clampDim(m.NorthStar, 3)
 
 	stack := fit.StackMismatchCap(jd, s.Cfg.CVRaw, 0, 0)
@@ -252,6 +257,13 @@ func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.F
 			}
 		}
 		lang, missingLang, loc, city, sen = xlang, xmissing, xloc, xcity, xsen
+		if cvLangs != nil {
+			x := fit.StackCapFrom(facts.Stack, cvLangs)
+			if d := fit.CapDiff("stack", fit.Caps{CV: stack.Cap, NS: 5}, fit.Caps{CV: x.Cap, NS: 5}, strings.Join(stack.Missing, "+"), strings.Join(x.Missing, "+")); d != "" {
+				shadow = append(shadow, d)
+			}
+			stack = x
+		}
 	}
 
 	cvCap := min4(stack.Cap, lang.CV, loc.CV, sen.CV)

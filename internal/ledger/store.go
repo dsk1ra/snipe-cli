@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 // Load reads the ledger. A missing file is an empty ledger, not an error: the
@@ -48,4 +50,29 @@ func Save(path string, l *Ledger) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// EntityNames are the technologies named by the facts that have not been
+// rejected, sorted: what the CV demonstrates, since a fact is a claim about work
+// and the skills catalogue is not in the ledger.
+func (l *Ledger) EntityNames() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range l.Entries {
+		for _, b := range e.Bullets {
+			for _, f := range b.Facts {
+				if f.Status == "rejected" {
+					continue
+				}
+				for _, n := range f.Entities {
+					if k := strings.ToLower(n); !seen[k] {
+						seen[k] = true
+						out = append(out, n)
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

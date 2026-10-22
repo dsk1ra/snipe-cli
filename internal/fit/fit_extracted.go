@@ -14,6 +14,7 @@ package fit
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/extract"
@@ -115,4 +116,32 @@ func CapDiff(name string, old, new Caps, oldWhy, newWhy string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s: lists cap %d/%d %s, facts cap %d/%d %s", name, old.CV, old.NS, oldWhy, new.CV, new.NS, newWhy)
+}
+
+// StackCapFrom is StackMismatchCap over the extracted stack. The posting's
+// required programming languages are compared with the languages the CV
+// demonstrates, both in the canonical form the extraction prompts give, so the
+// ecosystem table is not needed. No required language, or any one the CV has,
+// is no cap, as before; preferred languages never cap, which replaces the
+// two-mentions rule.
+func StackCapFrom(stack []extract.StackItem, cvLangs []string) StackCap {
+	have := map[string]bool{}
+	for _, l := range cvLangs {
+		have[l] = true
+	}
+	var present []string
+	for _, it := range stack {
+		if it.Requirement == extract.Required && !slices.Contains(present, it.Language) {
+			present = append(present, it.Language)
+		}
+	}
+	if len(present) == 0 {
+		return StackCap{Cap: 5}
+	}
+	for _, p := range present {
+		if have[p] {
+			return StackCap{Cap: 5, JDStack: present}
+		}
+	}
+	return StackCap{Cap: 3, JDStack: present, Missing: present}
 }

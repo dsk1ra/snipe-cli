@@ -23,6 +23,7 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
 	"github.com/dsk1ra/snipe-cli/internal/extract"
+	"github.com/dsk1ra/snipe-cli/internal/ledger"
 	"github.com/dsk1ra/snipe-cli/internal/minicheck"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
@@ -123,6 +124,14 @@ func cmdRun(args []string) error {
 	// Without the prompt the word-list caps decide, as before.
 	if sys, err := config.Prompt(l, "p1-extract.md"); err == nil {
 		scorer.Extract = extract.New(cl, l.CacheDir(), ollama.ModelScreen, sys)
+		// The CV side of the stack cap classifies the ledger's entities. No
+		// ledger or prompt leaves the stack table in charge.
+		if cvSys, err := config.Prompt(l, "p1-cvstack.md"); err == nil {
+			scorer.Extract.CVSystem = cvSys
+			if led, err := ledger.Load(l.CVLedger()); err == nil {
+				scorer.Extract.Entities = led.EntityNames()
+			}
+		}
 	}
 	cache := state.NewCache()
 

@@ -103,13 +103,13 @@ func (e ecosystem) countMatches(text string) int {
 
 var skillsSection = regexp.MustCompile(`(?is)\n##\s*Skills\b.*?(\n##\s|$)`)
 
-// evidenceText is cv.md minus its `## Skills` taxonomy.
+// EvidenceText is cv.md minus its `## Skills` taxonomy.
 //
 // Same doctrine the evidence grader applies: a catalogue line is a claim, not a
 // demonstration. An ecosystem named only in the skills block has no bullet
 // behind it anywhere on the CV, so StackMismatchCap must not read it as
 // coverage.
-func evidenceText(cv string) string {
+func EvidenceText(cv string) string {
 	return skillsSection.ReplaceAllString(cv, "\n")
 }
 
@@ -123,7 +123,7 @@ func evidenceText(cv string) string {
 // for a stack with no project behind it.
 func CandidateEcosystems(cv string) map[string]bool {
 	have := map[string]bool{}
-	ev := evidenceText(cv)
+	ev := EvidenceText(cv)
 	for _, e := range ecosystems {
 		if e.countMatches(ev) > 0 {
 			have[e.name] = true

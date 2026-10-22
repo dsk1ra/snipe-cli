@@ -138,3 +138,26 @@ func TestLanguageCapFrom(t *testing.T) {
 		}
 	}
 }
+
+func TestStackCapFrom(t *testing.T) {
+	req := func(lang string) extract.StackItem {
+		return extract.StackItem{Language: lang, Requirement: extract.Required}
+	}
+	pref := extract.StackItem{Language: "python", Requirement: extract.Preferred}
+	for _, tc := range []struct {
+		name  string
+		stack []extract.StackItem
+		cv    []string
+		want  int
+	}{
+		{"no language named", nil, []string{"go"}, 5},
+		{"covered", []extract.StackItem{req("python"), req("scala")}, []string{"python"}, 5},
+		{"none covered", []extract.StackItem{req("swift"), req("scala")}, []string{"go", "python"}, 3},
+		{"preferred never caps", []extract.StackItem{pref}, []string{"go"}, 5},
+		{"required beside preferred", []extract.StackItem{pref, req("swift")}, []string{"python"}, 3},
+	} {
+		if got := StackCapFrom(tc.stack, tc.cv); got.Cap != tc.want {
+			t.Errorf("%s: cap %d, want %d", tc.name, got.Cap, tc.want)
+		}
+	}
+}

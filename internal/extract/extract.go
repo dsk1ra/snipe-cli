@@ -59,10 +59,6 @@ const (
 	Preferred = "preferred"
 )
 
-// Title levels. architect and forward_deployed are not levels, but the old
-// seniority patterns capped on both titles, and a four-value enum cannot say so.
-var titleLevels = []string{"intern", "junior", "mid", "senior", "staff", "principal", "lead", "manager", "architect", "forward_deployed", Unspecified}
-
 // Integers are 0 when the posting does not say. The schema carries 0 rather
 // than a null: no field here has a meaningful 0 (zero office days is "remote",
 // zero years is "none stated"), and a [integer, null] union is a grammar the
@@ -96,12 +92,24 @@ type Years struct {
 	QuoteOK  bool   `json:"quote_ok"`
 }
 
-// TitleLevel is the seniority the title states.
-type TitleLevel struct {
-	Level   string `json:"level"`
-	Quote   string `json:"quote"`
-	Claimed bool   `json:"claimed"`
-	QuoteOK bool   `json:"quote_ok"`
+// Languages is the vocabulary of StackItem.Language: the programming languages
+// a role or a CV can name. It is the model's output vocabulary, not a matcher
+// over postings, so a language outside it comes back as None and fires nothing.
+// The enum is what makes both sides spell a language the same way.
+var Languages = []string{"python", "java", "javascript", "kotlin", "c#", "c++", "c", "go", "rust", "ruby", "php",
+	"scala", "elixir", "swift", "dart", "haskell", "clojure", "perl", "lua", "r", None}
+
+// None is the Languages value for a term that is not a programming language.
+const None = "none"
+
+// StackItem is one term of the posting's stack that belongs to a programming
+// language. Term is what the posting says (Django), Language the programming
+// language it belongs to (python).
+type StackItem struct {
+	Term        string `json:"term"`
+	Language    string `json:"language"`
+	Requirement string `json:"requirement"`
+	Quote       string `json:"quote"`
 }
 
 // Facts are the verified facts of one posting.
@@ -109,11 +117,11 @@ type Facts struct {
 	Attendance Attendance `json:"attendance"`
 	// Languages holds only the entries that passed. LanguagesClaimed and
 	// LanguagesOK count the entries the model gave and the ones kept.
-	Languages        []Language `json:"languages"`
-	LanguagesClaimed int        `json:"languages_claimed"`
-	LanguagesOK      int        `json:"languages_ok"`
-	Years            Years      `json:"years"`
-	TitleLevel       TitleLevel `json:"title_level"`
+	Languages        []Language  `json:"languages"`
+	LanguagesClaimed int         `json:"languages_claimed"`
+	LanguagesOK      int         `json:"languages_ok"`
+	Years            Years       `json:"years"`
+	Stack            []StackItem `json:"stack"`
 }
 
 // Reply is what the schema constrains the model to. Each object lists its quote
@@ -136,10 +144,12 @@ type Reply struct {
 		Quote    string `json:"quote"`
 		MinYears int    `json:"min_years"`
 	} `json:"years"`
-	TitleLevel struct {
-		Quote string `json:"quote"`
-		Level string `json:"level"`
-	} `json:"title_level"`
+	Stack []struct {
+		Quote       string `json:"quote"`
+		Term        string `json:"term"`
+		Language    string `json:"language"`
+		Requirement string `json:"requirement"`
+	} `json:"stack"`
 }
 
 // capped is a string with a length bound. Ollama compiles the schema into a
@@ -168,10 +178,12 @@ func Schema() ollama.Schema {
 			ollama.F("quote", capped(200)),
 			ollama.F("min_years", ollama.Int(0, 30)),
 		))),
-		ollama.F("title_level", ollama.Object(ollama.Obj(
-			ollama.F("quote", capped(120)),
-			ollama.F("level", ollama.Str(titleLevels...)),
-		))),
+		ollama.F("stack", ollama.Arr(ollama.Object(ollama.Obj(
+			ollama.F("quote", capped(200)),
+			ollama.F("term", capped(40)),
+			ollama.F("language", ollama.Str(Languages...)),
+			ollama.F("requirement", ollama.Str(Required, Preferred)),
+		)), 8)),
 	))
 }
 
@@ -219,15 +231,9 @@ var (
 	// with the next city.
 	attendanceCue = regexp.MustCompile(`(?i)\b(on-?site|in[- ]?office|office|in[- ]person|hybrid|remote|work(ing)? from home|wfh|days?|hq|headquarters?|commut\w*|relocat\w*)\b`)
 
-	// levelCue is the same guard for the title: the 4B called "Backend
-	// Engineer" and "Full-Stack Engineer" junior, because the schema offered a
-	// level and it picked one. A level needs a word in the quoted title that
-	// can carry it.
 	// yearsCue keeps "6+ months hands-on with agentic editors" from becoming a
 	// six-year demand.
 	yearsCue = regexp.MustCompile(`(?i)\b(years?|yrs?)\b`)
-
-	levelCue = regexp.MustCompile(`(?i)\b(junior|jr|graduate|entry|intern(ship)?|apprentice|trainee|mid|mid-level|intermediate|senior|sr|lead|staff|principal|manager|head|director|vp|architect|forward[- ]deployed|fde|distinguished|ii|iii|iv|l[1-9]\d?)\b`)
 
 	// regionTokens are the words of a place that names a country or a region.
 	// The prompt says to leave those out; the 4B did not always.
@@ -235,6 +241,14 @@ var (
 		"america": true, "england": true, "scotland": true, "wales": true, "europe": true, "eu": true, "emea": true,
 		"apac": true, "global": true, "worldwide": true, "and": true, "or": true, "remote": true, "ireland": true}
 )
+
+// isProgramming is whether a name is a programming language. TypeScript is not
+// in Languages because the stack field folds it into javascript, but it still is
+// one.
+func isProgramming(name string) bool {
+	n := strings.ToLower(name)
+	return n == "typescript" || slices.Contains(Languages, n)
+}
 
 // regionOnly reports a place made of country and region words only.
 func regionOnly(place string) bool {
@@ -287,7 +301,9 @@ func Verify(r Reply, posting string) Facts {
 		lang := strings.TrimSpace(l.Language)
 		// The quote has to name the language it is evidence for: "fluent in
 		// English and German" is no evidence for "French".
-		if lang != "" && found(l.Quote) && strings.Contains(Norm(l.Quote), Norm(lang)) &&
+		// The prompt leaves programming languages out and the 4B sometimes lists
+		// TypeScript or C anyway; the stack field is where those belong.
+		if lang != "" && !isProgramming(lang) && found(l.Quote) && strings.Contains(Norm(l.Quote), Norm(lang)) &&
 			(l.Requirement == Required || l.Requirement == Preferred) {
 			f.LanguagesOK++
 			f.Languages = append(f.Languages, Language{Language: lang, Requirement: l.Requirement, Quote: strings.TrimSpace(l.Quote)})
@@ -299,11 +315,15 @@ func Verify(r Reply, posting string) Facts {
 		f.Years.QuoteOK, f.Years.MinYears = true, r.Years.MinYears
 	}
 
-	f.TitleLevel = TitleLevel{Level: Unspecified, Quote: strings.TrimSpace(r.TitleLevel.Quote),
-		Claimed: r.TitleLevel.Level != "" && r.TitleLevel.Level != Unspecified}
-	if f.TitleLevel.Claimed && found(r.TitleLevel.Quote) && levelCue.MatchString(Norm(r.TitleLevel.Quote)) &&
-		slices.Contains(titleLevels, r.TitleLevel.Level) {
-		f.TitleLevel.QuoteOK, f.TitleLevel.Level = true, r.TitleLevel.Level
+	for _, it := range r.Stack {
+		term := strings.TrimSpace(it.Term)
+		// The quote has to name the term it is evidence for, as with a human
+		// language, and the term has to belong to a language.
+		if term != "" && it.Language != None && slices.Contains(Languages, it.Language) &&
+			found(it.Quote) && strings.Contains(Norm(it.Quote), Norm(term)) &&
+			(it.Requirement == Required || it.Requirement == Preferred) {
+			f.Stack = append(f.Stack, StackItem{Term: term, Language: it.Language, Requirement: it.Requirement, Quote: strings.TrimSpace(it.Quote)})
+		}
 	}
 	return f
 }
@@ -320,12 +340,18 @@ type Extractor struct {
 	path  string
 	check string // hash of the prompt and the schema
 	cache map[string]Reply
+	cv    map[string][]string // CVLanguages: prompt+evidence hash -> languages
+
+	// CVSystem is the prompt for CVLanguages and Entities the terms it classifies.
+	CVSystem string
+	Entities []string
 }
 
 type cacheFile struct {
-	Model   string           `json:"model"`
-	Updated string           `json:"updated"`
-	Replies map[string]Reply `json:"replies"`
+	Model   string              `json:"model"`
+	Updated string              `json:"updated"`
+	Replies map[string]Reply    `json:"replies"`
+	CV      map[string][]string `json:"cv,omitempty"`
 }
 
 // CachePath is derived data, so it lives with the other caches.
@@ -347,18 +373,21 @@ func New(ol *ollama.Client, cacheDir, model, system string) *Extractor {
 	}
 	schema, _ := json.Marshal(Schema())
 	e := &Extractor{OL: ol, Model: model, System: system, path: CachePath(cacheDir, model),
-		check: sum(system, string(schema)), cache: map[string]Reply{}}
+		check: sum(system, string(schema)), cache: map[string]Reply{}, cv: map[string][]string{}}
 	if b, err := os.ReadFile(e.path); err == nil {
 		var f cacheFile
 		if json.Unmarshal(b, &f) == nil && f.Model == model && f.Replies != nil { // a torn file is a cold cache
 			e.cache = f.Replies
+			if f.CV != nil {
+				e.cv = f.CV
+			}
 		}
 	}
 	return e
 }
 
 func (e *Extractor) save() error {
-	b, err := json.MarshalIndent(cacheFile{Model: e.Model, Updated: time.Now().Format(time.RFC3339), Replies: e.cache}, "", " ")
+	b, err := json.MarshalIndent(cacheFile{Model: e.Model, Updated: time.Now().Format(time.RFC3339), Replies: e.cache, CV: e.cv}, "", " ")
 	if err != nil {
 		return err
 	}

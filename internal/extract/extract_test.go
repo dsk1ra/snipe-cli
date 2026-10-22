@@ -15,7 +15,8 @@ const posting = `Senior Backend Engineer
 
 Location: Central London.  We work hybrid, 3 days a week
 in the office. You'll need 5+ years of experience.
-Fluent German is required; French is a plus.`
+Fluent German is required; French is a plus.
+Stack: Django and Go, with AWS.`
 
 func reply(t *testing.T, js string) Reply {
 	t.Helper()
@@ -31,20 +32,28 @@ func TestVerifyKeepsQuotedFacts(t *testing.T) {
 	 "attendance": {"quote": "hybrid, 3 days a week in the office", "mode": "hybrid", "days_per_week": 3, "days_per_month": 0, "place": "Central London"},
 	 "languages": [
 	   {"quote": "Fluent German is required", "language": "German", "requirement": "required"},
-	   {"quote": "French is a plus", "language": "French", "requirement": "preferred"}],
+	   {"quote": "French is a plus", "language": "French", "requirement": "preferred"},
+	   {"quote": "Stack: Django and Go", "language": "Go", "requirement": "required"}],
 	 "years": {"quote": "5+ years of experience", "min_years": 5},
-	 "title_level": {"quote": "Senior Backend Engineer", "level": "senior"}}`)
+	 "stack": [
+	   {"quote": "Django and Go, with AWS", "term": "Django", "language": "python", "requirement": "required"},
+	   {"quote": "Django and Go, with AWS", "term": "AWS", "language": "none", "requirement": "required"},
+	   {"quote": "Fluent German is required", "term": "Go", "language": "go", "requirement": "required"}]}`)
 	f := Verify(r, posting)
 	a := f.Attendance
 	// The posting breaks the line mid-quote and doubles a space; the quote has neither.
 	if !a.QuoteOK || a.Mode != Hybrid || a.DaysPerWeek != 3 || a.Place != "Central London" {
 		t.Errorf("attendance %+v", a)
 	}
-	if len(f.Languages) != 2 || f.LanguagesClaimed != 2 || f.LanguagesOK != 2 {
+	if len(f.Languages) != 2 || f.LanguagesClaimed != 3 || f.LanguagesOK != 2 { // Go is a programming language
 		t.Errorf("languages %+v", f.Languages)
 	}
-	if !f.Years.QuoteOK || f.Years.MinYears != 5 || f.TitleLevel.Level != "senior" || !f.TitleLevel.QuoteOK {
-		t.Errorf("years %+v title %+v", f.Years, f.TitleLevel)
+	if !f.Years.QuoteOK || f.Years.MinYears != 5 {
+		t.Errorf("years %+v", f.Years)
+	}
+	// A term that is no language, and a quote that does not name its term, drop out.
+	if len(f.Stack) != 1 || f.Stack[0].Language != "python" || f.Stack[0].Term != "Django" {
+		t.Errorf("stack %+v", f.Stack)
 	}
 }
 
@@ -55,7 +64,7 @@ func TestVerifyDiscardsWhatTheQuoteDoesNotSupport(t *testing.T) {
 	   {"quote": "Fluent German is required", "language": "French", "requirement": "required"},
 	   {"quote": "Fluent Italian is required", "language": "Italian", "requirement": "required"}],
 	 "years": {"quote": "5+ years of experience", "min_years": 8},
-	 "title_level": {"quote": "Principal Engineer", "level": "principal"}}`)
+	 "stack": [{"quote": "Rust and Kubernetes", "term": "Rust", "language": "rust", "requirement": "required"}]}`)
 	f := Verify(r, posting)
 	if a := f.Attendance; a.QuoteOK || !a.Claimed || a.Mode != Unspecified || a.Place != "" || a.DaysPerWeek != 0 {
 		t.Errorf("an invented attendance quote left %+v", a)
@@ -66,8 +75,8 @@ func TestVerifyDiscardsWhatTheQuoteDoesNotSupport(t *testing.T) {
 	if f.Years.QuoteOK || f.Years.MinYears != 0 || !f.Years.Claimed {
 		t.Errorf("8 years from a quote saying 5+ kept %+v", f.Years)
 	}
-	if f.TitleLevel.QuoteOK || f.TitleLevel.Level != Unspecified {
-		t.Errorf("an invented title quote kept %+v", f.TitleLevel)
+	if len(f.Stack) != 0 {
+		t.Errorf("a stack quote not in the posting kept %+v", f.Stack)
 	}
 }
 
@@ -80,11 +89,11 @@ func TestVerifyPlaceMustBeInThePosting(t *testing.T) {
 }
 
 func TestVerifyNothingClaimed(t *testing.T) {
-	f := Verify(reply(t, `{"attendance": {"mode": "unspecified"}, "title_level": {"level": "unspecified"}}`), posting)
-	if f.Attendance.Claimed || f.Years.Claimed || f.TitleLevel.Claimed || f.LanguagesClaimed != 0 {
+	f := Verify(reply(t, `{"attendance": {"mode": "unspecified"}}`), posting)
+	if f.Attendance.Claimed || f.Years.Claimed || len(f.Stack) != 0 || f.LanguagesClaimed != 0 {
 		t.Errorf("claimed %+v", f)
 	}
-	if f.Attendance.Mode != Unspecified || f.TitleLevel.Level != Unspecified {
+	if f.Attendance.Mode != Unspecified {
 		t.Errorf("unknowns must read unspecified: %+v", f)
 	}
 }
@@ -162,7 +171,7 @@ func fakeServer(t *testing.T, calls *int, content string) *ollama.Client {
 }
 
 const fakeReply = `{"attendance": {"quote": "hybrid, 3 days a week in the office", "mode": "hybrid", "days_per_week": 3, "days_per_month": 0, "place": "Central London"},
- "languages": [], "years": {"quote": "", "min_years": 0}, "title_level": {"quote": "Senior Backend Engineer", "level": "senior"}}`
+ "languages": [], "years": {"quote": "", "min_years": 0}, "stack": []}`
 
 func TestCacheHitMakesNoSecondCall(t *testing.T) {
 	dir := t.TempDir()
@@ -172,7 +181,7 @@ func TestCacheHitMakesNoSecondCall(t *testing.T) {
 
 	e := New(ol, dir, "snipe-screen", "system v1")
 	f, err := e.Extract(ctx, posting)
-	if err != nil || f.Attendance.Mode != Hybrid || f.TitleLevel.Level != "senior" {
+	if err != nil || f.Attendance.Mode != Hybrid {
 		t.Fatalf("%v %+v", err, f)
 	}
 	if _, err := e.Extract(ctx, posting); err != nil || calls != 1 {
@@ -198,5 +207,34 @@ func TestCacheHitMakesNoSecondCall(t *testing.T) {
 func TestExtractWithoutClientAnswersFromCacheOnly(t *testing.T) {
 	if _, err := New(nil, t.TempDir(), "", "s").Extract(context.Background(), posting); err == nil {
 		t.Error("a cold cache with no client must say so")
+	}
+}
+
+func TestCVLanguages(t *testing.T) {
+	var calls int
+	ol := fakeServer(t, &calls, `{"terms": [
+	  {"term": "Spring Boot", "language": "java"},
+	  {"term": "Terraform", "language": "none"},
+	  {"term": "Rust", "language": "rust"}]}`)
+	dir := t.TempDir()
+	mk := func(ents ...string) *Extractor {
+		e := New(ol, dir, "snipe-screen", "sys")
+		e.CVSystem, e.Entities = "cv sys", ents
+		return e
+	}
+	e := mk("Spring Boot", "Terraform")
+	got, err := e.CVLanguages(context.Background())
+	// Rust is not in the list it was given, and none is not a language.
+	if err != nil || len(got) != 1 || got[0] != "java" || calls != 1 {
+		t.Fatalf("%v %v %d", got, err, calls)
+	}
+	if l, ok := mk("Spring Boot", "Terraform").CVLanguagesCached(); !ok || len(l) != 1 || calls != 1 {
+		t.Errorf("cached read: %v %v %d", l, ok, calls)
+	}
+	if _, ok := mk("Spring Boot", "Terraform", "Kafka").CVLanguagesCached(); ok {
+		t.Error("a changed entity list hit the cache")
+	}
+	if _, err := mk().CVLanguages(context.Background()); err == nil {
+		t.Error("no entities should be an error, so the caller falls back")
 	}
 }

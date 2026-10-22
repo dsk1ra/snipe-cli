@@ -19,5 +19,9 @@ languages: the spoken or written human languages (English, German, Spanish...) t
 years: the years of professional experience the posting asks for.
 - min_years: the lowest number the posting states ("3-5 years" is 3, "8+ years" is 8). 0 when it states none.
 
-title_level: the seniority the job title itself states. Take the quote from the title, not from the description.
-- level: "intern", "junior" (junior, graduate, entry level, associate, trainee, apprentice, "I"), "mid" (mid-level, "II"), "senior" (senior, Sr), "staff", "principal" (principal, distinguished), "lead" (lead, tech lead), "manager" (manager, head of, director, VP), "architect" (architect), "forward_deployed" (forward deployed engineer). "unspecified" when the title carries no such word.
+stack: the technologies the role names that belong to a programming language.
+- term: the technology as the posting writes it (Django, TypeScript, C++).
+- language: the programming language the term is or belongs to. Django, Flask and FastAPI are python; TypeScript, React, Vue, Angular and Node.js are javascript; Spring is java; Rails is ruby; Laravel is php; .NET and ASP.NET are c#. "none" for anything that is not a programming language or a framework of one: cloud platforms, databases, query languages, tools, protocols, markup, and a phrase like "any programming language".
+- requirement: "required" when the posting demands the term or lists it as part of the stack the role works in; "preferred" when it is a plus, a bonus, nice to have, or "also welcome".
+- quote: the words that name the term, copied word for word. It must contain the term.
+- An empty list when the posting names no such technology.

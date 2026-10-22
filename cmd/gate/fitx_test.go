@@ -24,6 +24,7 @@ func TestGateFitx(t *testing.T) {
 		}
 	}
 	write("prompts/p1-extract.md", "extract")
+	write("prompts/p1-cvstack.md", "cvstack")
 	write("cv.md", "**Languages**\n- English: Advanced\n")
 	write("config/profile.yml", "location:\n  city: \"Ashcombe\"\n  search_locations:\n    - \"London — fully remote only\"\n")
 	write("batch/jds/1.txt", "Backend Engineer\nLocation: London. Hybrid, 3 days a week in the office.")
@@ -41,7 +42,7 @@ func TestGateFitx(t *testing.T) {
 			place = "Berlin"
 		}
 		reply := `{"attendance": {"quote": "Hybrid, 3 days a week in the office", "mode": "hybrid", "days_per_week": 3, "days_per_month": 0, "place": "` + place + `"},
-		 "languages": [], "years": {"quote": "", "min_years": 0}, "title_level": {"quote": "", "level": "unspecified"}}`
+		 "languages": [], "years": {"quote": "", "min_years": 0}, "stack": []}`
 		_ = json.NewEncoder(w).Encode(map[string]any{"message": map[string]any{"content": reply}})
 	}))
 	defer srv.Close()
@@ -53,7 +54,7 @@ func TestGateFitx(t *testing.T) {
 		t.Fatalf("exit %d", rc)
 	}
 	if calls != 2 {
-		t.Errorf("%d model calls, want 2: the multi-posting page is skipped", calls)
+		t.Errorf("%d model calls, want 2: the multi-posting page is skipped, and with no ledger there is no CV call", calls)
 	}
 	b, err := os.ReadFile(filepath.Join(home, "batch", "cache", "fitx-disagreements.md"))
 	if err != nil {

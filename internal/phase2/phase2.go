@@ -183,7 +183,11 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 			facts = &f
 		}
 	}
-	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp, facts)
+	var cvLangs []string
+	if facts != nil {
+		cvLangs, _ = e.Extract.CVLanguagesCached()
+	}
+	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp, facts, cvLangs)
 	return e.commit(ctx, id, res)
 }
 
@@ -195,7 +199,7 @@ type composed struct {
 
 // compose computes the score in code and applies every cap.
 func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, coverage Coverage,
-	j Judgment, salary *text.Salary, compDim int, hasComp bool, facts *extract.Facts) composed {
+	j Judgment, salary *text.Salary, compDim int, hasComp bool, facts *extract.Facts, cvLangs []string) composed {
 
 	modelCV := clampDim(j.CVMatch, 1)
 	ns := e.Cfg.NorthStar(j.Archetype)
@@ -230,7 +234,15 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	cvBlend = math.Min(cvBlend, float64(sen.CV))
 	ns = minInt(ns, sen.NS)
 
-	cvBlend = math.Min(cvBlend, float64(fit.StackMismatchCap(jd, e.Cfg.CVRaw, 0, 0).Cap))
+	stack := fit.StackMismatchCap(jd, e.Cfg.CVRaw, 0, 0)
+	if facts != nil && cvLangs != nil {
+		x := fit.StackCapFrom(facts.Stack, cvLangs)
+		if d := fit.CapDiff("stack", fit.Caps{CV: stack.Cap, NS: 5}, fit.Caps{CV: x.Cap, NS: 5}, strings.Join(stack.Missing, "+"), strings.Join(x.Missing, "+")); d != "" {
+			shadow = append(shadow, d)
+		}
+		stack = x
+	}
+	cvBlend = math.Min(cvBlend, float64(stack.Cap))
 
 	// A required natural language the candidate lacks is a hard blocker: one Gap
 	// row barely moves the coverage average, so it has to be gated in code.
