@@ -120,6 +120,12 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	}
 	bullets := contentBullets(j.Content)
 	plans := adapt.PlanAll(led, bullets, post)
+	if os.Getenv("SNIPE_ADAPT_DEBUG") != "" {
+		for i, p := range plans {
+			fmt.Printf("  #%d: debug plan %d: verbatim=%v targets=%d allowed=%v proposed=%d lines=%d | %.70s\n",
+				j.ID, i+1, p.Verbatim, len(p.Targets), p.AllowedTerms, len(p.Proposed), p.MaxLines, p.Bullet.Text)
+		}
+	}
 
 	// Everything the drafts depend on is in the key. The ledger counts without
 	// its pending inferences: queueing them below must not make the next resume

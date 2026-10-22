@@ -3,6 +3,7 @@ package adapt
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -126,6 +127,9 @@ func Rewrite(ctx context.Context, ol *ollama.Client, system string, plans []Plan
 				}
 				if why := vet(j, led, text, kept); why != "" {
 					st.Rejects[why]++
+					if os.Getenv("SNIPE_ADAPT_DEBUG") != "" && text != "" {
+						fmt.Printf("  debug rewrite rejected %s (%s): %s\n    source (%d line(s)): %s\n", d.kind, why, text, j.plan.MaxLines, j.plan.Bullet.Text)
+					}
 					continue
 				}
 				kept = append(kept, text)
