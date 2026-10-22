@@ -185,8 +185,14 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 			fmt.Printf("  #%d: adapt: could not queue inferences: %v\n", j.ID, err)
 		}
 	}
-	fmt.Printf("  #%d: adapt: %d of %d line(s) adapted, %d reverted by the kill rule, %d inference(s) queued\n",
-		j.ID, changed, len(bullets), killed, queued)
+	framed := 0
+	if j.Queue {
+		if framed, err = t.queueFramings(adapt.FramingCandidates(led, plans, post)); err != nil {
+			fmt.Printf("  #%d: adapt: could not queue framings: %v\n", j.ID, err)
+		}
+	}
+	fmt.Printf("  #%d: adapt: %d of %d line(s) adapted, %d reverted by the kill rule, %d inference(s) and %d framing(s) queued\n",
+		j.ID, changed, len(bullets), killed, queued, framed)
 	return swapBullets(j.Content, repl), &tf, nil
 }
 
@@ -357,6 +363,40 @@ func (t *Tailor) queueInferences(cs []adapt.Candidate) (int, error) {
 	return n, ledger.Save(t.L.CVLedger(), led)
 }
 
+// queueFramings files the offer's framing proposals on their bullets, undecided.
+// An undecided framing is neither allowed in a draft nor a refusal, the way a
+// pending inference is not, so none reaches a PDF before the user approves it
+// on the ledger screen.
+func (t *Tailor) queueFramings(cs []adapt.FramingCandidate) (int, error) {
+	if len(cs) == 0 {
+		return 0, nil
+	}
+	t.ledgerMu.Lock()
+	defer t.ledgerMu.Unlock()
+	led, err := ledger.Load(t.L.CVLedger())
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range cs {
+		for ei := range led.Entries {
+			for bi := range led.Entries[ei].Bullets {
+				b := &led.Entries[ei].Bullets[bi]
+				if led.Entries[ei].ID != c.EntryID || b.Hash != c.BulletHash ||
+					slices.ContainsFunc(b.Framings, func(f ledger.Framing) bool { return strings.EqualFold(f.Phrase, c.Framing.Phrase) }) {
+					continue
+				}
+				b.Framings = append(b.Framings, c.Framing)
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return n, ledger.Save(t.L.CVLedger(), led)
+}
+
 // factNum is the bullet number in "<entry>/<n><letter>".
 func factNum(id string) int {
 	s := id[strings.LastIndex(id, "/")+1:]
@@ -378,7 +418,8 @@ func saveTruth(dir string, tf *adapt.TruthFile) error {
 	return adapt.WriteTruth(p, *tf)
 }
 
-// ledgerKey identifies the ledger as the plans see it.
+// ledgerKey identifies the ledger as the plans see it: without the proposals
+// still waiting for a decision.
 func ledgerKey(l *ledger.Ledger) string {
 	c := *l
 	c.Entries = nil
@@ -387,6 +428,10 @@ func ledgerKey(l *ledger.Ledger) string {
 		for _, b := range e.Bullets {
 			b.Facts = slices.DeleteFunc(slices.Clone(b.Facts), func(f ledger.Fact) bool {
 				return f.Source == "inferred" && f.Status == ""
+			})
+			// An undecided framing is no more a claim than a pending inference.
+			b.Framings = slices.DeleteFunc(slices.Clone(b.Framings), func(f ledger.Framing) bool {
+				return !f.Approved && !f.Rejected
 			})
 			if b.Hash != ledger.InferredHash || len(b.Facts) > 0 {
 				bs = append(bs, b)

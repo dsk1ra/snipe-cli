@@ -329,6 +329,54 @@ func TestCandidates(t *testing.T) {
 	}
 }
 
+func TestFramingCandidates(t *testing.T) {
+	l := fixture()
+	p := Posting{
+		Score: 3.0, // no score bar: a framing adds no claim
+		Sim: func(_, fact string) float64 {
+			if strings.Contains(fact, "Terraform") || strings.Contains(fact, "Kafka") {
+				return 0.5
+			}
+			return 0
+		},
+		Rows: []phase2.Row{
+			row("Experience with continuous delivery", true, fit.Strong, ev("Engineer", deploy)),
+			row("Experience with FinOps", false, fit.Transferable, ev("Engineer", billing)),
+			row("Event-driven design", true, fit.Strong, ev("Store Platform", svcs)),
+			row("Database-per-service patterns", false, fit.Strong, ev("Store Platform", svcs)),
+			row("Strong CQRS", false, fit.Strong, ev("Store Platform", svcs)),
+		},
+		Terms: []Term{{Text: "continuous delivery"}, {Text: "FinOps"}, {Text: "event-driven design"},
+			{Text: "database-per-service"}, {Text: "CQRS"}, {Text: "Kubernetes", Kind: KindTool}},
+	}
+	plans := PlanAll(l, []string{deploy, billing, svcs, "stale"}, p)
+	got := FramingCandidates(l, plans, p)
+	// FinOps is only Transferable, event-driven design is not the approved
+	// framing's wording but is Strong here, database-per-service and CQRS are
+	// already framings (undecided and rejected), and a tool is an entity.
+	var phrases []string
+	for _, c := range got {
+		phrases = append(phrases, c.EntryID+":"+c.Framing.Phrase)
+		if c.Framing.Approved || c.Framing.Rejected || len(c.Framing.From) == 0 || c.Why == "" || c.BulletHash == "" {
+			t.Errorf("candidate = %+v", c)
+		}
+	}
+	want := []string{"ops:continuous delivery", "shop:event-driven design"}
+	// A line sharing nothing with the requirement is not asked about, whatever
+	// stage 2 graded it.
+	p.Sim = func(string, string) float64 { return 0 }
+	if none := FramingCandidates(l, PlanAll(l, []string{deploy, svcs}, p), p); len(none) != 0 {
+		t.Errorf("proposed with no related fact: %+v", none)
+	}
+	p.Sim = nil
+	if !reflect.DeepEqual(phrases, want) {
+		t.Errorf("candidates = %v, want %v", phrases, want)
+	}
+	if len(l.Entries[0].Bullets[1].Framings) != 3 {
+		t.Error("FramingCandidates must not touch the ledger")
+	}
+}
+
 func TestContains(t *testing.T) {
 	for _, tc := range []struct {
 		s, term string

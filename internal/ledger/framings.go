@@ -129,7 +129,14 @@ var claimsLevel = regexp.MustCompile(`\b(advanced|intermediate|expert\w*|senior|
 
 func stub(p string) bool {
 	w := strings.Fields(p)
-	return digitRe.MatchString(p) || claimsLevel.MatchString(p) || stubStart[w[0]] || stubEnd[w[len(w)-1]]
+	return len(w) == 0 || digitRe.MatchString(p) || claimsLevel.MatchString(p) || stubStart[w[0]] || stubEnd[w[len(w)-1]]
+}
+
+// PhraseSafe is the filter a proposed framing passes before anyone is asked
+// about it: not a stub or a claim of level, and naming no ledger entity the
+// bullet does not mention.
+func (l *Ledger) PhraseSafe(phrase, bulletText string) bool {
+	return !stub(strings.ToLower(phrase)) && newEntityGuard(l.Entities).allows(phrase, bulletText)
 }
 
 // DropUnsafeFraming removes pending framings that stub() would no longer let in

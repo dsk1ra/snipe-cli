@@ -538,6 +538,60 @@ func Candidates(l *ledger.Ledger, plans []Plan, p Posting) []Candidate {
 	return out
 }
 
+// FramingCandidate is a posting phrase proposed as a framing of one line: stage
+// 2 graded a requirement naming it Strong against this very line, yet the line
+// never says it. The framing is the user's call, so it is filed undecided.
+type FramingCandidate struct {
+	EntryID    string
+	BulletHash string
+	Why        string // the requirement it answers
+	Framing    ledger.Framing
+}
+
+// FramingCandidates proposes, per line, the posting's own phrase for work the
+// line already states. Unlike an inference it adds no claim, so the score bar
+// does not apply; unlike the corpus pass it asks only about phrases this
+// posting used. A phrase the line has a framing for in any state, rejections
+// included, is not proposed again.
+func FramingCandidates(l *ledger.Ledger, plans []Plan, p Posting) []FramingCandidate {
+	var out []FramingCandidate
+	for _, pl := range plans {
+		if pl.Verbatim {
+			continue
+		}
+		_, b := find(l, pl.Bullet.Text) // pl.Bullet is a copy; locate compares addresses
+		here := evidenceHere(l, b, p.Rows)
+		for _, t := range dedupeTerms(p.Terms) {
+			if t.Kind != KindUntyped && t.Kind != KindCapability {
+				continue
+			}
+			if !slices.ContainsFunc(pl.Forbidden, func(f string) bool { return strings.EqualFold(f, t.Text) }) ||
+				slices.ContainsFunc(pl.Bullet.Framings, func(f ledger.Framing) bool { return strings.EqualFold(f.Phrase, t.Text) }) ||
+				!l.PhraseSafe(t.Text, pl.Bullet.Text) {
+				continue
+			}
+			for _, r := range here {
+				if r.Strength != fit.Strong || !contains(r.Requirement, t.Text) {
+					continue
+				}
+				// The fact nearest the requirement. None means the line shares
+				// nothing with it, and stage 2's Strong was a misgrade: a teaching
+				// bullet graded Strong for "drive engineering excellence by
+				// co-designing" would otherwise yield "engineering excellence".
+				i := slices.IndexFunc(pl.Targets, func(x Target) bool { return x.Requirement == r.Requirement })
+				if i >= 0 && pl.Targets[i].Fact != "" {
+					out = append(out, FramingCandidate{
+						EntryID: pl.EntryID, BulletHash: pl.Bullet.Hash, Why: r.Requirement,
+						Framing: ledger.Framing{Phrase: t.Text, From: []string{pl.Targets[i].Fact}},
+					})
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
 func pending(e *ledger.Entry) []ledger.Fact {
 	var out []ledger.Fact
 	for _, b := range e.Bullets {

@@ -244,7 +244,7 @@ func TestAdaptKillRuleRevertsTheOffendingLine(t *testing.T) {
 	}
 }
 
-func TestAdaptWritesTruthAndQueuesInferences(t *testing.T) {
+func TestAdaptWritesTruthAndQueuesInferencesAndFramings(t *testing.T) {
 	f := &fakeRewriter{models: models(minicheck.Model), drafts: map[string][2]string{
 		b1: {"Built REST services handling 40k req/s on PostgreSQL", ""},
 	}}
@@ -252,7 +252,8 @@ func TestAdaptWritesTruthAndQueuesInferences(t *testing.T) {
 	job := adaptJob(phase2.Row{
 		Requirement: "Terraform or similar deployment tooling", Strength: fit.Transferable, Evidence: b1,
 	})
-	job.Terms = append(job.Terms, adapt.Term{Text: "Terraform", Kind: adapt.KindTool})
+	job.Terms = append(job.Terms, adapt.Term{Text: "Terraform", Kind: adapt.KindTool}, adapt.Term{Text: "REST API design"})
+	job.Rows = append(job.Rows, phase2.Row{Requirement: "Experience with REST API design", Strength: fit.Strong, Evidence: b1})
 	job.Queue = true
 	ck := state.LoadCheckpoint(t.TempDir(), 1)
 
@@ -291,6 +292,10 @@ func TestAdaptWritesTruthAndQueuesInferences(t *testing.T) {
 	if len(pending) != 1 || pending[0].Status != "" || pending[0].Entities[0] != "Terraform" {
 		t.Fatalf("pending inferences: %+v", pending)
 	}
+	// So is the posting's phrase for what the line already says, undecided.
+	if fr := led.Entries[0].Bullets[0].Framings; len(fr) != 1 || fr[0].Phrase != "REST API design" || fr[0].Approved || fr[0].Rejected || len(fr[0].From) == 0 {
+		t.Fatalf("pending framings: %+v", fr)
+	}
 
 	// A resume: the 30B is not asked again, and nothing is queued twice. The
 	// ledger changed on disk (the pending fact) without changing the key.
@@ -304,6 +309,9 @@ func TestAdaptWritesTruthAndQueuesInferences(t *testing.T) {
 	led, _ = ledger.Load(tl.L.CVLedger())
 	if n := len(led.Entries[0].Bullets[len(led.Entries[0].Bullets)-1].Facts); n != 1 {
 		t.Errorf("holding bullet has %d facts after a resume", n)
+	}
+	if n := len(led.Entries[0].Bullets[0].Framings); n != 1 {
+		t.Errorf("first bullet has %d framings after a resume", n)
 	}
 
 	// An adapted run's truth must not outlive a verbatim one.
