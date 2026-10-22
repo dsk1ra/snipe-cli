@@ -101,7 +101,11 @@ func (e ecosystem) countMatches(text string) int {
 	return n
 }
 
-var skillsSection = regexp.MustCompile(`(?is)\n##\s*Skills\b.*?(\n##\s|$)`)
+// skillsSection is the skills catalogue under either heading style: "## Skills"
+// or a bold-alone "**Skills**" line. It ends at the next heading of either style.
+// The CV moved from the first to the second, and the first alone stopped matching,
+// so the languages line counted as evidence.
+var skillsSection = regexp.MustCompile(`(?is)\n(?:##\s*|\*\*)Skills\b.*?(\n##\s|\n\*\*[^*:\n]+\*\*[ \t]*(?:\n|$)|$)`)
 
 // EvidenceText is cv.md minus its `## Skills` taxonomy.
 //

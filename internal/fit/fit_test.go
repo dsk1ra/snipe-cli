@@ -315,3 +315,16 @@ func TestStrengthFromTerms(t *testing.T) {
 		}
 	}
 }
+
+func TestCandidateEcosystemsIgnoresABoldSkillsCatalogue(t *testing.T) {
+	cv := "**Experience**\n- Built the API in Java and Spring Boot\n\n**Skills**\n**Languages:** Java, C#, Rust\n**Data:** PostgreSQL\n\n**Education**\n- BEng\n"
+	got := CandidateEcosystems(cv)
+	if !got["java"] || got["c#/.net"] || got["rust"] {
+		t.Errorf("only what the experience shows should count: %v", got)
+	}
+	// The old heading style still works, and a section after the catalogue is kept.
+	md := "## Experience\n- Wrote Go services\n\n## Skills\nPython, Ruby\n\n## Projects\n- Built a Rust parser\n"
+	if got := CandidateEcosystems(md); !got["rust"] || got["python"] || got["ruby"] {
+		t.Errorf("## style: %v", got)
+	}
+}
