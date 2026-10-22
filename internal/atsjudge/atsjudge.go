@@ -138,8 +138,12 @@ type cached struct {
 	Verdict       string `json:"verdict"`
 	Quote         string `json:"quote,omitempty"`
 	PointerFailed bool   `json:"pointer_failed,omitempty"`
-	Errored       bool   `json:"-"` // no usable reply; scored unmet and never cached
+	Errored       bool   `json:"-"`               // no usable reply; scored unmet and never cached
+	Check         int    `json:"check,omitempty"` // pointer-check version this answer passed under
 }
+
+// checkVersion is 2 since the pointer check accepted elisions (quoteFound).
+const checkVersion = 2
 
 type cacheFile struct {
 	Model   string            `json:"model"`
@@ -213,9 +217,12 @@ func norm(s string) string { return strings.ToLower(strings.Join(strings.Fields(
 // model call. cvNorm is norm(cv).
 func (j *Judge) ask(ctx context.Context, q, cv, cvNorm, cvHash string) (cached, error) {
 	key := sum(system, q, cvHash)
-	// A pointer failure is re-asked: the check was stricter before it learned
-	// to accept elisions, and the answer it threw away may have been right.
-	if c, ok := j.cache[key]; ok && !c.PointerFailed {
+	// A pointer failure from before the check accepted elisions (no Check
+	// stamp) is asked again, since the answer it threw away may have been
+	// right. One from the current check is final: asking again would give an
+	// 8B model on a CPU/GPU split another roll of the dice, and a verbatim page
+	// and an identical adapted page must get the same answer.
+	if c, ok := j.cache[key]; ok && (!c.PointerFailed || c.Check >= checkVersion) {
 		return c, nil
 	}
 	if j.OL == nil {
@@ -258,6 +265,7 @@ func (j *Judge) ask(ctx context.Context, q, cv, cvNorm, cvHash string) (cached, 
 	default: // the schema forbids it; a fake or a changed server might not
 		c.Verdict, c.Quote = Unmet, ""
 	}
+	c.Check = checkVersion
 	j.cache[key] = c
 	return c, j.save()
 }
