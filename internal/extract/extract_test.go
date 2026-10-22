@@ -238,3 +238,23 @@ func TestCVLanguages(t *testing.T) {
 		t.Error("no entities should be an error, so the caller falls back")
 	}
 }
+
+func TestVerifyAttendanceNeedsAStandingRequirement(t *testing.T) {
+	for _, tc := range []struct {
+		name, post, quote string
+		want              bool
+	}{
+		{"where the office is is no rule", "Our office is in Harpenden, close to the station.", "Our office is in Harpenden, close to the station.", false},
+		{"a perk of the office is no rule", "We offer snacks at our central Bristol office.", "We offer snacks at our central Bristol office.", false},
+		{"onboarding stay is not standing", "We expect you to spend most days in our Milan office during your first few months with us, regardless of your long-term work location.",
+			"We expect you to spend most days in our Milan office during your first few months with us, regardless of your long-term work location.", false},
+		{"hybrid then full time is standing", "Hybrid for the first year, then 5 days a week in the office.", "Hybrid for the first year, then 5 days a week in the office.", true},
+		{"based in is a rule", "This role is based in London.", "This role is based in London.", true},
+		{"full time in the office", "You'll join colleagues in the London office on a full-time basis.", "You'll join colleagues in the London office on a full-time basis.", true},
+	} {
+		r := reply(t, `{"attendance": {"quote": "`+tc.quote+`", "mode": "onsite", "days_per_week": 0, "place": "X"}}`)
+		if got := Verify(r, tc.post).Attendance.QuoteOK; got != tc.want {
+			t.Errorf("%s: QuoteOK %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}

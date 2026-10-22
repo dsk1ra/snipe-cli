@@ -83,11 +83,13 @@ func gateFitx(args []string) int {
 		return 2
 	}
 	home := pos[0]
-	// The prompt belongs to the code and the data to the home; they are the same
-	// directory in a checkout, but a deployed home can be older than the code.
+	// The prompt belongs to the code and the data to the home. Run from the repo,
+	// the repo's prompt is the one under test; a deployed home can be older.
 	code := home
-	if _, err := os.Stat(filepath.Join(home, "prompts", "p1-cvstack.md")); err != nil {
-		code, _ = os.Getwd()
+	if wd, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(wd, "prompts", "p1-extract.md")); err == nil {
+			code = wd
+		}
 	}
 	l := paths.Layout{Home: home, Code: code}
 	cv, err1 := os.ReadFile(l.CV())

@@ -224,12 +224,21 @@ func hasNumber(quote string, n int) bool {
 
 var (
 	// attendanceCue is what a quote must say before it counts as a statement
-	// about where the work is done. The first full run of the 4B over 392
+	// about where the work is done: a requirement, not a mention of an office
+	// ("our office is in Harpenden"). The first full run of the 4B over 392
 	// postings read "Location: London, UK" as on-site in 38 of them, which
 	// states where the company is and nothing about attendance. The words are
 	// the vocabulary of attendance, not of places, so the list does not grow
 	// with the next city.
-	attendanceCue = regexp.MustCompile(`(?i)\b(on-?site|in[- ]?office|office|in[- ]person|hybrid|remote|work(ing)? from home|wfh|days?|hq|headquarters?|commut\w*|relocat\w*)\b`)
+	attendanceCue = regexp.MustCompile(`(?i)\b(on-?site|in[- ]?office|(in|at|to|from) the office|office[- ]based|in[- ]person|hybrid|remote|work(ing)? from home|wfh|days?|full[- ]time|based (in|at|out of)|commut\w*|relocat\w*)\b`)
+
+	// temporaryCue marks an arrangement for a limited period. The prompt says to
+	// report only the standing arrangement and the 4B did not follow it ("we
+	// expect you to spend most days in our Milan office during your first few
+	// months, regardless of your long-term work location"). A quote with one of
+	// these and no "then" / "after that" states no standing rule.
+	temporaryCue = regexp.MustCompile(`(?i)\b((first|initial)\s+(\w+\s+)?(weeks?|months?|year)|initially|onboarding|probation\w*|long-term work location)\b`)
+	thenCue      = regexp.MustCompile(`(?i)\b(then|after that|thereafter|afterwards)\b`)
 
 	// yearsCue keeps "6+ months hands-on with agentic editors" from becoming a
 	// six-year demand.
@@ -282,7 +291,8 @@ func Verify(r Reply, posting string) Facts {
 	}
 	f.Attendance = Attendance{Mode: Unspecified, Quote: strings.TrimSpace(a.Quote)}
 	f.Attendance.Claimed = (a.Mode != "" && a.Mode != Unspecified) || a.DaysPerWeek > 0 || a.DaysPerMonth > 0 || strings.TrimSpace(a.Place) != ""
-	if f.Attendance.Claimed && found(a.Quote) && attendanceCue.MatchString(Norm(a.Quote)) {
+	if f.Attendance.Claimed && found(a.Quote) && attendanceCue.MatchString(Norm(a.Quote)) &&
+		(!temporaryCue.MatchString(Norm(a.Quote)) || thenCue.MatchString(Norm(a.Quote))) {
 		f.Attendance.QuoteOK = true
 		if a.Mode == Onsite || a.Mode == Hybrid || a.Mode == Remote {
 			f.Attendance.Mode = a.Mode

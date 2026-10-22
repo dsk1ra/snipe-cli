@@ -9,6 +9,8 @@ attendance: whether the employee must be in an office, and where.
 - mode: "onsite" when the posting requires working from the office full time; "hybrid" when it requires some days in the office and allows the rest elsewhere; "remote" when it says the role is remote and requires no regular office days; "unspecified" when it does not say.
 - days_per_week: the office days a week the posting asks for, 0 when it gives no weekly figure.
 - days_per_month: the office days a month the posting asks for, 0 when it gives no monthly figure. Use this and not days_per_week when the posting counts in months.
+- Only the standing arrangement counts: where the employee works once settled in. An arrangement that lasts for a limited period (the first weeks or months, onboarding, probation, a training block) is not it, so ignore it. When the posting gives a limited arrangement and then the standing one ("hybrid for the first year, then five days a week"), report the standing one. When it gives only a limited arrangement, report "unspecified" and 0.
+- A stated requirement is needed: days in the office, on-site, hybrid, or "must be based in". A sentence that only says where the office is or what it offers ("our office is in Harpenden", "a central Bristol office with a barista bar") is not an attendance rule; report "unspecified" and 0 for it.
 - place: the town or city of the office the employee attends, as the posting writes it. Empty when the posting names only a country or a region, or no place.
 
 languages: the spoken or written human languages (English, German, Spanish...) the posting asks the candidate to know. Programming languages, query languages and markup languages are not human languages; leave them out.
