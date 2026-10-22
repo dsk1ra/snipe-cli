@@ -49,7 +49,7 @@ import (
 // what changes.
 func gateGoldset(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md]\n"+
+		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md [--remap]]\n"+
 			"       gate goldset score <home> <sheet.md> [--facts]")
 		return 2
 	}
@@ -64,7 +64,7 @@ func gateGoldset(args []string) int {
 		if len(args) > 3 {
 			prior = args[3]
 		}
-		return goldsetSheet(home, n, prior)
+		return goldsetSheet(home, n, prior, len(args) > 4 && args[4] == "--remap")
 	case "score":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: gate goldset score <home> <sheet.md>")
@@ -173,6 +173,10 @@ func rank(q []float64, index []embed.Atom, k int) (before, after []int, err erro
 	return idx(old), idx(new), nil
 }
 
+// remapMin is the similarity at which a rewritten atom is proposed as the
+// home of a dropped tick.
+const remapMin = 0.85
+
 // goldsetSheet cuts a new sheet, carrying over the ticks of a previous one.
 //
 // Carrying them is not a convenience. A sheet is hand-labelled, the labels are
@@ -181,7 +185,7 @@ func rank(q []float64, index []embed.Atom, k int) (before, after []int, err erro
 // goldset's 174 ticks were lost. parseGoldsheet's atom-count check is what makes
 // it safe: if cv.md has moved, the old ids point at different atoms and the
 // carry is refused rather than silently wrong.
-func goldsetSheet(home string, n int, prior string) int {
+func goldsetSheet(home string, n int, prior string, remap bool) int {
 	l, index, err := goldsetCorpus(home)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -204,12 +208,58 @@ func goldsetSheet(home string, n int, prior string) int {
 	for _, a := range index {
 		byText[a.Text] = true
 	}
+	// With --remap, a tick whose atom has been rewritten moves to the nearest
+	// current atom as a machine proposal ("X", where a hand tick is "x"), listed
+	// on stderr with its similarity for a human to confirm or untick. Without it
+	// the tick is dropped, as before.
+	proposals := map[string]string{}
+	if remap {
+		var gone []string
+		seenGone := map[string]bool{}
+		for _, texts := range ticked {
+			for t := range texts {
+				if !byText[t] && !seenGone[t] {
+					seenGone[t] = true
+					gone = append(gone, t)
+				}
+			}
+		}
+		sort.Strings(gone)
+		if len(gone) > 0 {
+			vecs, err := embed.Batch(context.Background(), ollama.New("", nil), gone, ollama.ModelEmbed)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			for i, t := range gone {
+				top, err := embed.TopK(vecs[i], index, 2)
+				if err != nil || len(top) == 0 {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "REMAP %.3f\n  was: %.140s\n  now: %.140s\n", top[0].Sim, t, top[0].Text)
+				if len(top) > 1 {
+					fmt.Fprintf(os.Stderr, "  2nd: %.3f %.140s\n", top[1].Sim, top[1].Text)
+				}
+				if top[0].Sim >= remapMin {
+					proposals[t] = top[0].Text
+				}
+			}
+		}
+	}
 	for key, texts := range ticked {
 		for t := range texts {
-			if !byText[t] {
-				fmt.Fprintf(os.Stderr, "  %s: ticked atom is no longer in cv.md, tick dropped: %.70s\n",
-					strings.ReplaceAll(key, "\x00", " "), t)
+			if byText[t] {
+				continue
 			}
+			if np, ok := proposals[t]; ok {
+				if texts[np] == "" {
+					texts[np] = "X"
+				}
+				delete(texts, t)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "  %s: ticked atom is no longer in cv.md, tick dropped: %.70s\n",
+				strings.ReplaceAll(key, "\x00", " "), t)
 		}
 	}
 	carried, fresh, stranded := 0, 0, 0
@@ -291,8 +341,15 @@ func goldsetSheet(home string, n int, prior string) int {
 			}
 			// Ascending, never by score: listing the pool in either ranker's
 			// order anchors the ticks on the answer the sheet exists to check.
-			sort.Ints(pool)
 			was, seenBefore := ticked[name+"\x00"+r]
+			// A machine proposal may sit outside the live pool; it is listed anyway.
+			for id, a := range index {
+				if was[a.Text] == "X" && !seen[id] {
+					seen[id] = true
+					pool = append(pool, id)
+				}
+			}
+			sort.Ints(pool)
 			if seenBefore {
 				carried++
 			} else {
