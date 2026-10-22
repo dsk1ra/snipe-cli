@@ -62,6 +62,10 @@ type Qual struct {
 	// metrics, since an honest CV cannot show a Gap and must not be scored down
 	// for it.
 	Supported bool
+
+	// Strength and Evidence are stage 2's grade and the CV line it matched,
+	// kept so a miss can be explained: was the evidence selected onto the page?
+	Strength, Evidence string
 }
 
 // QualsFromRows reads the qualifications off stage 2's rows, so there is one
@@ -70,7 +74,8 @@ func QualsFromRows(rows []phase2.Row) []Qual {
 	out := make([]Qual, len(rows))
 	for i, r := range rows {
 		out[i] = Qual{Text: r.Requirement, Must: r.MustHave,
-			Supported: r.Strength == fit.Strong || r.Strength == fit.Transferable}
+			Supported: r.Strength == fit.Strong || r.Strength == fit.Transferable,
+			Strength:  r.Strength, Evidence: r.Evidence}
 	}
 	return out
 }

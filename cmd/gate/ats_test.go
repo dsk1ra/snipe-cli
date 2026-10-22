@@ -52,12 +52,12 @@ func mk(must float64, has bool) atsjudge.Result {
 
 func TestPairedArithmetic(t *testing.T) {
 	rows := []atsRow{
-		{"001", mk(0.5, true), mk(1, true)},    // improved
-		{"002", mk(1, true), mk(0.5, true)},    // regressed
-		{"003", mk(0.5, true), mk(0.5, true)},  // tied
-		{"004", mk(0, true), mk(1, true)},      // improved
-		{"005", mk(0, false), mk(1, true)},     // undefined on one arm: out of the pairing
-		{"006", mk(0.25, true), mk(0.5, true)}, // improved
+		{ID: "001", V: mk(0.5, true), A: mk(1, true)},    // improved
+		{ID: "002", V: mk(1, true), A: mk(0.5, true)},    // regressed
+		{ID: "003", V: mk(0.5, true), A: mk(0.5, true)},  // tied
+		{ID: "004", V: mk(0, true), A: mk(1, true)},      // improved
+		{ID: "005", V: mk(0, false), A: mk(1, true)},     // undefined on one arm: out of the pairing
+		{ID: "006", V: mk(0.25, true), A: mk(0.5, true)}, // improved
 	}
 	p := paired(rows, mustOf)
 	if p.N != 5 || p.Improved != 3 || p.Regressed != 1 || p.Tied != 1 {

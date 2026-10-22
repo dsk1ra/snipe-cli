@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -36,6 +37,7 @@ type atsItem struct {
 type atsRow struct {
 	ID   string
 	V, A atsjudge.Result
+	Page string // the verbatim page, for --explain
 }
 
 // qualsOf reads the qualifications off a report, with the parser the pipeline
@@ -198,7 +200,7 @@ func atsControl(ctx context.Context, w io.Writer, j *atsjudge.Judge, items []ats
 
 func gateATS(args []string) int {
 	opt := atsjudge.Options{}
-	control := false
+	control, explain, ceiling := false, false, false
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		if v, ok := optVal(args, &i, "--model"); ok {
@@ -207,6 +209,10 @@ func gateATS(args []string) int {
 			opt.AllowSameFamily = true
 		} else if args[i] == "--control" {
 			control = true
+		} else if args[i] == "--explain" {
+			explain = true
+		} else if args[i] == "--ceiling" {
+			ceiling = true
 		} else {
 			pos = append(pos, args[i])
 		}
@@ -237,7 +243,7 @@ func gateATS(args []string) int {
 		if err == nil {
 			var a atsjudge.Result
 			if a, err = j.Score(ctx, it.Quals, it.Adapt); err == nil {
-				rows = append(rows, atsRow{ID: it.ID, V: v, A: a})
+				rows = append(rows, atsRow{ID: it.ID, V: v, A: a, Page: it.Verbatim})
 				continue
 			}
 		}
@@ -245,6 +251,20 @@ func gateATS(args []string) int {
 		return 1
 	}
 	atsReport(os.Stdout, j.Model, rows)
+	if explain {
+		atsExplain(os.Stdout, rows, 0.75)
+	}
+	if ceiling {
+		cv, err := os.ReadFile(filepath.Join(pos[0], "cv.md"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		if err := atsCeiling(ctx, os.Stdout, j, items, rows, string(cv)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+	}
 	code := 0
 	if control {
 		if _, _, err := atsControl(ctx, os.Stdout, j, items); err != nil {
@@ -303,4 +323,90 @@ func fillATS(j *atsjudge.Judge, report func(id string) (string, error), rs []e3R
 		}
 	}
 	return seen && all
+}
+
+// atsExplain lists, for each offer scoring under below, the supported
+// must-haves the judge did not credit, with the CV line stage 2 matched to
+// each and whether that line made it onto the page. A miss with its line on the
+// page is the judge or the wording; one without is selection, and no rewrite
+// of the lines that were printed can fix it.
+func atsExplain(w io.Writer, rows []atsRow, below float64) {
+	page := func(s string) string { return strings.ToLower(strings.Join(strings.Fields(s), " ")) }
+	var onPage, offPage, noEvidence int
+	fmt.Fprintf(w, "\nunmet supported must-haves, offers under %.2f\n", below)
+	for _, r := range rows {
+		if !r.V.HasMust || r.V.MustEvidence >= below {
+			continue
+		}
+		fmt.Fprintf(w, "\noffer %s  must_have_evidence %.2f\n", r.ID, r.V.MustEvidence)
+		pg := page(r.Page)
+		for _, a := range r.V.Answers {
+			if !a.Qual.Must || !a.Qual.Supported || a.Verdict == atsjudge.Met {
+				continue
+			}
+			ev := a.Qual.Evidence
+			if _, bullet, ok := strings.Cut(ev, ": "); ok {
+				ev = bullet
+			}
+			where := "no evidence line"
+			switch probe := page(ev); {
+			case len(probe) < 20:
+				noEvidence++
+			case strings.Contains(pg, probe[:min(len(probe), 50)]):
+				where, onPage = "evidence IS on the page", onPage+1
+			default:
+				where, offPage = "evidence is NOT on the page", offPage+1
+			}
+			fmt.Fprintf(w, "  [%s, %s] %s\n      %s: %.110s\n", a.Qual.Strength, a.Verdict, a.Qual.Text, where, ev)
+		}
+	}
+	fmt.Fprintf(w, "\nmisses: evidence on the page %d, not on the page %d, no evidence line %d\n", onPage, offPage, noEvidence)
+}
+
+// atsCeiling judges the whole of cv.md against each offer and sorts every
+// must-have into three: met on the page, met only by cv.md (the selection left
+// the evidence off the page, which no rewrite of printed lines can fix), and
+// unmet by cv.md too (nothing to show, or a wording the judge does not read as
+// evidence). It uses every must-have, not only those stage 2 called supported,
+// because reports written before the last cv.md edit grade against lines that
+// are no longer in it.
+func atsCeiling(ctx context.Context, w io.Writer, j *atsjudge.Judge, items []atsItem, rows []atsRow, cv string) error {
+	byID := map[string]atsItem{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	var onPage, lost, total int
+	var never []string
+	fmt.Fprintf(w, "\nceiling: every must-have judged against the whole of cv.md\n")
+	fmt.Fprintf(w, "%-6s %6s %9s %7s %6s\n", "offer", "musts", "on page", "lost", "never")
+	for _, r := range rows {
+		full, err := j.Score(ctx, byID[r.ID].Quals, cv)
+		if err != nil {
+			return err
+		}
+		var p, l, n, t int
+		for i, a := range r.V.Answers {
+			if !a.Qual.Must {
+				continue
+			}
+			t++
+			switch {
+			case a.Verdict == atsjudge.Met:
+				p++
+			case full.Answers[i].Verdict == atsjudge.Met:
+				l++
+			default:
+				n++
+				never = append(never, fmt.Sprintf("  %s [%s] %.140s", r.ID, full.Answers[i].Verdict, a.Qual.Text))
+			}
+		}
+		fmt.Fprintf(w, "%-6s %6d %9d %7d %6d\n", r.ID, t, p, l, n)
+		onPage, lost, total = onPage+p, lost+l, total+t
+	}
+	fmt.Fprintf(w, "\nunmet even by cv.md:\n%s\n", strings.Join(never, "\n"))
+	if total > 0 {
+		fmt.Fprintf(w, "\nof %d must-haves: %d met on the page (%.0f%%), %d met only by cv.md and left off the page (%.0f%%), %d unmet even by cv.md (%.0f%%)\n",
+			total, onPage, 100*float64(onPage)/float64(total), lost, 100*float64(lost)/float64(total), len(never), 100*float64(len(never))/float64(total))
+	}
+	return nil
 }
