@@ -5,13 +5,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/dsk1ra/snipe-cli/internal/adapt"
 	"github.com/dsk1ra/snipe-cli/internal/fill"
+	"github.com/dsk1ra/snipe-cli/internal/ledger"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
 	"github.com/dsk1ra/snipe-cli/internal/suggest"
@@ -63,9 +66,72 @@ func openTailor(l paths.Layout, c *state.Cache, info rowInfo) tea.Cmd {
 		if s.items, err = suggest.Load(dir); err != nil {
 			return tailorMsg{err: err}
 		}
+		// A line `--writer adapt` changed is offered back to the person's own
+		// wording. Missing truth.json (an offer built before adaptation) adds nothing.
+		if tf, err := adapt.ReadTruth(filepath.Join(dir, adapt.TruthName)); err == nil {
+			led, _ := ledger.Load(l.CVLedger())
+			var added bool
+			if s.items, added = mergeAdapted(s.items, adaptedItems(tf, led)); added {
+				if err := suggest.Save(dir, s.items); err != nil {
+					return tailorMsg{err: err}
+				}
+			}
+		}
 		return tailorMsg{s: s}
 	}
 }
+
+// adaptedItems turns the lines `--writer adapt` changed into items that offer
+// the original back: Old is the line on the page, New the person's own. Accepting
+// one reverts the line at the next rebuild; rejecting it keeps the adaptation.
+// Why says what licensed the change, so a claim resting on a framing or an
+// inference is flagged where it is reviewed.
+func adaptedItems(tf adapt.TruthFile, led *ledger.Ledger) []suggest.Item {
+	var out []suggest.Item
+	for _, b := range tf.Bullets {
+		if b.Source == "original" || b.Shipped == "" || b.Shipped == b.Original {
+			continue
+		}
+		why := []string{"adapted from your line"}
+		for _, f := range b.Framings {
+			why = append(why, "framing you approved: "+f)
+		}
+		for _, id := range b.Inferences {
+			text := id
+			if led != nil {
+				for _, e := range led.Entries {
+					for _, bl := range e.Bullets {
+						for _, f := range bl.Facts {
+							if f.ID == id {
+								text = f.Text
+							}
+						}
+					}
+				}
+			}
+			why = append(why, "inferred, you approved it: "+text)
+		}
+		out = append(out, suggest.Item{
+			ID: suggest.AdaptPrefix + b.Hash, Kind: suggest.Bullet, Where: b.Entry,
+			Old: b.Shipped, New: b.Original, Why: strings.Join(why, " · "),
+		})
+	}
+	return out
+}
+
+// mergeAdapted adds the adapted-line items the file does not hold yet, and says
+// whether it added any. An item already there keeps its decision.
+func mergeAdapted(items, adapted []suggest.Item) ([]suggest.Item, bool) {
+	added := false
+	for _, a := range adapted {
+		if !slices.ContainsFunc(items, func(it suggest.Item) bool { return it.ID == a.ID }) {
+			items, added = append(items, a), true
+		}
+	}
+	return items, added
+}
+
+func isAdapted(it suggest.Item) bool { return strings.HasPrefix(it.ID, suggest.AdaptPrefix) }
 
 var tailorKeys = struct {
 	Accept, Reject, Gen, Rebuild, Open key.Binding
@@ -200,6 +266,11 @@ func (s *tailorScreen) view(w, h int) string {
 	switch pend, acc := s.counts(); {
 	case s.busy != "":
 		status = s.busy + "…"
+	case s.onlyAdapted():
+		status = fmt.Sprintf("%d adapted line(s), %d put back to your wording", len(s.items), acc)
+		if s.dirty {
+			status += " · r rebuilds the PDF with them"
+		}
 	case len(s.items) > 0:
 		status = fmt.Sprintf("%d suggestion(s), %d accepted", len(s.items), acc)
 		if pend == 0 {
@@ -243,6 +314,11 @@ func (s *tailorScreen) view(w, h int) string {
 	return strings.Join(append(out, detail...), "\n")
 }
 
+// onlyAdapted is whether every item is an adapted line, none a model suggestion.
+func (s *tailorScreen) onlyAdapted() bool {
+	return len(s.items) > 0 && !slices.ContainsFunc(s.items, func(it suggest.Item) bool { return !isAdapted(it) })
+}
+
 func (s *tailorScreen) counts() (pending, accepted int) {
 	for _, it := range s.items {
 		switch it.State {
@@ -266,6 +342,9 @@ func (s *tailorScreen) render(i int, t suggest.Target, w int) []string {
 			mark, style = styDim.Render("✗ "), styDim.Render
 		default:
 			mark = styAccent.Render("• ")
+			if isAdapted(it) {
+				mark = styWarn.Render("✎ ")
+			}
 		}
 	}
 	cur := "  "
@@ -304,6 +383,14 @@ func (s *tailorScreen) detail(w int) []string {
 			}
 		}
 		return ls
+	}
+	if isAdapted(it) {
+		// The diff reads from the person's line to what shipped, the direction
+		// the adaptation went; the item itself offers the way back.
+		orig, shipped := wordDiff(it.New, it.Old)
+		out := append(wrap("your ", orig), wrap("page ", shipped)...)
+		out = append(out, wrap("why  ", it.Why)...)
+		return append(out, styDim.Render("enter puts your line back · n keeps the adaptation"))
 	}
 	out := append(wrap("was  ", it.Old), wrap("now  ", it.New)...)
 	if it.Why != "" {

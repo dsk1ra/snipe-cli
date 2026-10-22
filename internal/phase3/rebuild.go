@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/fill"
 	"github.com/dsk1ra/snipe-cli/internal/suggest"
@@ -65,7 +66,16 @@ func (t *Tailor) Suggest(ctx context.Context, id int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(items), suggest.Save(f.dir, items)
+	// The offers to put the person's own line back after an adaptation are not
+	// model suggestions and their decisions stand.
+	old, _ := suggest.Load(f.dir)
+	var keep []suggest.Item
+	for _, it := range old {
+		if strings.HasPrefix(it.ID, suggest.AdaptPrefix) {
+			keep = append(keep, it)
+		}
+	}
+	return len(items), suggest.Save(f.dir, append(keep, items...))
 }
 
 // Rebuild renders the PDF again with the accepted suggestions swapped in. The

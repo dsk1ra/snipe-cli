@@ -41,6 +41,10 @@ const (
 
 	// File sits beside cv-content.json in the offer's output folder.
 	File = "suggestions.json"
+
+	// AdaptPrefix starts the id of an item that offers to put the CV's own line
+	// back where `--writer adapt` changed it. Generating suggestions keeps these.
+	AdaptPrefix = "adapt-"
 )
 
 // Item is one suggestion. Old is the string as it stands on the page.
