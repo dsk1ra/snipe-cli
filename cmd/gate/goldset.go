@@ -50,7 +50,7 @@ import (
 func gateGoldset(args []string) int {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md]\n"+
-			"       gate goldset score <home> <sheet.md>")
+			"       gate goldset score <home> <sheet.md> [--facts]")
 		return 2
 	}
 	home := args[1]
@@ -70,7 +70,7 @@ func gateGoldset(args []string) int {
 			fmt.Fprintln(os.Stderr, "usage: gate goldset score <home> <sheet.md>")
 			return 2
 		}
-		return goldsetScore(home, args[2])
+		return goldsetScore(home, args[2], len(args) > 3 && args[3] == "--facts")
 	}
 	fmt.Fprintf(os.Stderr, "unknown goldset mode %q\n", args[0])
 	return 2
@@ -395,7 +395,7 @@ func parseGoldsheet(path string, atoms int) ([]goldCase, error) {
 	return out, nil
 }
 
-func goldsetScore(home, sheet string) int {
+func goldsetScore(home, sheet string, facts bool) int {
 	_, index, err := goldsetCorpus(home)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -468,6 +468,11 @@ func goldsetScore(home, sheet string) int {
 		}
 	}
 	before, after := at[prodK].before, at[prodK].after
+	if facts {
+		if rc := goldsetFacts(home, index, marked, vecs, after.hits, after.slots); rc != 0 {
+			return rc
+		}
+	}
 
 	n := float64(len(marked))
 	row := func(name string, pick func(int) tally) {
