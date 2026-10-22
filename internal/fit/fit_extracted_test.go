@@ -8,10 +8,8 @@ import (
 )
 
 // Each row is a posting, the facts a correct reading of it gives, and whether
-// the cap fires. The same posting goes through the regex path and the facts
-// path and both have to say want: the facts path changes how the posting is
-// read, not what is decided. Most postings are the ones fit_test.go pins, each
-// of which is a bug that shipped.
+// the cap fires. Most postings are ones the old word-list caps got wrong or
+// right by luck, each a bug that shipped.
 
 const extProfile = `location:
   city: "Ashcombe"
@@ -75,11 +73,7 @@ func TestLocationCapFrom(t *testing.T) {
 		{"no stated policy, no gate", "Location: London (Hybrid)", "",
 			att("hybrid", "London", 0, 0), false},
 	} {
-		_, oldCity := LocationMismatchCap(tc.jd, tc.prof)
 		caps, place := LocationCapFrom(tc.a, tc.prof)
-		if got := oldCity != ""; got != tc.want {
-			t.Errorf("%s: the regex path says %v (%q), the table says %v", tc.name, got, oldCity, tc.want)
-		}
 		if got := place != ""; got != tc.want {
 			t.Errorf("%s: facts path says %v (%q), want %v", tc.name, got, place, tc.want)
 		}
@@ -89,12 +83,8 @@ func TestLocationCapFrom(t *testing.T) {
 	}
 }
 
-// Where the facts path is meant to differ: a place outside the 29-city list.
-func TestLocationCapFromBeyondTheCityList(t *testing.T) {
-	jd := "Location: Berlin. Hybrid, 3 days a week in the office."
-	if _, city := LocationMismatchCap(jd, profileYML); city != "" {
-		t.Fatalf("the regex path capped %q; Berlin is not in ukCities", city)
-	}
+// Any place the profile does not name caps; there is no list of cities.
+func TestLocationCapFromAnyPlace(t *testing.T) {
 	if _, place := LocationCapFrom(att("hybrid", "Berlin", 3, 0), profileYML); place != "berlin" {
 		t.Errorf("got %q, want berlin", place)
 	}
@@ -125,11 +115,7 @@ func TestLanguageCapFrom(t *testing.T) {
 		{"a C#.Net posting names no language", "C#.Net developer. Strong C# and .NET Core throughout.", nil, ""},
 		{"a language outside the old list", "Fluent Hindi is required.", lang("Hindi", "required", "Fluent Hindi is required"), "hindi"},
 	} {
-		_, old := LanguageMismatchCap(tc.jd, langCV)
 		caps, got := LanguageCapFrom(tc.langs, langCV)
-		if tc.name != "a language outside the old list" && old != tc.want {
-			t.Errorf("%s: the regex path says %q, the table says %q", tc.name, old, tc.want)
-		}
 		if got != tc.want {
 			t.Errorf("%s: facts path says %q, want %q", tc.name, got, tc.want)
 		}
@@ -159,5 +145,16 @@ func TestStackCapFrom(t *testing.T) {
 		if got := StackCapFrom(tc.stack, tc.cv); got.Cap != tc.want {
 			t.Errorf("%s: cap %d, want %d", tc.name, got.Cap, tc.want)
 		}
+	}
+}
+
+func TestCapsFromFactsFailsOpen(t *testing.T) {
+	lang, missing, loc, place := CapsFromFacts(nil, langCV, profileYML)
+	if lang.CV != 5 || lang.NS != 5 || loc.CV != 5 || loc.NS != 5 || missing != "" || place != "" {
+		t.Errorf("no facts must cap nothing: %+v %q %+v %q", lang, missing, loc, place)
+	}
+	f := &extract.Facts{Attendance: extract.Attendance{Mode: extract.Onsite, Place: "Berlin"}}
+	if _, _, loc, place := CapsFromFacts(f, langCV, profileYML); loc.CV != 2 || place != "berlin" {
+		t.Errorf("facts must cap: %+v %q", loc, place)
 	}
 }

@@ -16,28 +16,31 @@ const testProfile = `location:
     - "United Kingdom — fully remote only"
 `
 
-func TestValidateLetsExtractedFactsDecideAndReportsTheLists(t *testing.T) {
+func TestValidateCapsFromExtractedFactsAndFailsOpenWithoutThem(t *testing.T) {
 	s := &Scorer{Cfg: &config.Config{CVRaw: "Ada\n", ProfileYML: testProfile}}
 	m := modelReply{Role: "Backend Engineer", CVMatch: 5, NorthStar: 5}
-	// The word lists do not know West Drayton and read "10 years" as a demand.
+	// No word list knows West Drayton, and "10 years" here is the company's age.
 	jd := "Backend Engineer\nWest Drayton (4 days onsite)\nVodafone has served customers for 10 years.\n"
 	facts := &extract.Facts{Attendance: extract.Attendance{Mode: extract.Onsite, Place: "West Drayton", DaysPerWeek: 4}}
 
-	if got := s.validate(m, jd, "u", 1, nil, nil); len(got.CapShadow) != 0 || got.CVCap != 2 {
-		t.Fatalf("no facts must keep the list caps (the age as a seniority demand) and report nothing: %+v", got)
+	if got := s.validate(m, jd, "u", 1, nil, nil); got.CVCap != 5 || len(got.HardStops) != 0 {
+		t.Fatalf("no facts must cap nothing: %+v", got)
 	}
 	got := s.validate(m, jd, "u", 1, facts, nil)
 	if got.CVCap != 2 || len(got.HardStops) != 1 || !strings.Contains(got.HardStops[0], "west drayton") {
 		t.Errorf("location fact did not cap: %+v", got)
 	}
-	if len(got.CapShadow) < 1 || !strings.HasPrefix(got.CapShadow[0], "location:") {
-		t.Errorf("disagreement not reported: %v", got.CapShadow)
-	}
-	if len(got.CapShadow) != 2 || !strings.HasPrefix(got.CapShadow[1], "seniority: lists cap 2/3") {
-		t.Errorf("the list's company-age cap should show up as a shadow disagreement: %v", got.CapShadow)
-	}
 	if len(got.SoftGaps) != 0 {
 		t.Errorf("seniority cap applied from the posting's age: %v", got.SoftGaps)
+	}
+	// The title still caps without any facts.
+	if got := s.validate(modelReply{Role: "Senior Engineer", CVMatch: 5, NorthStar: 5}, jd, "u", 1, nil, nil); got.CVCap != 3 {
+		t.Errorf("a Senior title should cap at 3 with no facts: %d", got.CVCap)
+	}
+	// Years come from the facts, not from the text.
+	y := &extract.Facts{Years: extract.Years{MinYears: 8, QuoteOK: true}}
+	if got := s.validate(m, jd, "u", 1, y, nil); got.CVCap != 2 {
+		t.Errorf("8 extracted years should cap at 2: %d", got.CVCap)
 	}
 }
 

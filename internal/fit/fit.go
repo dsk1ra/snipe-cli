@@ -209,8 +209,6 @@ type Caps struct {
 }
 
 var (
-	highYearsRe = regexp.MustCompile(`\b(8|9|10|11|12|15)\+?\s*years`)
-	midYearsRe  = regexp.MustCompile(`\b(5|6|7)\+?\s*years`)
 	fwdRe       = regexp.MustCompile(`\bforward[\s-]?deployed\b|\bfde\b`)
 	architectRe = regexp.MustCompile(`\barchitect\b`)
 	// People-management titles count as Staff+ for an early-career IC: an
@@ -219,23 +217,21 @@ var (
 	seniorishRe = regexp.MustCompile(`\b(senior|sr\.?|lead)\b`)
 )
 
-// SeniorityCaps applies the ceilings an early-career candidate faces. stage1
-// carries the structured fields when the staged evaluator has them; Phase 1
-// passes zero values and works off the title and the text.
-func SeniorityCaps(roleTitle, jdText string, yearsRequired int, seniorityLevel string) Caps {
+// SeniorityCaps applies the ceilings an early-career candidate faces. The title
+// is read here, by the words that carry a level. The years demanded come from the
+// caller: the extracted minimum, or stage 1's parse. They are not searched for in
+// the posting, since "15 years" there is as likely the company's age.
+func SeniorityCaps(roleTitle string, yearsRequired int, seniorityLevel string) Caps {
 	title := strings.ToLower(roleTitle)
-	jd := strings.ToLower(jdText)
 	level := strings.ToLower(seniorityLevel)
 
-	highYears := yearsRequired >= 8 || highYearsRe.MatchString(jd)
-	midYears := (yearsRequired >= 5 && yearsRequired < 8) || midYearsRe.MatchString(jd)
 	staffish := staffishRe.MatchString(title) || strings.Contains(level, "staff") || strings.Contains(level, "principal")
 	seniorish := seniorishRe.MatchString(title) || strings.Contains(level, "senior")
 
 	switch {
-	case staffish || architectRe.MatchString(title) || highYears:
+	case staffish || architectRe.MatchString(title) || yearsRequired >= 8:
 		return Caps{CV: 2, NS: 3, Reason: "Staff/Principal/8+ yrs demand"}
-	case seniorish || fwdRe.MatchString(title) || midYears:
+	case seniorish || fwdRe.MatchString(title) || (yearsRequired >= 5 && yearsRequired < 8):
 		return Caps{CV: 3, NS: 4, Reason: "Senior/5+ yrs demand"}
 	}
 	return Caps{CV: 5, NS: 5}
@@ -243,17 +239,9 @@ func SeniorityCaps(roleTitle, jdText string, yearsRequired int, seniorityLevel s
 
 // ── Natural language ─────────────────────────────────────────────────────────
 
-// English is never a mismatch: the CV is in English.
-var humanLanguages = []string{
-	"german", "french", "spanish", "italian", "dutch", "portuguese",
-	"japanese", "korean", "mandarin", "chinese", "arabic", "polish", "swedish",
-	"norwegian", "danish", "finnish", "turkish", "czech", "ukrainian", "russian",
-}
-
 var (
 	langSectionRe = regexp.MustCompile(`(?is)\*\*Languages\*\*\s*\n(.*?)(\n\s*\*\*|$)`)
 	langItemRe    = regexp.MustCompile(`^\s*-\s*([A-Za-z]+)`)
-	softMentionRe = regexp.MustCompile(`(?i)\bplus\b|\bbonus\b|nice[\s-]to[\s-]have|preferred|advantage|desirable`)
 )
 
 // CandidateLanguages are the languages listed under the CV's Languages section.
@@ -271,81 +259,19 @@ func CandidateLanguages(cv string) map[string]bool {
 	return have
 }
 
-// LanguageMismatchCap caps hard when the JD requires fluency in a natural
-// language the candidate does not have.
-//
-// One missed requirement barely moves the coverage average, so a "(German
-// speaking)" role scores a 4.5 unless this is a code-level gate. Nice-to-have
-// mentions do not trigger it.
-func LanguageMismatchCap(jdText, cv string) (Caps, string) {
-	jd := strings.ToLower(jdText)
-	have := CandidateLanguages(cv)
-	for _, lang := range humanLanguages {
-		if have[lang] {
-			continue
-		}
-		re := regexp.MustCompile(`(?i)\b` + lang + `[\s-]*(speaking|fluen\w*|proficien\w*|native)|` +
-			`\b(fluen\w*|proficien\w*|native)[^.\n]{0,30}\b` + lang + `\b`)
-		loc := re.FindStringIndex(jd)
-		if loc == nil {
-			continue
-		}
-		if softMentionRe.MatchString(window(jd, loc[0], loc[1], 60)) {
-			continue
-		}
-		return Caps{CV: 2, NS: 2}, lang
-	}
-	return Caps{CV: 5, NS: 5}, ""
-}
-
 // ── Location policy ──────────────────────────────────────────────────────────
 
-// A named city list, not "any capitalised word": a JD names a dozen places it
-// is not hiring in — the HQ, the customers, the last funding round's office —
-// and every one of them would cap an otherwise remote role.
-var ukCities = []string{
-	"london", "manchester", "leeds", "liverpool", "sheffield", "nottingham",
-	"leicester", "bristol", "cardiff", "newcastle", "york", "cambridge", "oxford",
-	"reading", "brighton", "southampton", "portsmouth", "edinburgh", "glasgow",
-	"aberdeen", "dundee", "belfast", "dublin", "milton keynes", "swindon",
-	"derby", "norwich", "exeter", "bath",
-}
-
 var (
-	onsiteSignal   = regexp.MustCompile(`(?i)\bon-?site\b|\bhybrid\b|\bin[- ]office\b|\boffice[- ]based\b|\d\s*days?\s*(?:a|per)\s*week\s*(?:in|at|from)\b`)
-	fullyRemote    = regexp.MustCompile(`(?i)\b(?:fully|100%|entirely|permanently)\s+remote\b|\bremote[- ]first\b|\bwork\s+from\s+anywhere\b`)
-	monthlyCadence = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*month|\bmonthly\s+(?:travel|visit|on-?site)`)
-	weeklyCadence  = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*week|\bweekly\s+(?:travel|visit|on-?site)`)
-	profileCityRe  = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
+	profileCityRe = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
 	// \z, not $: under (?m) the lazy group stopped at the first end of line,
 	// so only the first search_locations entry was ever read.
-	searchLocsRe = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|\z)`)
-	remoteOnlyRe = regexp.MustCompile(`(?i)remote\s+only`)
-	onsiteOKRe   = regexp.MustCompile(`(?i)on-?site`)
-	hybridOKRe   = regexp.MustCompile(`(?i)\bhybrid\b`)
-	// hybridDemand is office presence short of full time: the word, or one to
-	// four days a week.
-	hybridDemand = regexp.MustCompile(`(?i)\bhybrid\b|\b[1-4]\s*(?:-\s*[1-4]\s*)?days?\b[^.\n]{0,25}?\b(?:a|per|each)?\s*week|\bflexible\b`)
-	// fullOnsite is a full-time attendance demand, which outranks the word
-	// hybrid in the same breath ("hybrid for the first year, then 5 days").
-	fullOnsite      = regexp.MustCompile(`(?i)\b5\s*days?\s*(?:a\s*week|per\s*week|on-?site|in[- ]office|in\s+the\s+office)|\b(?:fully|100%)\s+(?:on-?site|office[- ]based|in[- ]office)|\bon-?site\s+only\b`)
+	searchLocsRe    = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|\z)`)
+	remoteOnlyRe    = regexp.MustCompile(`(?i)remote\s+only`)
+	onsiteOKRe      = regexp.MustCompile(`(?i)on-?site`)
+	hybridOKRe      = regexp.MustCompile(`(?i)\bhybrid\b`)
 	listItemRe      = regexp.MustCompile(`^\s*-\s`)
 	listItemStripRe = regexp.MustCompile(`^\s*-\s*["']?`)
 )
-
-// proximity is how far either side of a city name the on-site signal must sit.
-const proximity = 160
-
-// CommutableTerms are the places the candidate will physically attend an
-// office full time, from config/profile.yml: location.city plus any
-// search_locations entry that allows on-site, or names no mode at all.
-//
-// That is most of the policy — one commutable base, everywhere else remote — so
-// it is read from the user layer rather than hardcoded here.
-func CommutableTerms(profileYML string) []string {
-	full, _ := commuteTiers(profileYML)
-	return full
-}
 
 // commuteTiers splits the places the candidate will attend: full are full-time
 // bases, hybrid are search_locations entries that allow hybrid and not on-site
@@ -381,92 +307,6 @@ func commuteTiers(profileYML string) (full, hybrid []string) {
 		}
 	}
 	return full, hybrid
-}
-
-// LocationMismatchCap caps hard when the JD requires office presence somewhere
-// the candidate will not commute to.
-//
-// It exists because a detected hard stop was decoration: hard_stops never fed
-// final_decision, so Phase 2 printed "hybrid or on-site outside the commutable
-// base" verbatim on offers it then scored 4.9 and told the user to Apply to,
-// with a tailored PDF. Capping both dimensions at 2 lands the composite at 2.0
-// — under Phase 1's gate and under Phase 2's `< 3 ⇒ Skip`.
-//
-// Deliberately conservative: a false positive deletes a good offer, while a
-// false negative only leaves noise the human discards. Both signals must be
-// NEAR each other, which is how these ads are actually written. Testing them
-// independently capped a posting that says it has *no* in-office requirement
-// and lists London among its global offices, 1.7k characters apart.
-//
-// A hybrid-tier place (HybridTerms) is capped only when the text near it
-// demands full-time attendance; hybrid, or one to four days a week, is fine.
-//
-// ponytail: a JD saying both "hybrid" and "fully remote" is left uncapped.
-// Telling the two apart needs more than proximity, and no such offer has shown
-// up yet.
-func LocationMismatchCap(jdText, profileYML string) (Caps, string) {
-	none := Caps{CV: 5, NS: 5}
-	jd := strings.ToLower(jdText)
-	commutable, hybridOK := commuteTiers(profileYML)
-
-	if len(commutable) == 0 && len(hybridOK) == 0 {
-		return none, "" // no stated policy, no gate
-	}
-	if !onsiteSignal.MatchString(jd) {
-		return none, "" // nothing demands attendance
-	}
-	for _, t := range commutable {
-		if strings.Contains(jd, t) {
-			return none, ""
-		}
-	}
-	if fullyRemote.MatchString(jd) {
-		return none, ""
-	}
-	// A posting that offers a hybrid-tier place part-time is acceptable whatever
-	// else it names: "London or Manchester, hybrid" is a London role to this
-	// candidate. Checked before the capping loop so the city list's order cannot
-	// cap on Manchester first. It also keeps "Liverpool Street" (a London
-	// station) from reading as Liverpool.
-	for _, city := range hybridOK {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(city) + `\b`)
-		for _, loc := range re.FindAllStringIndex(jd, -1) {
-			w := window(jd, loc[0], loc[1], proximity)
-			if hybridDemand.MatchString(w) && !fullOnsite.MatchString(w) {
-				return none, ""
-			}
-		}
-	}
-	for _, city := range ukCities {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(city) + `\b`)
-		for _, loc := range re.FindAllStringIndex(jd, -1) {
-			w := window(jd, loc[0], loc[1], proximity)
-			if !onsiteSignal.MatchString(w) {
-				continue
-			}
-			// The policy allows a monthly cadence and refuses a weekly one, so
-			// "6 days a month travel to office" is a yes and must not be capped
-			// for saying "hybrid" in the same breath.
-			if monthlyCadence.MatchString(w) && !weeklyCadence.MatchString(w) {
-				continue
-			}
-			return Caps{CV: 2, NS: 2}, city
-		}
-	}
-	return none, ""
-}
-
-// window is the text around a match, clamped to the string.
-func window(s string, start, end, pad int) string {
-	lo := start - pad
-	if lo < 0 {
-		lo = 0
-	}
-	hi := end + pad
-	if hi > len(s) {
-		hi = len(s)
-	}
-	return s[lo:hi]
 }
 
 // ── Evidence strength ────────────────────────────────────────────────────────

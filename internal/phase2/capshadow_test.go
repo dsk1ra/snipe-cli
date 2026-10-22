@@ -15,7 +15,7 @@ const shadowProfile = `location:
     - "United Kingdom — fully remote only"
 `
 
-func TestComposeLetsExtractedFactsDecideAndReportsTheLists(t *testing.T) {
+func TestComposeCapsFromExtractedFactsAndFailsOpenWithoutThem(t *testing.T) {
 	e := &Evaluator{Cfg: &config.Config{CVRaw: "Ada\n", ProfileYML: shadowProfile}}
 	jd := "Backend Engineer\nWest Drayton (4 days onsite)\nVodafone has served customers for 10 years.\n"
 	parsed := Parsed{Role: "Backend Engineer", IsSinglePosting: true}
@@ -23,15 +23,17 @@ func TestComposeLetsExtractedFactsDecideAndReportsTheLists(t *testing.T) {
 	facts := &extract.Facts{Attendance: extract.Attendance{Mode: extract.Onsite, Place: "West Drayton", DaysPerWeek: 4}}
 
 	old := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, nil, nil).eval
-	if len(old.CapShadow) != 0 || old.CVBlended > 2 {
-		t.Fatalf("no facts: the lists cap the company age and nothing is reported: %+v", old)
+	if len(old.HardStops) != 0 || old.CVBlended != 5 {
+		t.Fatalf("no facts must cap nothing: %+v", old)
 	}
 	got := e.compose(1, "u", jd, parsed, nil, Coverage{Coverage: 1}, j, nil, 0, false, facts, nil).eval
 	if len(got.HardStops) != 1 || !strings.Contains(got.HardStops[0], "west drayton") || got.CVBlended > 2 {
 		t.Errorf("location fact did not cap: %+v", got)
 	}
-	if len(got.CapShadow) != 2 || !strings.HasPrefix(got.CapShadow[0], "location:") || !strings.HasPrefix(got.CapShadow[1], "seniority: lists cap 2/3") {
-		t.Errorf("shadow = %v", got.CapShadow)
+	// Stage 1's years are used when there are no facts.
+	p8 := Parsed{Role: "Backend Engineer", IsSinglePosting: true, YearsRequired: 8}
+	if g := e.compose(1, "u", jd, p8, nil, Coverage{Coverage: 1}, j, nil, 0, false, nil, nil).eval; g.CVBlended > 2 {
+		t.Errorf("stage 1's 8 years should cap: %+v", g.CVBlended)
 	}
 }
 

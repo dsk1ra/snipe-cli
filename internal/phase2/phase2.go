@@ -209,32 +209,20 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	coverage5 := 1 + 4*coverage.Coverage
 	cvBlend := float64(modelCV)*(1-coverageBlend) + coverage5*coverageBlend
 
-	sen := fit.SeniorityCaps(parsed.Role, jd, parsed.YearsRequired, parsed.SeniorityLevel)
-	lang, missing := fit.LanguageMismatchCap(jd, e.Cfg.CVRaw)
-	loc, city := fit.LocationMismatchCap(jd, e.Cfg.ProfileYML)
+	// Location and language come from the extracted facts Phase 1 read, and
+	// nothing caps when there are none. Seniority reads the title and stage 1's
+	// level, with the years from the facts when there are any.
+	lang, missing, loc, city := fit.CapsFromFacts(facts, e.Cfg.CVRaw, e.Cfg.ProfileYML)
+	years := parsed.YearsRequired
+	if facts != nil {
+		years = facts.Years.MinYears
+	}
+	sen := fit.SeniorityCaps(parsed.Role, years, parsed.SeniorityLevel)
 	var shadow []string
 	for _, r := range rows {
 		if r.Shadow != "" {
 			shadow = append(shadow, r.Shadow)
 		}
-	}
-	if facts != nil {
-		// Same rule as Phase 1: the extracted facts decide and the lists report.
-		// Seniority keeps the title patterns and the parsed level, and takes the
-		// years from the posting's words instead of from "N years" anywhere in it.
-		xsen := fit.SeniorityCaps(parsed.Role, "", facts.Years.MinYears, parsed.SeniorityLevel)
-		xlang, xmissing := fit.LanguageCapFrom(facts.Languages, e.Cfg.CVRaw)
-		xloc, xcity := fit.LocationCapFrom(facts.Attendance, e.Cfg.ProfileYML)
-		for _, d := range []string{
-			fit.CapDiff("language", lang, xlang, missing, xmissing),
-			fit.CapDiff("location", loc, xloc, city, xcity),
-			fit.CapDiff("seniority", sen, xsen, sen.Reason, xsen.Reason),
-		} {
-			if d != "" {
-				shadow = append(shadow, d)
-			}
-		}
-		sen, lang, missing, loc, city = xsen, xlang, xmissing, xloc, xcity
 	}
 	cvBlend = math.Min(cvBlend, float64(sen.CV))
 	ns = minInt(ns, sen.NS)

@@ -1,15 +1,15 @@
 package fit
 
-// The three caps that rest on word lists, applied to facts a model extracted
-// and quoted (internal/extract) instead of to regexes over the posting. Only the
-// reading of the posting changes. The policy is the regex versions' policy and
-// the profile.yml tiers are the same ones (commuteTiers, CandidateLanguages), so
-// a disagreement between the two is a reading difference to be looked at, not a
-// second policy.
+// The location, language and stack caps, applied to facts a model extracted and
+// quoted (internal/extract). They replaced regexes and word lists over the
+// posting (a 29-city list, a 20-language list, attendance and years patterns),
+// which are gone. The policy is the profile.yml tiers (commuteTiers) and the
+// CV's languages (CandidateLanguages).
 //
 // The functions read values only. extract.Verify has already turned a fact whose
 // quote is not in the posting into an unknown (mode "unspecified", zeros, no
-// language), and an unknown never fires a cap — the direction the regexes err in.
+// language), and an unknown never fires a cap. With no facts at all nothing caps
+// (CapsFromFacts): the caps fail open.
 
 import (
 	"fmt"
@@ -22,23 +22,21 @@ import (
 
 // placeHas reports whether a place as the posting writes it ("Central London,
 // near Liverpool Street", "Birmingham or Coventry") contains a profile term as a
-// whole word. This replaces ukCities: the profile says where the candidate will
-// go, and the posting's own place is compared to that, so no list of places the
-// candidate will not go is needed.
+// whole word. The profile says where the candidate will go, and the posting's
+// own place is compared to that, so no list of places the candidate will not go
+// is needed.
 //
-// Whole words, as the regex path matched them, so "bath" is not "Bathgate". A
-// term that is itself the tail of a longer name ("york" in "New York") still
-// matches; the regexes had the same weakness and the profile's terms are the
+// Whole words, so "bath" is not "Bathgate". A term that is itself the tail of a
+// longer name ("york" in "New York") still matches; the profile's terms are the
 // candidate's own towns.
 func placeHas(place, term string) bool {
 	return regexp.MustCompile(`\b` + regexp.QuoteMeta(term) + `\b`).MatchString(place)
 }
 
-// LocationCapFrom is LocationMismatchCap over an attendance fact. The second
-// result is the place that capped, lower-cased, where the regex path returns the
-// city.
+// LocationCapFrom is the location cap over an attendance fact. The second result
+// is the place that capped, lower-cased.
 //
-// The policy, step for step as in LocationMismatchCap:
+// The policy:
 //   - no commutable place in the profile: no gate;
 //   - the posting asks for no attendance (remote, or nothing stated): no cap.
 //     "remote" covers the fullyRemote pattern; a posting extracted as both
@@ -50,14 +48,9 @@ func placeHas(place, term string) bool {
 //     full-time attendance (five days a week, or on-site with no days stated);
 //   - any other named place caps.
 //
-// Where it differs from the regex path on purpose: the regexes capped only a
-// city in the 29-city list and only within 160 characters of the signal, so
-// "Berlin, hybrid" and "Reading, hybrid" were handled by luck of the list. Here
-// any place the posting names for this role that is not the candidate's caps,
-// and a posting that names none ("Hybrid working available") does not, as
-// before. The proximity rule has no equivalent: the model is asked for the
-// attendance of the role, not for every mention, which is what proximity
-// approximated.
+// Any place the posting names for this role that is not the candidate's caps,
+// and a posting that names none ("Hybrid working available") does not. The
+// model is asked for the attendance of the role, not for every mention.
 func LocationCapFrom(a extract.Attendance, profileYML string) (Caps, string) {
 	none := Caps{CV: 5, NS: 5}
 	full, hybridOK := commuteTiers(profileYML)
@@ -89,14 +82,11 @@ func LocationCapFrom(a extract.Attendance, profileYML string) (Caps, string) {
 	return Caps{CV: 2, NS: 2}, place
 }
 
-// LanguageCapFrom is LanguageMismatchCap over the extracted language
-// requirements. A "preferred" language never caps; that classification replaces
-// softMentionRe, which looked 60 characters either side for "plus", "bonus" and
-// the like.
+// LanguageCapFrom is the language cap over the extracted language requirements.
+// A "preferred" language never caps.
 //
-// The regex path only knew the 20 languages in humanLanguages. This takes any
-// language the posting requires and the CV does not list, so a Hindi or Greek
-// requirement caps where it was invisible before. English never caps, as before:
+// It takes any language the posting requires and the CV does not list, so a
+// Hindi or Greek requirement caps with no list to extend. English never caps:
 // CandidateLanguages always has it.
 func LanguageCapFrom(langs []extract.Language, cv string) (Caps, string) {
 	have := CandidateLanguages(cv)
@@ -144,4 +134,17 @@ func StackCapFrom(stack []extract.StackItem, cvLangs []string) StackCap {
 		}
 	}
 	return StackCap{Cap: 3, JDStack: present, Missing: present}
+}
+
+// CapsFromFacts is the location and language caps for a posting's facts. With no
+// facts (the extraction failed or was not run) nothing caps: an unknown never
+// fires a cap, which is the direction the caps err in.
+func CapsFromFacts(f *extract.Facts, cv, profileYML string) (lang Caps, missingLang string, loc Caps, place string) {
+	none := Caps{CV: 5, NS: 5}
+	if f == nil {
+		return none, "", none, ""
+	}
+	lang, missingLang = LanguageCapFrom(f.Languages, cv)
+	loc, place = LocationCapFrom(f.Attendance, profileYML)
+	return lang, missingLang, loc, place
 }

@@ -1,14 +1,13 @@
-// Package extract reads the facts Phase 1's word-list caps need out of a
-// posting: office attendance, human languages, years demanded and the level in
-// the title. It is the shadow of docs/PRD-TAILORING-REWORK.md §5.1 and not wired
-// into the pipeline.
+// Package extract reads the facts Phase 1 and 2's caps need out of a posting:
+// office attendance, human languages, years demanded and the programming
+// languages the role names (docs/PRD-TAILORING-REWORK.md §5.1). The caps in
+// internal/fit read these in place of word lists and regexes over the posting.
 //
 // One schema-constrained call returns every fact with the words of the posting
 // that state it, and code keeps a fact only if those words are in the posting
 // (the trick phase1.verifyGaps plays on gap quotes: a model can copy a span but
 // cannot reliably invent one that survives a substring check). A fact that fails
-// is unknown, never guessed, and unknown never fires a cap, which errs the same
-// way the regexes do.
+// is unknown, never guessed, and unknown never fires a cap.
 package extract
 
 import (

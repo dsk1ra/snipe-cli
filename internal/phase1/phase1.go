@@ -234,36 +234,25 @@ func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.F
 	cvRaw, nsRaw := clampDim(m.CVMatch, 3), clampDim(m.NorthStar, 3)
 
 	stack := fit.StackMismatchCap(jd, s.Cfg.CVRaw, 0, 0)
-	lang, missingLang := fit.LanguageMismatchCap(jd, s.Cfg.CVRaw)
-	loc, city := fit.LocationMismatchCap(jd, s.Cfg.ProfileYML)
+	// Location and language come from the extracted facts, and nothing caps when
+	// there are none. Seniority reads the title here and the years from the facts.
+	lang, missingLang, loc, city := fit.CapsFromFacts(facts, s.Cfg.CVRaw, s.Cfg.ProfileYML)
+	years := 0
+	if facts != nil {
+		years = facts.Years.MinYears
+	}
 	// The same seniority caps Phase 2 applies. Benchmarked: every tested model
 	// overscored Senior-titled roles at Phase 1, so this cannot live in a prompt.
-	sen := fit.SeniorityCaps(m.Role, jd, 0, "")
+	sen := fit.SeniorityCaps(m.Role, years, "")
+	// The stack cap keeps its table as the fallback, and reports where the
+	// extracted languages would differ.
 	var shadow []string
-	if facts != nil {
-		// The extracted facts decide; the word lists above only report where they
-		// disagree. Seniority keeps the title patterns, since the 4B misreads
-		// titles, and takes only the years from the posting's own words.
-		xlang, xmissing := fit.LanguageCapFrom(facts.Languages, s.Cfg.CVRaw)
-		xloc, xcity := fit.LocationCapFrom(facts.Attendance, s.Cfg.ProfileYML)
-		xsen := fit.SeniorityCaps(m.Role, "", facts.Years.MinYears, "")
-		for _, d := range []string{
-			fit.CapDiff("language", lang, xlang, missingLang, xmissing),
-			fit.CapDiff("location", loc, xloc, city, xcity),
-			fit.CapDiff("seniority", sen, xsen, sen.Reason, xsen.Reason),
-		} {
-			if d != "" {
-				shadow = append(shadow, d)
-			}
+	if facts != nil && cvLangs != nil {
+		x := fit.StackCapFrom(facts.Stack, cvLangs)
+		if d := fit.CapDiff("stack", fit.Caps{CV: stack.Cap, NS: 5}, fit.Caps{CV: x.Cap, NS: 5}, strings.Join(stack.Missing, "+"), strings.Join(x.Missing, "+")); d != "" {
+			shadow = append(shadow, d)
 		}
-		lang, missingLang, loc, city, sen = xlang, xmissing, xloc, xcity, xsen
-		if cvLangs != nil {
-			x := fit.StackCapFrom(facts.Stack, cvLangs)
-			if d := fit.CapDiff("stack", fit.Caps{CV: stack.Cap, NS: 5}, fit.Caps{CV: x.Cap, NS: 5}, strings.Join(stack.Missing, "+"), strings.Join(x.Missing, "+")); d != "" {
-				shadow = append(shadow, d)
-			}
-			stack = x
-		}
+		stack = x
 	}
 
 	cvCap := min4(stack.Cap, lang.CV, loc.CV, sen.CV)

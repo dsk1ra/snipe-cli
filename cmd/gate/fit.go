@@ -9,7 +9,6 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/fit"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
-	"github.com/dsk1ra/snipe-cli/internal/state"
 )
 
 // gateFit compares every deterministic cap against the Node implementation over
@@ -22,11 +21,6 @@ func gateFit(root, jsFile string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	prof, err := os.ReadFile(l.ProfileYML())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
 
 	eco := fit.CandidateEcosystems(string(cv))
 	names := make([]string, 0, len(eco))
@@ -35,14 +29,24 @@ func gateFit(root, jsFile string) int {
 	}
 	sort.Strings(names)
 	fmt.Fprintln(os.Stderr, "ecosystems="+strings.Join(names, ","))
-	fmt.Fprintln(os.Stderr, "commutable="+strings.Join(fit.CommutableTerms(string(prof)), ","))
 
 	want, err := readTSV(jsFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	cache := state.NewCache()
+	// Seniority, language and location moved off word lists to extracted facts
+	// and are no longer compared with the Node output; the stack table and the
+	// multi-posting rule still are.
+	for f, line := range want {
+		var keep []string
+		for _, col := range strings.Split(line, "\t") {
+			if strings.HasPrefix(col, "stack=") || strings.HasPrefix(col, "multi=") {
+				keep = append(keep, col)
+			}
+		}
+		want[f] = strings.Join(keep, "\t")
+	}
 	files := sortedKeys(want)
 
 	var diffs int
@@ -53,24 +57,9 @@ func gateFit(root, jsFile string) int {
 		}
 		jd := string(b)
 
-		title := ""
-		id := strings.TrimSuffix(f, ".txt")
-		if n := atoi(id); n > 0 {
-			if a := cache.Score(l.Scores(), n); a != nil {
-				title = a.Role
-			}
-		}
-
 		sm := fit.StackMismatchCap(jd, string(cv), 0, 0)
-		sc := fit.SeniorityCaps(title, jd, 0, "")
-		lm, missing := fit.LanguageMismatchCap(jd, string(cv))
-		lo, city := fit.LocationMismatchCap(jd, string(prof))
-
 		got := strings.Join([]string{
 			fmt.Sprintf("stack=%d|%s|%s", sm.Cap, strings.Join(sm.JDStack, "+"), strings.Join(sm.Missing, "+")),
-			fmt.Sprintf("sen=%d/%d|%s", sc.CV, sc.NS, sc.Reason),
-			fmt.Sprintf("lang=%d/%d|%s", lm.CV, lm.NS, missing),
-			fmt.Sprintf("loc=%d/%d|%s", lo.CV, lo.NS, city),
 			fmt.Sprintf("multi=%t", fit.LooksMultiPosting(jd)),
 		}, "\t")
 
