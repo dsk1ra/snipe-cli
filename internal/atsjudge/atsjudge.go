@@ -213,7 +213,9 @@ func norm(s string) string { return strings.ToLower(strings.Join(strings.Fields(
 // model call. cvNorm is norm(cv).
 func (j *Judge) ask(ctx context.Context, q, cv, cvNorm, cvHash string) (cached, error) {
 	key := sum(system, q, cvHash)
-	if c, ok := j.cache[key]; ok {
+	// A pointer failure is re-asked: the check was stricter before it learned
+	// to accept elisions, and the answer it threw away may have been right.
+	if c, ok := j.cache[key]; ok && !c.PointerFailed {
 		return c, nil
 	}
 	if j.OL == nil {
@@ -249,7 +251,7 @@ func (j *Judge) ask(ctx context.Context, q, cv, cvNorm, cvHash string) (cached, 
 	c := cached{Verdict: raw.Verdict, Quote: strings.TrimSpace(raw.Quote)}
 	switch c.Verdict {
 	case Met, Partly:
-		if nq := norm(c.Quote); utf8.RuneCountInString(nq) < minQuote || !strings.Contains(cvNorm, nq) {
+		if nq := norm(c.Quote); utf8.RuneCountInString(nq) < minQuote || !quoteFound(cvNorm, nq) {
 			c.Verdict, c.PointerFailed = Unmet, true
 		}
 	case Unmet:
@@ -378,3 +380,41 @@ func Grade(must, pref []string) string {
 	}
 	return "D"
 }
+
+// quoteFound says the quote is in the CV: as a substring, or as the same words
+// in the same order with at most maxGap CV words skipped between neighbours.
+// gemma3 quotes "Testing & Ways of Working: Agile / Scrum, unit testing" for a
+// line that reads "...: TDD, Agile / Scrum, unit testing", dropping one item of
+// a list. That is the evidence, correctly found; a verbatim-only check threw it
+// away and put "Agile and Scrum processes" among the CV's gaps. Skipping at
+// most three words keeps an invented passage from passing, since every word of
+// it still has to be there, in order, close together.
+func quoteFound(cvNorm, quote string) bool {
+	if strings.Contains(cvNorm, quote) {
+		return true
+	}
+	cv, q := strings.Fields(cvNorm), strings.Fields(quote)
+	for start := range cv {
+		if cv[start] != q[0] {
+			continue
+		}
+		i, ok := start+1, true
+		for _, w := range q[1:] {
+			j := i
+			for j < len(cv) && j-i <= maxGap && cv[j] != w {
+				j++
+			}
+			if j >= len(cv) || cv[j] != w {
+				ok = false
+				break
+			}
+			i = j + 1
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+const maxGap = 3

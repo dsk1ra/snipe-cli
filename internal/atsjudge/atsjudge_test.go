@@ -309,3 +309,22 @@ func TestParseReplyIsLenientAboutQuoting(t *testing.T) {
 		t.Error("a reply without a verdict parsed")
 	}
 }
+
+func TestQuoteFoundAcceptsElisionNotInvention(t *testing.T) {
+	cv := norm("Testing & Ways of Working: TDD, Agile / Scrum, unit testing\nEducation BSc Computer Science Napier University 2025 First Class\nWrote Kafka consumers for the billing service")
+	for _, c := range []struct {
+		quote string
+		want  bool
+	}{
+		{"Wrote Kafka consumers", true},                                  // verbatim
+		{"Testing & Ways of Working: Agile / Scrum, unit testing", true}, // one list item dropped
+		{"Wrote Kafka billing service", true},                            // two words dropped
+		{"Wrote Kafka consumers for the Azure billing service", false},   // a word the CV does not have
+		{"unit testing Wrote Kafka", false},                              // right words, wrong order
+		{"Testing Wrote consumers billing", false},                       // a stitch across far-apart lines
+	} {
+		if got := quoteFound(cv, norm(c.quote)); got != c.want {
+			t.Errorf("%q = %v, want %v", c.quote, got, c.want)
+		}
+	}
+}
