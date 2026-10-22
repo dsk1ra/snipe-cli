@@ -250,6 +250,11 @@ func TopCandidates(q []float64, demo, catalogue []embed.Atom, k int) ([]embed.Sc
 	return out, nil
 }
 
+// GradeRows runs stage 2 alone, for `gate typed --grade`.
+func (e *Evaluator) GradeRows(ctx context.Context, id int, reqs []Requirement, cvIndex []embed.Atom) ([]Row, error) {
+	return e.stage2(ctx, id, reqs, cvIndex)
+}
+
 func (e *Evaluator) stage2(ctx context.Context, id int, reqs []Requirement, cvIndex []embed.Atom) ([]Row, error) {
 	texts := make([]string, len(reqs))
 	for i, r := range reqs {
