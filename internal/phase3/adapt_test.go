@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -311,6 +312,21 @@ func TestAdaptWritesTruthAndQueuesInferences(t *testing.T) {
 	}
 	if _, err := adapt.ReadTruth(filepath.Join(dir, adapt.TruthName)); err == nil {
 		t.Error("truth.json survived a verbatim run")
+	}
+}
+
+// snipe ledger hashes cv.md as the file holds it, trailing newline included,
+// while Config.CVRaw is trimmed. The two must still agree.
+func TestAdaptLedgerHashIsOfTheFile(t *testing.T) {
+	f := &fakeRewriter{models: models(minicheck.Model), drafts: map[string][2]string{}}
+	led := adaptLedger(false)
+	led.CVHash = ledger.CVHash(judgeCV+"\n", "")
+	tl := adaptRig(t, led, f, yes)
+	if err := os.WriteFile(tl.L.CV(), []byte(judgeCV+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, tf, err := tl.Adapt(context.Background(), nil, adaptJob()); err != nil || tf == nil {
+		t.Fatalf("a current ledger was refused: err %v, truth %v", err, tf)
 	}
 }
 

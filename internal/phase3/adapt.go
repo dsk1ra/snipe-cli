@@ -93,7 +93,7 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	switch {
 	case len(led.Entries) == 0:
 		return j.Content, nil, fmt.Errorf("no fact ledger; run: snipe ledger")
-	case led.CVHash != ledger.CVHash(t.Cfg.CVRaw, embed.ReadFileOr(t.L.Digest())):
+	case led.CVHash != ledger.CVHash(t.cvForLedger(), embed.ReadFileOr(t.L.Digest())):
 		return j.Content, nil, fmt.Errorf("the fact ledger is older than cv.md; run: snipe ledger")
 	}
 	models, err := t.OL.Up(ctx)
@@ -188,6 +188,16 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	fmt.Printf("  #%d: adapt: %d of %d line(s) adapted, %d reverted by the kill rule, %d inference(s) queued\n",
 		j.ID, changed, len(bullets), killed, queued)
 	return swapBullets(j.Content, repl), &tf, nil
+}
+
+// cvForLedger is cv.md as `snipe ledger` hashed it, byte for byte. CVRaw is
+// trimmed, so a file ending in a newline never matched the ledger built from it
+// and every offer shipped verbatim with "older than cv.md".
+func (t *Tailor) cvForLedger() string {
+	if raw, err := os.ReadFile(t.L.CV()); err == nil {
+		return string(raw)
+	}
+	return t.Cfg.CVRaw
 }
 
 type adaptInput struct {
