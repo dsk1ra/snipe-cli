@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 
 	"math"
 	"os"
@@ -178,7 +177,7 @@ func (s *Scorer) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 
 	var facts *extract.Facts
 	if s.Extract != nil && !fit.LooksMultiPosting(jd) {
-		if f, err := s.Extract.Extract(ctx, text.CleanJD(jd, jdPromptCap)); err == nil {
+		if f, err := s.Extract.Extract(ctx, extract.Posting(jd)); err == nil {
 			facts = &f
 		}
 	}
@@ -243,14 +242,13 @@ func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.F
 		xlang, xmissing := fit.LanguageCapFrom(facts.Languages, s.Cfg.CVRaw)
 		xloc, xcity := fit.LocationCapFrom(facts.Attendance, s.Cfg.ProfileYML)
 		xsen := fit.SeniorityCaps(m.Role, "", facts.Years.MinYears, "")
-		for _, d := range []struct {
-			name     string
-			old, new fit.Caps
-			oldWhy   string
-			newWhy   string
-		}{{"language", lang, xlang, missingLang, xmissing}, {"location", loc, xloc, city, xcity}, {"seniority", sen, xsen, sen.Reason, xsen.Reason}} {
-			if d.old.CV != d.new.CV || d.old.NS != d.new.NS {
-				shadow = append(shadow, fmt.Sprintf("%s: lists cap %d/%d %s, facts cap %d/%d %s", d.name, d.old.CV, d.old.NS, d.oldWhy, d.new.CV, d.new.NS, d.newWhy))
+		for _, d := range []string{
+			fit.CapDiff("language", lang, xlang, missingLang, xmissing),
+			fit.CapDiff("location", loc, xloc, city, xcity),
+			fit.CapDiff("seniority", sen, xsen, sen.Reason, xsen.Reason),
+		} {
+			if d != "" {
+				shadow = append(shadow, d)
 			}
 		}
 		lang, missingLang, loc, city, sen = xlang, xmissing, xloc, xcity, xsen

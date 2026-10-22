@@ -29,11 +29,16 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/state"
+	"github.com/dsk1ra/snipe-cli/internal/text"
 )
 
 // numCtx is fixed so the same prompt is the same request on every run. The
 // posting is capped at 10k characters upstream, about 2.5k tokens.
 const numCtx = 8192
+
+// Posting is the text the extraction reads and the quotes are checked against:
+// the cleaned posting, capped. Every caller must use it, or the cache misses.
+func Posting(jd string) string { return text.CleanJD(jd, 10_000) }
 
 // minQuote is the shortest quote that counts. "Lead" and "Sr." are real title
 // quotes, so it is lower than phase1's 12; the value-in-quote checks below do
@@ -358,6 +363,19 @@ func (e *Extractor) save() error {
 		return err
 	}
 	return state.WriteAtomic(e.path, append(b, '\n'))
+}
+
+// Cached is Extract that never calls the model. Phase 2 uses it: a 4B call
+// between 30B stages would swap the models in and out of 6 GB, and Phase 1 has
+// already read the same posting.
+func (e *Extractor) Cached(posting string) (Facts, bool) {
+	e.mu.Lock()
+	r, ok := e.cache[e.check+":"+sum(posting)]
+	e.mu.Unlock()
+	if !ok {
+		return Facts{}, false
+	}
+	return Verify(r, posting), true
 }
 
 // Extract returns the verified facts of one posting, from the cache or one

@@ -15,6 +15,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
 	"github.com/dsk1ra/snipe-cli/internal/fit"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
@@ -49,6 +50,11 @@ type Evaluator struct {
 	ReportNum string
 	Threshold float64
 
+	// Extract is Phase 1's extractor, read from its cache only. The extracted
+	// facts replace the word-list caps; with no entry for the posting the lists
+	// decide, as before.
+	Extract *extract.Extractor
+
 	calib []Calibration
 }
 
@@ -80,6 +86,7 @@ type Eval struct {
 	Notes          string       `json:"notes"`
 	SalaryPosted   *text.Salary `json:"salary_posted"`
 	Evaluator      string       `json:"evaluator"`
+	CapShadow      []string     `json:"cap_shadow,omitempty"`
 	Error          *string      `json:"error"`
 }
 
@@ -170,7 +177,13 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 			id, len(dropped), strings.Join(dropped, " | "))
 	}
 
-	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp)
+	var facts *extract.Facts
+	if e.Extract != nil && !fit.LooksMultiPosting(jd) {
+		if f, ok := e.Extract.Cached(extract.Posting(jd)); ok {
+			facts = &f
+		}
+	}
+	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp, facts)
 	return e.commit(ctx, id, res)
 }
 
@@ -182,7 +195,7 @@ type composed struct {
 
 // compose computes the score in code and applies every cap.
 func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, coverage Coverage,
-	j Judgment, salary *text.Salary, compDim int, hasComp bool) composed {
+	j Judgment, salary *text.Salary, compDim int, hasComp bool, facts *extract.Facts) composed {
 
 	modelCV := clampDim(j.CVMatch, 1)
 	ns := e.Cfg.NorthStar(j.Archetype)
@@ -193,6 +206,27 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	cvBlend := float64(modelCV)*(1-coverageBlend) + coverage5*coverageBlend
 
 	sen := fit.SeniorityCaps(parsed.Role, jd, parsed.YearsRequired, parsed.SeniorityLevel)
+	lang, missing := fit.LanguageMismatchCap(jd, e.Cfg.CVRaw)
+	loc, city := fit.LocationMismatchCap(jd, e.Cfg.ProfileYML)
+	var shadow []string
+	if facts != nil {
+		// Same rule as Phase 1: the extracted facts decide and the lists report.
+		// Seniority keeps the title patterns and the parsed level, and takes the
+		// years from the posting's words instead of from "N years" anywhere in it.
+		xsen := fit.SeniorityCaps(parsed.Role, "", facts.Years.MinYears, parsed.SeniorityLevel)
+		xlang, xmissing := fit.LanguageCapFrom(facts.Languages, e.Cfg.CVRaw)
+		xloc, xcity := fit.LocationCapFrom(facts.Attendance, e.Cfg.ProfileYML)
+		for _, d := range []string{
+			fit.CapDiff("language", lang, xlang, missing, xmissing),
+			fit.CapDiff("location", loc, xloc, city, xcity),
+			fit.CapDiff("seniority", sen, xsen, sen.Reason, xsen.Reason),
+		} {
+			if d != "" {
+				shadow = append(shadow, d)
+			}
+		}
+		sen, lang, missing, loc, city = xsen, xlang, xmissing, xloc, xcity
+	}
 	cvBlend = math.Min(cvBlend, float64(sen.CV))
 	ns = minInt(ns, sen.NS)
 
@@ -200,7 +234,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 
 	// A required natural language the candidate lacks is a hard blocker: one Gap
 	// row barely moves the coverage average, so it has to be gated in code.
-	if lang, missing := fit.LanguageMismatchCap(jd, e.Cfg.CVRaw); missing != "" {
+	if missing != "" {
 		cvBlend = math.Min(cvBlend, float64(lang.CV))
 		ns = minInt(ns, lang.NS)
 		j.HardStops = prepend(j.HardStops, "Requires "+missing+" fluency — not in CV languages")
@@ -209,7 +243,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	// and it has to be one: hard_stops never reaches final_decision, so Phase 2
 	// was printing this exact deal-breaker on offers it then told the user to
 	// apply to, with a tailored PDF.
-	if loc, city := fit.LocationMismatchCap(jd, e.Cfg.ProfileYML); city != "" {
+	if city != "" {
 		cvBlend = math.Min(cvBlend, float64(loc.CV))
 		ns = minInt(ns, loc.NS)
 		j.HardStops = prepend(j.HardStops, "On-site/hybrid in "+city+" — outside the commutable base")
@@ -251,7 +285,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 		NorthStar: ns, CompInferred: comp, RedFlagsScore: rf, Score: score,
 		Archetype: j.Archetype, FinalDecision: final,
 		HardStops: nonNil(j.HardStops), SoftGaps: nonNil(j.SoftGaps), TopStrengths: nonNil(j.TopStrengths),
-		Notes: j.Notes, SalaryPosted: salary, Evaluator: "staged",
+		Notes: j.Notes, SalaryPosted: salary, Evaluator: "staged", CapShadow: shadow,
 	}
 	today := time.Now().Format("2006-01-02")
 	slug := slugify(orNone(parsed.Company, "unknown"))

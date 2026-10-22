@@ -133,7 +133,7 @@ func cmdRun(args []string) error {
 	evaluator := &phase2.Evaluator{
 		L: l, Cfg: cfg, OL: cl, IX: ix, Store: st,
 		Model: ollama.ModelEval, NumCtx: 8192,
-		Timeout: 300 * time.Second, RAG: os.Getenv("SNIPE_NO_RAG") == "", Threshold: opt.Threshold,
+		Extract: scorer.Extract, Timeout: 300 * time.Second, RAG: os.Getenv("SNIPE_NO_RAG") == "", Threshold: opt.Threshold,
 	}
 
 	ph := run.Phases{

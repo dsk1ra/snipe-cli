@@ -18,14 +18,9 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
-	"github.com/dsk1ra/snipe-cli/internal/text"
 )
 
 const fitxUsage = "usage: gate fitx <home> [--model snipe-screen] [--limit N] [--only location|language|seniority]"
-
-// fitxJDCap is Phase 1's jdPromptCap: the cleaned text the model sees is the
-// text it sees in the pipeline.
-const fitxJDCap = 10_000
 
 // fitxClient is the model client; a test points it at a fake server.
 var fitxClient = func() *ollama.Client { return ollama.New("", nil) }
@@ -133,7 +128,7 @@ func gateFitx(args []string) int {
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		post := text.CleanJD(raw, fitxJDCap)
+		post := extract.Posting(raw)
 		id := strings.TrimSuffix(filepath.Base(f), ".txt")
 		title := ""
 		if n := atoi(id); n > 0 {

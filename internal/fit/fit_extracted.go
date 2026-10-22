@@ -12,6 +12,7 @@ package fit
 // language), and an unknown never fires a cap — the direction the regexes err in.
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -105,4 +106,13 @@ func LanguageCapFrom(langs []extract.Language, cv string) (Caps, string) {
 		}
 	}
 	return Caps{CV: 5, NS: 5}, ""
+}
+
+// CapDiff describes where the word-list cap and the extracted-fact cap differ,
+// for the shadow field on a score file. Empty when they agree.
+func CapDiff(name string, old, new Caps, oldWhy, newWhy string) string {
+	if old.CV == new.CV && old.NS == new.NS {
+		return ""
+	}
+	return fmt.Sprintf("%s: lists cap %d/%d %s, facts cap %d/%d %s", name, old.CV, old.NS, oldWhy, new.CV, new.NS, newWhy)
 }
