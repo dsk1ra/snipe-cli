@@ -501,14 +501,8 @@ func Catalogue(source string) bool { return source == "skills" || source == "edu
 // boolean it collapsed "no tooling involved" into "wrong tooling" and quietly
 // taxed every degree, communication and mentoring requirement.
 func StrengthFrom(pick string, sameActivity bool, tooling, requirement, evidence, source string) string {
-	if pick == "none" || !sameActivity {
-		return Gap
-	}
-	if tooling == "different" {
-		return Transferable
-	}
-	if Catalogue(source) {
-		return Transferable
+	if s, done := strengthBase(pick, sameActivity, tooling, source); done {
+		return s
 	}
 	// Same catalogue as VerifyAgainstCv but the opposite quantifier: a *claim*
 	// naming two technologies asserts both, a *requirement* listing them ("AWS,
@@ -536,6 +530,57 @@ func StrengthFrom(pick string, sameActivity bool, tooling, requirement, evidence
 		}
 	}
 	return Strong
+}
+
+// NamedTech lists the ecosystems and tools the patterns find in text. It exists
+// so `gate typed` can compare the patterns with the parsed terms.
+func NamedTech(text string) []string {
+	var out []string
+	for _, e := range append(append([]ecosystem{}, ecosystems...), tools...) {
+		if e.countMatches(text) > 0 {
+			out = append(out, e.name)
+		}
+	}
+	return out
+}
+
+// StrengthFromTerms is StrengthFrom with the technologies the requirement names
+// read by the JD parse (quoted and checked) instead of found by the ecosystem
+// and tool patterns. The rule is the same: a row whose requirement names
+// technologies and whose evidence names none of them is demoted.
+func StrengthFromTerms(pick string, sameActivity bool, tooling, evidence, source string, terms []string) string {
+	if s, done := strengthBase(pick, sameActivity, tooling, source); done {
+		return s
+	}
+	if len(terms) > 0 {
+		ev := phraseSpace(evidence)
+		for _, t := range terms {
+			if strings.Contains(ev, phraseSpace(t)) {
+				return Strong
+			}
+		}
+		return Transferable
+	}
+	return Strong
+}
+
+// strengthBase is the part of the grade that does not look at technology names.
+func strengthBase(pick string, sameActivity bool, tooling, source string) (string, bool) {
+	if pick == "none" || !sameActivity {
+		return Gap, true
+	}
+	if tooling == "different" || Catalogue(source) {
+		return Transferable, true
+	}
+	return "", false
+}
+
+var phraseNoise = regexp.MustCompile(`[^a-z0-9+#.&-]+`)
+
+// phraseSpace lower-cases and pads with spaces so a phrase match cannot straddle
+// a word boundary, and keeps the symbols that are part of names (C++, Node.js).
+func phraseSpace(s string) string {
+	return " " + strings.TrimSpace(phraseNoise.ReplaceAllString(strings.ToLower(s), " ")) + " "
 }
 
 // ── Multi-posting ────────────────────────────────────────────────────────────

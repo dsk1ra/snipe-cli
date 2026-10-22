@@ -10,10 +10,13 @@ package phase2
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
 	"github.com/dsk1ra/snipe-cli/internal/fit"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/text"
@@ -21,9 +24,20 @@ import (
 
 // ── Stage 1: JD parse ────────────────────────────────────────────────────────
 
+// Requirement kinds. Typed so a tool is told from a capability, a domain or an
+// eligibility demand without a vocabulary of tools.
+var kinds = []string{"tool", "capability", "domain", "credential", "eligibility", "soft"}
+
 type Requirement struct {
 	Text     string `json:"text"`
 	MustHave bool   `json:"must_have"`
+	// Kind, Terms and Quote are filled only when Quote is in the posting. Terms
+	// are the technologies the requirement names, as the posting writes them.
+	Kind  string   `json:"kind,omitempty"`
+	Terms []string `json:"terms,omitempty"`
+	Quote string   `json:"quote,omitempty"`
+	// Typed is whether the quote held up.
+	Typed bool `json:"typed,omitempty"`
 }
 
 type Parsed struct {
@@ -57,6 +71,9 @@ func stage1Schema() ollama.Schema {
 			ollama.F("items", ollama.Object(ollama.Obj(
 				ollama.F("text", ollama.Str()),
 				ollama.F("must_have", ollama.Obj(ollama.F("type", "boolean"))),
+				ollama.F("kind", ollama.Str(kinds...)),
+				ollama.F("terms", ollama.Arr(capped(40), 6)),
+				ollama.F("quote", capped(240)),
 			))),
 		)),
 		ollama.F("tech_stack", ollama.Arr(ollama.Str(), 15)),
@@ -69,17 +86,23 @@ func stage1Schema() ollama.Schema {
 	))
 }
 
+// ParseJD runs stage 1 alone, for `gate typed`.
+func (e *Evaluator) ParseJD(ctx context.Context, id int, jd string) (Parsed, error) {
+	return e.stage1(ctx, id, jd)
+}
+
 func (e *Evaluator) stage1(ctx context.Context, id int, jd string) (Parsed, error) {
 	system, err := e.prompt("p2-jdparse.md")
 	if err != nil {
 		return Parsed{}, err
 	}
 	var out Parsed
+	posting := text.CleanJD(jd, 8000)
 	err = e.OL.Chat(ctx, ollama.Request{
 		Model: e.Model, System: system,
-		User:    "## Job Description\n" + text.CleanJD(jd, 8000),
+		User:    "## Job Description\n" + posting,
 		Schema:  stage1Schema(),
-		Options: ollama.Options{Temperature: 0, NumCtx: e.NumCtx, NumPredict: 900},
+		Options: ollama.Options{Temperature: 0, NumCtx: e.NumCtx, NumPredict: 1800},
 		Timeout: e.Timeout, Label: "p2.jdparse", ID: id,
 	}, &out)
 	if err != nil {
@@ -88,7 +111,38 @@ func (e *Evaluator) stage1(ctx context.Context, id int, jd string) (Parsed, erro
 	if len(out.Requirements) == 0 {
 		return Parsed{}, fmt.Errorf("stage 1 returned no requirements")
 	}
+	verifyTyped(out.Requirements, posting)
 	return out, nil
+}
+
+// verifyTyped keeps a requirement's kind and terms only if its quote is in the
+// posting, as phase1.verifyGaps does for gap quotes, and only the terms the quote
+// names. A requirement that fails stays a requirement, untyped.
+func verifyTyped(reqs []Requirement, posting string) {
+	post := extract.Norm(posting)
+	for i := range reqs {
+		r := &reqs[i]
+		q := extract.Norm(r.Quote)
+		typed := len([]rune(q)) >= 3 && strings.Contains(post, q) && slices.Contains(kinds, r.Kind)
+		var terms []string
+		for _, t := range r.Terms {
+			t = strings.TrimSpace(t)
+			// A term is a proper name: Docker, k8s, C++, Node.js. The model's
+			// own spelling carries the capital or symbol; "microservices" does not.
+			if t != "" && strings.Contains(q, extract.Norm(t)) && namelike(t) && !slices.Contains(terms, t) {
+				terms = append(terms, t)
+			}
+		}
+		if !typed {
+			r.Kind, r.Terms, r.Quote, r.Typed = "", nil, "", false
+			continue
+		}
+		r.Terms, r.Typed = terms, true
+	}
+}
+
+func namelike(t string) bool {
+	return strings.IndexFunc(t, func(c rune) bool { return unicode.IsUpper(c) || unicode.IsDigit(c) || strings.ContainsRune("+#.", c) }) >= 0
 }
 
 // ── Stage 2: evidence matching ───────────────────────────────────────────────
@@ -104,6 +158,9 @@ type Row struct {
 	Sim          float64 `json:"sim"`
 	HasSim       bool    `json:"-"`
 	Note         string  `json:"note"`
+	// Shadow says where the old patterns graded the row differently from the
+	// parsed terms; it goes to cap_shadow in the eval file.
+	Shadow string `json:"shadow,omitempty"`
 }
 
 type match struct {
@@ -277,6 +334,17 @@ func (e *Evaluator) stage2(ctx context.Context, id int, reqs []Requirement, cvIn
 			pickIdx = -1
 		}
 		strength := fit.StrengthFrom(m.Pick, m.SameActivity, m.SameTooling, r.Text, atomText, atomSource)
+		shadow := ""
+		if r.Typed {
+			// Shadow only: the patterns still grade. On 30 postings the terms find
+			// technologies the patterns cannot (PostgreSQL, gRPC, Okta) and also
+			// list generic items (CI/CD, APIs, E2E) that would demote true
+			// matches, so they report until that is fixed.
+			x := fit.StrengthFromTerms(m.Pick, m.SameActivity, m.SameTooling, atomText, atomSource, r.Terms)
+			if x != strength {
+				shadow = fmt.Sprintf("tooling: %q patterns %s, terms %v %s", clip(r.Text, 60), strength, r.Terms, x)
+			}
+		}
 
 		// A Gap has no evidence to show even when the model picked a line —
 		// printing the rejected candidate would read as support for the
@@ -288,7 +356,7 @@ func (e *Evaluator) stage2(ctx context.Context, id int, reqs []Requirement, cvIn
 		row := Row{
 			Requirement: r.Text, MustHave: r.MustHave, Strength: strength,
 			SameActivity: m.SameActivity, SameTooling: m.SameTooling,
-			Evidence: "—", Note: m.Note,
+			Evidence: "—", Note: m.Note, Shadow: shadow,
 		}
 		if shown >= 0 {
 			row.Evidence = candidates[i][shown].Text

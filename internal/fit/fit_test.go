@@ -293,3 +293,25 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+func TestStrengthFromTerms(t *testing.T) {
+	for _, tc := range []struct {
+		name, evidence, source string
+		terms                  []string
+		pick                   string
+		want                   string
+	}{
+		{"a named tool the evidence never mentions", "Awarded a prize for the final-year project", "", []string{"Java"}, "A", Transferable},
+		{"grounded", "Deployed services to AWS EC2", "", []string{"AWS"}, "A", Strong},
+		{"one of the alternatives is enough", "Deployed the API on AWS Lambda", "", []string{"AWS", "Azure", "GCP"}, "A", Strong},
+		{"symbols are part of the name", "Wrote the codec in C++", "", []string{"C++"}, "A", Strong},
+		{"a name is a whole word", "Rewrote the Gopher client", "", []string{"Go"}, "A", Transferable},
+		{"no terms is not taxed", "Ran the weekly review", "", nil, "A", Strong},
+		{"a catalogue still caps", "Skills: AWS", "skills", []string{"AWS"}, "A", Transferable},
+		{"never rescues a gap", "Java everywhere", "", []string{"Java"}, "none", Gap},
+	} {
+		if got := StrengthFromTerms(tc.pick, true, "same", tc.evidence, tc.source, tc.terms); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}

@@ -213,6 +213,11 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	lang, missing := fit.LanguageMismatchCap(jd, e.Cfg.CVRaw)
 	loc, city := fit.LocationMismatchCap(jd, e.Cfg.ProfileYML)
 	var shadow []string
+	for _, r := range rows {
+		if r.Shadow != "" {
+			shadow = append(shadow, r.Shadow)
+		}
+	}
 	if facts != nil {
 		// Same rule as Phase 1: the extracted facts decide and the lists report.
 		// Seniority keeps the title patterns and the parsed level, and takes the
