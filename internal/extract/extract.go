@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -310,6 +311,7 @@ type Extractor struct {
 	System string
 	Calls  int // model calls made, for the cache-hit tests
 
+	mu    sync.Mutex // Phase 1 runs workers; guards cache and Calls
 	path  string
 	check string // hash of the prompt and the schema
 	cache map[string]Reply
@@ -362,13 +364,15 @@ func (e *Extractor) save() error {
 // model call. posting is the cleaned text the caps would read.
 func (e *Extractor) Extract(ctx context.Context, posting string) (Facts, error) {
 	key := e.check + ":" + sum(posting)
-	if r, ok := e.cache[key]; ok {
+	e.mu.Lock()
+	r, ok := e.cache[key]
+	e.mu.Unlock()
+	if ok {
 		return Verify(r, posting), nil
 	}
 	if e.OL == nil {
 		return Facts{}, fmt.Errorf("extract: reply not in the cache")
 	}
-	var r Reply
 	err := e.OL.Chat(ctx, ollama.Request{
 		Model: e.Model, System: e.System,
 		User:    "## Job Posting\n" + posting,
@@ -379,9 +383,12 @@ func (e *Extractor) Extract(ctx context.Context, posting string) (Facts, error) 
 	if err != nil {
 		return Facts{}, err
 	}
+	e.mu.Lock()
 	e.Calls++
 	e.cache[key] = r
-	if err := e.save(); err != nil {
+	err = e.save()
+	e.mu.Unlock()
+	if err != nil {
 		return Facts{}, err
 	}
 	return Verify(r, posting), nil

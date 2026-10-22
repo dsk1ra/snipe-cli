@@ -22,6 +22,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
 	"github.com/dsk1ra/snipe-cli/internal/minicheck"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
@@ -118,6 +119,10 @@ func cmdRun(args []string) error {
 	scorer := &phase1.Scorer{
 		L: l, Cfg: cfg, OL: cl, Model: ollama.ModelScreen, Store: st,
 		Timeout: 120 * time.Second,
+	}
+	// Without the prompt the word-list caps decide, as before.
+	if sys, err := config.Prompt(l, "p1-extract.md"); err == nil {
+		scorer.Extract = extract.New(cl, l.CacheDir(), ollama.ModelScreen, sys)
 	}
 	cache := state.NewCache()
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"math"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
 	"github.com/dsk1ra/snipe-cli/internal/fit"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
@@ -86,18 +88,21 @@ type Score struct {
 	// Pre-cap dimensions, kept for calibration: the clamp is an attractor —
 	// 42 of 115 offers land on the Senior cap's exact fixed point 3.4 — and no
 	// alternative cap policy can be evaluated without the raw values.
-	CVMatchRaw       int      `json:"cv_match_raw"`
-	NorthStarRaw     int      `json:"north_star_raw"`
-	CVCap            int      `json:"cv_cap"`
-	NSCap            int      `json:"ns_cap"`
-	RedFlagsScore    int      `json:"red_flags_score"`
-	Company          string   `json:"company"`
-	Role             string   `json:"role"`
-	Archetype        string   `json:"archetype"`
-	HardStops        []string `json:"hard_stops"`
-	SoftGaps         []string `json:"soft_gaps"`
-	TopStrengths     []string `json:"top_strengths"`
-	GapsDropped      int      `json:"gaps_dropped_unverified"`
+	CVMatchRaw    int      `json:"cv_match_raw"`
+	NorthStarRaw  int      `json:"north_star_raw"`
+	CVCap         int      `json:"cv_cap"`
+	NSCap         int      `json:"ns_cap"`
+	RedFlagsScore int      `json:"red_flags_score"`
+	Company       string   `json:"company"`
+	Role          string   `json:"role"`
+	Archetype     string   `json:"archetype"`
+	HardStops     []string `json:"hard_stops"`
+	SoftGaps      []string `json:"soft_gaps"`
+	TopStrengths  []string `json:"top_strengths"`
+	GapsDropped   int      `json:"gaps_dropped_unverified"`
+	// CapShadow lists where the old word-list caps would have decided otherwise
+	// than the extracted facts did. Read it before deleting the lists.
+	CapShadow        []string `json:"cap_shadow,omitempty"`
 	StrengthsDropped int      `json:"strengths_dropped_unverified"`
 	JDSummary        string   `json:"jd_summary"`
 	Confidence       string   `json:"confidence"`
@@ -110,6 +115,10 @@ type Scorer struct {
 	OL    *ollama.Client
 	Model string
 	Store *state.Store
+	// Extract reads attendance, languages and years off the posting for the
+	// location, language and seniority caps. Nil, or a failed call, leaves the
+	// word-list caps in charge.
+	Extract *extract.Extractor
 	// Timeout bounds one model call. The fetch gets its own, shorter budget.
 	Timeout time.Duration
 }
@@ -167,7 +176,13 @@ func (s *Scorer) Run(ctx context.Context, id int, ck *state.Checkpoint) error {
 		return err
 	}
 
-	out := s.validate(reply, jd, url, id)
+	var facts *extract.Facts
+	if s.Extract != nil && !fit.LooksMultiPosting(jd) {
+		if f, err := s.Extract.Extract(ctx, text.CleanJD(jd, jdPromptCap)); err == nil {
+			facts = &f
+		}
+	}
+	out := s.validate(reply, jd, url, id, facts)
 	if err := s.write(id, out); err != nil {
 		return err
 	}
@@ -211,7 +226,7 @@ func (s *Scorer) call(ctx context.Context, id int, jd, url string) (modelReply, 
 // hallucinates deal-breakers — and comp is not collected at Phase 1 at all,
 // since with no salary data it was a dead constant. The score is pure fit, in
 // the same 5:3 ratio Phase 2 uses, so the two phases stay consistent.
-func (s *Scorer) validate(m modelReply, jd, url string, id int) *Score {
+func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.Facts) *Score {
 	cvRaw, nsRaw := clampDim(m.CVMatch, 3), clampDim(m.NorthStar, 3)
 
 	stack := fit.StackMismatchCap(jd, s.Cfg.CVRaw, 0, 0)
@@ -220,6 +235,26 @@ func (s *Scorer) validate(m modelReply, jd, url string, id int) *Score {
 	// The same seniority caps Phase 2 applies. Benchmarked: every tested model
 	// overscored Senior-titled roles at Phase 1, so this cannot live in a prompt.
 	sen := fit.SeniorityCaps(m.Role, jd, 0, "")
+	var shadow []string
+	if facts != nil {
+		// The extracted facts decide; the word lists above only report where they
+		// disagree. Seniority keeps the title patterns, since the 4B misreads
+		// titles, and takes only the years from the posting's own words.
+		xlang, xmissing := fit.LanguageCapFrom(facts.Languages, s.Cfg.CVRaw)
+		xloc, xcity := fit.LocationCapFrom(facts.Attendance, s.Cfg.ProfileYML)
+		xsen := fit.SeniorityCaps(m.Role, "", facts.Years.MinYears, "")
+		for _, d := range []struct {
+			name     string
+			old, new fit.Caps
+			oldWhy   string
+			newWhy   string
+		}{{"language", lang, xlang, missingLang, xmissing}, {"location", loc, xloc, city, xcity}, {"seniority", sen, xsen, sen.Reason, xsen.Reason}} {
+			if d.old.CV != d.new.CV || d.old.NS != d.new.NS {
+				shadow = append(shadow, fmt.Sprintf("%s: lists cap %d/%d %s, facts cap %d/%d %s", d.name, d.old.CV, d.old.NS, d.oldWhy, d.new.CV, d.new.NS, d.newWhy))
+			}
+		}
+		lang, missingLang, loc, city, sen = xlang, xmissing, xloc, xcity, xsen
+	}
 
 	cvCap := min4(stack.Cap, lang.CV, loc.CV, sen.CV)
 	nsCap := min4(5, lang.NS, loc.NS, sen.NS)
@@ -256,6 +291,7 @@ func (s *Scorer) validate(m modelReply, jd, url string, id int) *Score {
 		TopStrengths:  nonNil(strengths),
 		// Counts, never the text: the dropped items are fabrications by
 		// definition, and Phase 2 reads these fields into its own context.
+		CapShadow:        shadow,
 		GapsDropped:      gapsDropped,
 		StrengthsDropped: len(strengthsDropped),
 		JDSummary:        m.JDSummary,
