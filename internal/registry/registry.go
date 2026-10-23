@@ -308,9 +308,11 @@ var sizeRank = map[string]int{
 }
 
 // Entries is the registry as scan entries: one per board some provider can
-// read, named for the largest employer on it, asking for UK postings. A board
-// no provider claims is left out rather than failed, which means a new
-// provider widens the scan without touching this.
+// read, named for the largest employer on it, asking for UK postings. Each
+// carries the ATS the registry found as `ats`, which is how a board on the
+// employer's own domain reaches its provider. A board no provider claims is
+// left out rather than failed, which means a new provider widens the scan
+// without touching this.
 func Entries(es []Employer) []providers.Entry {
 	best := map[string]Employer{}
 	var order []string
@@ -329,7 +331,7 @@ func Entries(es []Employer) []providers.Entry {
 	}
 	var out []providers.Entry
 	for _, b := range order {
-		en := providers.Entry{Name: Display(best[b].Name), CareersURL: b, Extra: map[string]any{"country": Country}}
+		en := providers.Entry{Name: Display(best[b].Name), CareersURL: b, Extra: map[string]any{"country": Country, "ats": best[b].ATS}}
 		if _, err := providers.Resolve(en); err == nil {
 			out = append(out, en)
 		}

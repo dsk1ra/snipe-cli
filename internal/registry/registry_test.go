@@ -221,11 +221,12 @@ func TestEntries(t *testing.T) {
 		{Name: "LOOKERS LEASING LIMITED", Size: "250 to 499", Board: "https://job-boards.eu.greenhouse.io/lookers"},
 		{Name: "LOOKERS MOTOR GROUP LIMITED", Size: "5000 to 19,999", Board: "https://job-boards.eu.greenhouse.io/lookers"},
 		{Name: "BARCLAYS BANK UK PLC", Size: "20,000 or more", Board: "https://barclays.wd3.myworkdayjobs.com/External_Career_Site_Barclays"},
-		{Name: "MOTORPOINT LIMITED", Board: "https://careers.motorpoint.co.uk/"}, // Teamtailor: nothing reads it yet
+		{Name: "MOTORPOINT LIMITED", ATS: "teamtailor", Board: "https://careers.motorpoint.co.uk/"},
+		{Name: "ACME LIMITED", ATS: "eploy", Board: "https://careers.acme.co.uk/"}, // nothing reads Eploy
 		{Name: "NO SITE LTD"},
 	}
 	got := Entries(es)
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("want one entry per readable board, got %+v", got)
 	}
 	if got[0].Name != "Lookers Motor Group" || got[1].Name != "Barclays Bank UK" {
@@ -233,6 +234,9 @@ func TestEntries(t *testing.T) {
 	}
 	if got[1].Str("country") != Country {
 		t.Errorf("country %q", got[1].Str("country"))
+	}
+	if p, err := providers.Resolve(got[2]); err != nil || p.ID() != "teamtailor" {
+		t.Errorf("a Teamtailor board on its own domain resolved to %v, %v", p, err)
 	}
 }
 
