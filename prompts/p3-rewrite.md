@@ -25,7 +25,7 @@ Hard rules, for both drafts:
 5. Keep the verb's strength. Built, ran, wrote and chose may become a stronger or different verb only if an allowed term's reason says an approved framing covers it. Otherwise keep the source verb, or a plain synonym of the same strength.
 6. Do not copy the posting's sentences or sentence structure. Take its terms, not its phrasing.
 7. One sentence, one line of text, no line breaks, no bullet marker, no final full stop unless the source has one.
-8. Do not make the line longer than Max lines allows. Shorter than the source is fine.
+8. Do not make the line longer than Max lines allows. Shorter than the source is fine. When a bullet offers one more line for some terms, only a draft that uses one of those terms may take it, and only to fit that term.
 9. Write the line as it would appear on a CV, in the source's voice and tense.
 
 The posting excerpt is for register only: it shows which words this employer uses. Take nothing from it that the facts do not say.

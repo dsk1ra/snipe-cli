@@ -51,6 +51,12 @@ type Options struct {
 	// loyalty and finance", true and weaker, because that clause was not
 	// must_keep. A rewrite re-orders and re-words; it does not get to delete.
 	MustKeepOnly bool
+
+	// ExtraLine lets the draft print on one line more than its source. The
+	// caller sets it only for a draft that adds an approved framing the source
+	// does not say (adapt.Plan.LinesFor), so a recruiter's boolean search finds
+	// the posting's phrase and the page pays a line for it.
+	ExtraLine bool
 }
 
 func (o Options) split(s string) []string {
@@ -136,7 +142,11 @@ func Code(e ledger.Entry, b ledger.Bullet, draft string, allowedTerms []string, 
 	if r := EntityClosure(b.Text, draft, forms(e, o.Entities, allowedTerms)); r != "" {
 		return "entities: " + r
 	}
-	if r := LineCost(b.Text, draft); r != "" {
+	extra := 0
+	if o.ExtraLine {
+		extra = 1
+	}
+	if r := lineCost(b.Text, draft, extra); r != "" {
 		return "line cost: " + r
 	}
 	if r := Shape(b.Text, draft); r != "" {

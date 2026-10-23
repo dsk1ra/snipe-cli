@@ -92,6 +92,9 @@ type Posting struct {
 	// that off, since the cut-off depends on the embedder and has not been
 	// measured.
 	AlignMin float64
+	// FramingGrow lets a line spend one more rendered line on an approved
+	// framing the posting asks for and the line does not yet say (Plan.GrowFor).
+	FramingGrow bool
 }
 
 func (p Posting) minScore() float64 {
@@ -138,9 +141,23 @@ type Plan struct {
 	Forbidden []string
 	MustKeep  MustKeep
 	MaxLines  int
+	// GrowFor are the approved framings a draft may take one more line to add,
+	// set only under Posting.FramingGrow. Any other draft keeps MaxLines.
+	GrowFor []string
 	// Verbatim marks a bullet the ledger does not know (cv.md changed since the
 	// last build). Nothing is known about its facts, so it ships unchanged.
 	Verbatim bool
+}
+
+// LinesFor is how many rendered lines this text may take: MaxLines, or one
+// more when it adds a GrowFor framing.
+func (p Plan) LinesFor(text string) int {
+	for _, f := range p.GrowFor {
+		if contains(text, f) {
+			return p.MaxLines + 1
+		}
+	}
+	return p.MaxLines
 }
 
 // Terms is every posting term the plan has an opinion on, allowed first, for
@@ -212,6 +229,9 @@ func BuildPlan(l *ledger.Ledger, text string, p Posting) Plan {
 		if fr.Approved && !fr.Rejected && postingAsks(p, fr.Phrase) {
 			plan.AllowedTerms = appendFold(plan.AllowedTerms, fr.Phrase)
 			plan.Targets = framingTargets(plan.Targets, p, fr)
+			if p.FramingGrow && !contains(text, fr.Phrase) {
+				plan.GrowFor = appendFold(plan.GrowFor, fr.Phrase)
+			}
 		}
 	}
 	sortTargets(plan.Targets)

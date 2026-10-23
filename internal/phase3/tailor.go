@@ -42,6 +42,9 @@ type Tailor struct {
 	// Writer is "verbatim" (the default, and what "" means) or "adapt", which
 	// rewrites the selected lines from the fact ledger (adapt.go).
 	Writer string
+	// FramingGrow lets an adapted line take one more rendered line to add an
+	// approved framing the posting asks for (E3 arm "grow").
+	FramingGrow bool
 	// Checker answers MiniCheck's question for adapt; nil means the real model.
 	Checker verify.Checker
 	check   func([]adapt.EntryTruth) error // the kill rule's test; nil is adapt.Check

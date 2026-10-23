@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -293,4 +294,55 @@ func TestLivePromptForServicesBullet(t *testing.T) {
 	t.Logf("\n===== SYSTEM =====\n%s\n===== USER =====\n%s\n===== num_predict %d, ~%d prompt tokens =====",
 		sys, user, predict([]job{{plan, *e}}), int(float64(len(sys)+len(user))/charsPerToken))
 	_ = fmt.Sprint
+}
+
+// Under FramingGrow, a draft may take one more line, and only one that adds an
+// approved framing the posting asks for: the same extra length spent on
+// anything else is still over the line budget.
+func TestRewriteGrowsOnlyForAFraming(t *testing.T) {
+	// The fixture's services line, lengthened to sit just under two lines so
+	// that swapping in the framing tips it onto a third.
+	l := fixture()
+	b := &l.Entries[0].Bullets[1]
+	b.Text += ", covering orders, stock, pricing, delivery, loyalty and finance"
+	b.Hash = ledger.Hash(b.Text)
+	src := b.Text
+
+	p := rewritePosting()
+	p.FramingGrow = true
+	grow := PlanAll(l, []string{src}, p)
+	if !reflect.DeepEqual(grow[0].GrowFor, []string{"event-driven microservices"}) {
+		t.Fatalf("GrowFor = %v", grow[0].GrowFor)
+	}
+	framed := strings.Replace(src, "services", "event-driven microservices", 1)
+	padded := src + " across every store"
+	if n := grow[0].MaxLines; cvselect.BulletLines(framed) != n+1 || cvselect.BulletLines(padded) != n+1 {
+		t.Fatalf("fixture lines: framed %d, padded %d, source %d", cvselect.BulletLines(framed), cvselect.BulletLines(padded), n)
+	}
+	if grow[0].LinesFor(framed) != grow[0].MaxLines+1 || grow[0].LinesFor(padded) != grow[0].MaxLines {
+		t.Errorf("LinesFor: framed %d, padded %d", grow[0].LinesFor(framed), grow[0].LinesFor(padded))
+	}
+
+	run := func(plans []Plan, a string) Stats {
+		f := newFake(t, func(int, string) []pair { return []pair{{1, a, ""}} })
+		_, st, err := Rewrite(t.Context(), f.Client, "sys", plans, l, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	if st := run(grow, framed); st.Kept != 1 {
+		t.Errorf("framed draft one line longer was dropped: %v", st.Rejects)
+	}
+	if st := run(grow, padded); st.Rejects["line cost"] != 1 {
+		t.Errorf("padded draft one line longer was kept: %v", st.Rejects)
+	}
+	if st := run(PlanAll(l, []string{src}, rewritePosting()), framed); st.Rejects["line cost"] != 1 {
+		t.Errorf("without FramingGrow the framed draft was kept: %v", st.Rejects)
+	}
+	// The framing reworded around is no longer a framing added to the line.
+	reled := "Designed 10 event-driven microservices in Java and Spring Boot for retail operations, each owning its own database and talking to the others only through a Kafka log"
+	if st := run(grow, reled); st.Rejects["edit"] != 1 {
+		t.Errorf("a re-led line that gains the framing passed: %v", st.Rejects)
+	}
 }

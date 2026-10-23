@@ -184,7 +184,8 @@ func vet(j job, led *ledger.Ledger, draft string, kept []string) string {
 	if led != nil {
 		ents = led.Entities
 	}
-	if r := verify.Code(j.entry, j.plan.Bullet, draft, j.plan.AllowedTerms, verify.Options{Entities: ents}); r != "" {
+	o := verify.Options{Entities: ents, ExtraLine: j.plan.LinesFor(draft) > j.plan.MaxLines}
+	if r := verify.Code(j.entry, j.plan.Bullet, draft, j.plan.AllowedTerms, o); r != "" {
 		why, _, _ := strings.Cut(r, ":")
 		return why
 	}
@@ -209,7 +210,13 @@ func clip(s string, n int) string {
 // maxChars is the longest a draft of this bullet may be. The slack is under
 // half a line, so a reply that runs into the cap is over the line budget and
 // verify.LineCost drops it: the cap can never leave a clipped draft that passes.
-func maxChars(p Plan) int { return p.MaxLines*lineChars + 40 }
+func maxChars(p Plan) int {
+	n := p.MaxLines
+	if len(p.GrowFor) > 0 {
+		n++
+	}
+	return n*lineChars + 40
+}
 
 func schema(chunk []job) ollama.Schema {
 	n, longest := len(chunk), 0
@@ -334,6 +341,10 @@ func renderOne(n int, j job, led *ledger.Ledger) string {
 		fmt.Fprintf(&b, "Qualifiers to keep: %s\n", strings.Join(quals, ", "))
 	}
 	fmt.Fprintf(&b, "Max lines: %d (at most %d characters)\n", p.MaxLines, p.MaxLines*lineChars)
+	if len(p.GrowFor) > 0 {
+		fmt.Fprintf(&b, "One more line (at most %d characters) only for a draft that adds: %s\n",
+			(p.MaxLines+1)*lineChars, strings.Join(p.GrowFor, ", "))
+	}
 	return b.String()
 }
 

@@ -332,6 +332,16 @@ func TestShapeRejectsNewEmDash(t *testing.T) {
 	}
 }
 
+func TestLineCostExtraLine(t *testing.T) {
+	long := src + " and then some more words to push the bullet well past the width of one rendered line on the page"
+	if r := lineCost(src, long, 1); r != "" {
+		t.Errorf("one extra line allowed, still failed: %s", r)
+	}
+	if lineCost(src, long+long, 1) == "" {
+		t.Error("two extra lines passed with one allowed")
+	}
+}
+
 // The lines E3 shipped on 2026-10-23 once a line could grow for a framing. The
 // first two read as their source with the posting's term in; the rest are
 // stuffed or say something else, and MiniCheck passed every one of them.

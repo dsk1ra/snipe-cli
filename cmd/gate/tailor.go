@@ -98,6 +98,7 @@ type Arm func(o offer) (armOut, error)
 var arms = map[string]func(*tailorEnv) Arm{
 	"verbatim": (*tailorEnv).verbatim,
 	"adapt":    (*tailorEnv).adapt,
+	"grow":     (*tailorEnv).grow,
 }
 
 // ── pure: metrics from text ─────────────────────────────────────────────────
@@ -437,6 +438,14 @@ func (e *tailorEnv) verbatim() Arm { return e.arm(false) }
 // Without a checkpoint nothing is cached, and without Queue the home's ledger
 // is not written to.
 func (e *tailorEnv) adapt() Arm { return e.arm(true) }
+
+// grow is adapt with Tailor.FramingGrow: a line may take one more rendered line
+// to add an approved framing a must-have asks for, and the density ladder pays
+// for it elsewhere on the page.
+func (e *tailorEnv) grow() Arm {
+	e.t.FramingGrow = true
+	return e.arm(true)
+}
 
 func (e *tailorEnv) arm(adapted bool) Arm {
 	return func(o offer) (armOut, error) {

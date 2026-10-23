@@ -117,6 +117,7 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	post := adapt.Posting{
 		ID: j.Report, Date: time.Now().Format("2006-01-02"), Score: j.Score,
 		InferMinScore: t.Cfg.Thresholds.InferMinScore, Rows: j.Rows, Terms: j.Terms,
+		FramingGrow: t.FramingGrow,
 	}
 	bullets := contentBullets(j.Content)
 	plans := adapt.PlanAll(led, bullets, post)
@@ -133,9 +134,10 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	postKey, _ := json.Marshal(struct {
 		Score float64
 		Infer float64
+		Grow  bool
 		Rows  []phase2.Row
 		Terms []adapt.Term
-	}{j.Score, post.InferMinScore, j.Rows, j.Terms})
+	}{j.Score, post.InferMinScore, post.FramingGrow, j.Rows, j.Terms})
 	in := adaptInput{
 		Bullets: bullets, Posting: sha(string(postKey)), Ledger: ledgerKey(led),
 		Prompt: sha(string(system) + "\x00" + minicheck.Model), Writer: WriterAdapt,
@@ -168,7 +170,7 @@ func (t *Tailor) adapt(ctx context.Context, ck *state.Checkpoint, j AdaptJob) (f
 	}
 	for i, c := range choices {
 		// MaxLines already bounds a draft; this is the assertion that it did.
-		if c.Source != "original" && cvselect.BulletLines(c.Text) > cvselect.BulletLines(c.Original) {
+		if c.Source != "original" && cvselect.BulletLines(c.Text) > plans[i].LinesFor(c.Text) {
 			fmt.Printf("  #%d: adapt: %s draft grew a line, reverted\n", j.ID, c.Source)
 			choices[i] = keepOriginal(plans[i], c)
 		}
@@ -247,7 +249,8 @@ func (t *Tailor) draftAndVerify(ctx context.Context, j AdaptJob, led *ledger.Led
 			if d.Hash != p.Bullet.Hash {
 				continue
 			}
-			res, err := verify.Verify(ctx, chk, led.Entries[ei], p.Bullet, d.Text, p.AllowedTerms, verify.Options{Entities: led.Entities})
+			res, err := verify.Verify(ctx, chk, led.Entries[ei], p.Bullet, d.Text, p.AllowedTerms,
+				verify.Options{Entities: led.Entities, ExtraLine: p.LinesFor(d.Text) > p.MaxLines})
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil, ctx.Err()

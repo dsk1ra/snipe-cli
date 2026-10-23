@@ -132,10 +132,13 @@ func EntityClosure(source, draft string, known map[string]bool) string {
 // and still rendered one line more, because the source sat just under a
 // boundary. So a draft longer than its source must also leave a tenth of its
 // last line free; one no longer than the source cannot be worse.
-func LineCost(source, draft string) string {
-	d, s := cvselect.BulletLines(draft), cvselect.BulletLines(source)
+func LineCost(source, draft string) string { return lineCost(source, draft, 0) }
+
+// lineCost is LineCost with extra lines allowed over the source's.
+func lineCost(source, draft string, extra int) string {
+	d, s := cvselect.BulletLines(draft), cvselect.BulletLines(source)+extra
 	if d > s {
-		return fmt.Sprintf("takes %d lines, the source %d", d, s)
+		return fmt.Sprintf("takes %d lines, the source %d", d, s-extra)
 	}
 	n, sn := len(utf16.Encode([]rune(draft))), len(utf16.Encode([]rune(source)))
 	if n > sn && float64(n) > 0.9*float64(s*cvselect.CharsPerLine) {
