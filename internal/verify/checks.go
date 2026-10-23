@@ -277,6 +277,122 @@ func Stuffing(source, draft string, allowed []string, entities map[string][]stri
 	return ""
 }
 
+// A draft that gains a posting term may change at most this much else: the
+// term may replace up to maxEditCut source words, and up to maxEditGlue
+// function words may come with it ("by tuning" -> "through performance tuning
+// of"). Set on the 64-offer E3 run of 2026-10-23, where every line that kept
+// within them read as its source with the term in, and every line that did not
+// was stuffed or said something else.
+const (
+	maxEditCut  = 3
+	maxEditGlue = 2
+)
+
+// editGlue is the function words a gained term may bring with it.
+var editGlue = func() map[string]bool {
+	m := map[string]bool{"through": true, "via": true, "using": true}
+	for w := range functionWords {
+		m[w] = true
+	}
+	return m
+}()
+
+// MinimalEdit fails a draft that gains a posting term and changes the rest of
+// the line. MiniCheck cannot see a moved cause or a changed measure: on E3 it
+// passed "retired 2 metrics ... scoring every change as neutral" rewritten as
+// "retired 2 metrics ..., resulting in neutral scores for every change", in
+// both directions, and "Sustained 12,000 orders/second at p99 under 200ms" as
+// "Achieved query performance at p99 under 200ms". So a line that takes the
+// posting's words must otherwise stay word for word, which code can check
+// exactly. gained are the allowed terms the draft says and the source does not;
+// with none, the check does not apply.
+func MinimalEdit(source, draft string, gained []string) string {
+	if len(gained) == 0 {
+		return ""
+	}
+	cut, added := wordDiff(lowerWords(source), lowerWords(draft))
+	for _, g := range gained {
+		for _, w := range lowerWords(g) {
+			if i := slices.Index(added, w); i >= 0 {
+				added = slices.Delete(added, i, i+1)
+			}
+		}
+	}
+	for _, w := range added {
+		if !editGlue[w] {
+			return fmt.Sprintf("adds %q besides %s", w, strings.Join(gained, ", "))
+		}
+	}
+	switch {
+	case len(cut) > maxEditCut:
+		return fmt.Sprintf("changes %d source words (%s) to fit %s", len(cut), strings.Join(cut, " "), strings.Join(gained, ", "))
+	case len(added) > maxEditGlue:
+		return fmt.Sprintf("adds %d words (%s) besides %s", len(added), strings.Join(added, " "), strings.Join(gained, ", "))
+	}
+	return ""
+}
+
+// Gained is the allowed terms the draft says and the source does not.
+func Gained(source, draft string, allowed []string) []string {
+	src, dr := lowerWords(source), lowerWords(draft)
+	var out []string
+	for _, a := range allowed {
+		if t := lowerWords(a); len(t) > 0 && hasRun(dr, t) && !hasRun(src, t) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func lowerWords(s string) []string {
+	w := words(s)
+	for i := range w {
+		w[i] = strings.ToLower(w[i])
+	}
+	return w
+}
+
+// hasRun is true when t occurs in ws as consecutive words.
+func hasRun(ws, t []string) bool {
+	for i := 0; i+len(t) <= len(ws); i++ {
+		if slices.Equal(ws[i:i+len(t)], t) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordDiff is what an LCS alignment leaves over on each side: the source words
+// the draft does not keep in order, and the draft words that are new.
+func wordDiff(a, b []string) (cut, added []string) {
+	n, m := len(a), len(b)
+	l := make([][]int, n+1)
+	for i := range l {
+		l[i] = make([]int, m+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if a[i] == b[j] {
+				l[i][j] = l[i+1][j+1] + 1
+			} else {
+				l[i][j] = max(l[i+1][j], l[i][j+1])
+			}
+		}
+	}
+	i, j := 0, 0
+	for i < n && j < m {
+		switch {
+		case a[i] == b[j]:
+			i, j = i+1, j+1
+		case l[i+1][j] >= l[i][j+1]:
+			cut, i = append(cut, a[i]), i+1
+		default:
+			added, j = append(added, b[j]), j+1
+		}
+	}
+	return append(cut, a[i:]...), append(added, b[j:]...)
+}
+
 var connectives = []string{"for", "in", "to", "with", "across", "via", "using", "by", "of", "on"}
 
 func isEntity(entities map[string][]string, term string) bool {

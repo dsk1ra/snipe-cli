@@ -331,3 +331,34 @@ func TestShapeRejectsNewEmDash(t *testing.T) {
 		t.Errorf("em dash already in the source failed: %s", r)
 	}
 }
+
+// The lines E3 shipped on 2026-10-23 once a line could grow for a framing. The
+// first two read as their source with the posting's term in; the rest are
+// stuffed or say something else, and MiniCheck passed every one of them.
+func TestMinimalEdit(t *testing.T) {
+	const (
+		svcs  = "Built retail operations as 10 Java and Spring Boot services covering orders, stock, pricing, delivery, loyalty and finance, each owning its own database and talking to the others only through a Kafka log"
+		tune  = "Sustained 12,000 orders/second at p99 under 200ms by tuning Kafka partitioning, consumer concurrency and PostgreSQL indexes, verified in k6 load tests under fault injection rather than assumed from a design doc"
+		siem  = "Built a SIEM that answers who signed in, from where and how safely, tested at 250M+ simulated authentication events a quarter so a security team spots a compromised account before it spreads"
+		dash  = "Held dashboards under 200ms at 250M events a quarter by moving the hot path onto ClickHouse and pre-computing rollups in background workers instead of querying raw events on every page view"
+		bench = "Built the evaluation harness every model and prompt change has to pass, then audited the harness itself and retired 2 metrics that turned out to be measuring the wrong thing and scoring every change as neutral"
+	)
+	allowed := []string{"microservices", "Performance Tuning", "security engineering", "performance optimization", "query performance", "AI evaluation", "Kafka"}
+	for name, tc := range map[string]struct {
+		source, draft string
+		pass          bool
+	}{
+		"one word swapped for the framing": {svcs, "Built retail operations as 10 Java and Spring Boot microservices covering orders, stock, pricing, delivery, loyalty and finance, each owning its own database and talking to the others only through a Kafka log", true},
+		"framing with two glue words":      {tune, "Sustained 12,000 orders/second at p99 under 200ms through performance tuning of Kafka partitioning, consumer concurrency, and PostgreSQL indexes, verified in k6 load tests under fault injection rather than assumed from a design doc", true},
+		"framing tacked on the end":        {siem, "Built a SIEM that answers who signed in, from where and how safely, tested at 250M+ simulated authentication events a quarter, enabling a security team to spot a compromised account before it spreads through security engineering", false},
+		"framing with the lead rewritten":  {dash, "Achieved dashboard response times under 200ms at 250M events a quarter through performance optimization by moving the hot path onto ClickHouse and pre-computing rollups in background workers instead of querying raw events on every page view", false},
+		"framing and a changed measure":    {tune, "Achieved query performance at p99 under 200ms while sustaining 12,000 orders/second by tuning Kafka partitioning, consumer concurrency and PostgreSQL indexes, verified in k6 load tests under fault injection rather than assumed from a design doc", false},
+		"framing and a reversed cause":     {bench, "Built an AI evaluation harness that every model and prompt change must pass, then audited the harness and retired 2 metrics that were measuring the wrong thing, resulting in neutral scores for every change", false},
+		"a reorder gains no term":          {tune, "Tuned Kafka partitioning, consumer concurrency and PostgreSQL indexes to sustain 12,000 orders/second at p99 under 200ms, verified in k6 load tests under fault injection rather than assumed from a design doc", true},
+	} {
+		r := MinimalEdit(tc.source, tc.draft, Gained(tc.source, tc.draft, allowed))
+		if (r == "") != tc.pass {
+			t.Errorf("%s: pass=%v, reason %q", name, r == "", r)
+		}
+	}
+}

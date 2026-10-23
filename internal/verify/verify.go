@@ -130,6 +130,9 @@ func Code(e ledger.Entry, b ledger.Bullet, draft string, allowedTerms []string, 
 	if r := Stuffing(b.Text, draft, allowedTerms, o.Entities); r != "" {
 		return "stuffing: " + r
 	}
+	if r := MinimalEdit(b.Text, draft, Gained(b.Text, draft, allowedTerms)); r != "" {
+		return "edit: " + r
+	}
 	if r := EntityClosure(b.Text, draft, forms(e, o.Entities, allowedTerms)); r != "" {
 		return "entities: " + r
 	}
