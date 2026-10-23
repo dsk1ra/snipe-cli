@@ -737,17 +737,17 @@ Three kinds of hardcoding, each treated differently:
   grows when an incident is found and says nothing about the next unfamiliar
   posting.
 
-| item | where | size | replaced by | milestone |
-|---|---|---|---|---|
-| `NamedProducts`, `CasedProducts` | `guards/vocab.go` | 176 + 4 | ledger entity closure | M3 |
-| `ecosystems`, `tools` | `fit/fit.go` | 12 + 14 patterns | ledger entities (demonstrated or catalogue-only) and stage 1 typed tech terms | M5 |
-| `ukCities`, attendance patterns, 160-character proximity | `fit/fit.go` | 29 + ~12 | quoted attendance facts and the profile's places | M5 |
-| `humanLanguages`, fluency pattern | `fit/fit.go` | 20 | quoted language requirement against the CV's languages | M5 |
-| seniority patterns | `fit/fit.go` | 6 | quoted years and title level; the caps stay in code | M5 |
-| alias file | `config/skills.yml` | 29 keys | ledger entity forms and framings, approved per fact | M3 |
-| `suggest` vetting rules | `internal/suggest` | 5 rules | the §6.4 invariants (most carry over) | M3 |
-| writer stopwords, `moduleTokens` | `internal/phase3` | n/a | kept; module ranking could move to embeddings later, for little gain | none |
-| HTML, LaTeX and salary parsing | `text`, `fill`, `latex` | n/a | kept, since deterministic parsing suits formats | none |
+| item | where | size | replaced by | milestone | status (2026-10-23) |
+|---|---|---|---|---|---|
+| `NamedProducts`, `CasedProducts` | `guards/vocab.go` | 176 + 4 | ledger entity closure | M3 | kept: the verbatim guards and `suggest` still use it; entity closure runs only under `--writer adapt` |
+| `ecosystems`, `tools` | `fit/fit.go` | 12 + 14 patterns | ledger entities (demonstrated or catalogue-only) and stage 1 typed tech terms | M5 | kept: Phase 1 caps on the extracted stack and falls back to the table without facts; `VerifyAgainstCv` and `StrengthFrom` read it |
+| `ukCities`, attendance patterns, 160-character proximity | `fit/fit.go` | 29 + ~12 | quoted attendance facts and the profile's places | M5 | deleted (ca709c7); attendance counts only a standing requirement (687f677) |
+| `humanLanguages`, fluency pattern | `fit/fit.go` | 20 | quoted language requirement against the CV's languages | M5 | deleted (ca709c7) |
+| seniority patterns | `fit/fit.go` | 6 | quoted years and title level; the caps stay in code | M5 | year patterns deleted, years come from the facts; title patterns kept, because the 4B's title levels were wrong |
+| alias file | `config/skills.yml` | 29 keys | ledger entity forms and framings, approved per fact | M3 | kept until M6 |
+| `suggest` vetting rules | `internal/suggest` | 5 rules | the §6.4 invariants (most carry over) | M3 | kept until M6 |
+| writer stopwords, `moduleTokens` | `internal/phase3` | n/a | kept; module ranking could move to embeddings later, for little gain | none | kept |
+| HTML, LaTeX and salary parsing | `text`, `fill`, `latex` | n/a | kept, since deterministic parsing suits formats | none | kept |
 
 Every list being replaced runs in shadow first. Both decisions are logged and
 the disagreements read, and the list is deleted once the new path is right on
@@ -800,6 +800,19 @@ runs once on the verbatim CV and once on the adapted one for every offer.
 | E5 | Phase 2 banding over ledger alignment; stage 2 on facts | pair accuracy on the 18 labels not below today's; evidence gold set not below today's |
 | E6 | your blind read of 12 offers, verbatim against adapted | you prefer adapted on a majority and flag no false claim |
 | E7 | inference proposals on the 32-offer sample at the default `infer_min_score` | you approve at least half of what is proposed; otherwise raise the threshold or require every must-have met (band A/B) |
+
+**E3 status, 2026-10-23: parked, verbatim stays the default.** The gate above
+could not pass on this CV. `term_parity` is 1.000 on verbatim, and most
+must-haves the page misses are missed by the whole of cv.md (`gate ats
+--ceiling`: 79% met on the page, 0% lost to selection, 21% unmet by the full
+CV). The revised gate (4f965ba) judges `boolean_pass` instead, 0.814 on
+verbatim over 64 offers. An approved framing could recover 7 of the 11
+offers that fail it. MiniCheck passed rewrites that moved a cause or changed a measure, so
+a draft that gains a posting term must otherwise stay word for word (3aa2e58).
+With that check, plain adapt changed 0 of 640 lines and the grow arm (5d3d4a7)
+changed 2, recovering 1 offer (+0.017). Selection drifts by one or two offers
+between runs hours apart, so paired deltas below that size are noise.
+`pairwise_pref` and E6 were not run.
 
 **Kill rule.** One offer with an unapproved claim or an entity violation stops
 the arm until the cause is found, the status `metric_fab 0` and

@@ -18,10 +18,12 @@ and ethics rules are in the root `CLAUDE.md` and still apply.
 |-------|--------|-------|--------|
 | 1 pre-score | `internal/phase1` | `snipe-screen` (Qwen3 4B q8_0) | `batch/scores/<id>.json` |
 | 2 evaluate | `internal/phase2` | `snipe-eval` (Qwen3 30B-A3B Q4_K_M) | `reports/<NNN>-<slug>-<date>.md`, `batch/evals/<id>.json` |
-| 3 tailor CV | `internal/phase3` | `snipe-cv` (Qwen2.5 7B Coder Q5_K_M) | `output/<date>_<slug>_<NNN>/` |
+| 3 tailor CV | `internal/phase3` | `snipe-embed` selects, `snipe-eval` reranks when there are exemplars; `--writer adapt` adds `snipe-eval` rewrites and `bespoke-minicheck` checks | `output/<date>_<slug>_<NNN>/` |
 
 `snipe-embed` (Qwen3 Embedding 0.6B q8_0) backs Phase 2's evidence matching and
-Phase 3's bullet selection — see `batch/embeddings.mjs`.
+Phase 3's bullet selection (`internal/embed`). `snipe-cv` (Qwen2.5 7B Coder) is
+no longer called by the Go pipeline. `gate ats` grades with `gemma3:4b-it-q8_0`,
+a different family from the Qwen writer.
 
 Then the tracker merge → `data/applications.md`, and the integrity pass (`internal/tracker`).
 
@@ -354,13 +356,13 @@ Models are built once from the Modelfiles:
 ```bash
 ollama pull qwen3:4b-instruct-2507-q8_0          # bases, once
 ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M
-ollama pull qwen2.5-coder:7b-instruct-q5_K_M
 ollama pull qwen3-embedding:0.6b-q8_0
+ollama pull bespoke-minicheck                    # --writer adapt only
+ollama pull gemma3:4b-it-q8_0                    # gate ats only
 
-ollama create snipe-screen -f batch/Modelfile.snipe-screen
-ollama create snipe-eval   -f batch/Modelfile.snipe-eval
-ollama create snipe-cv     -f batch/Modelfile.snipe-cv
-ollama create snipe-embed  -f batch/Modelfile.snipe-embed
+ollama create snipe-screen -f prompts/Modelfile.snipe-screen
+ollama create snipe-eval   -f prompts/Modelfile.snipe-eval
+ollama create snipe-embed  -f prompts/Modelfile.snipe-embed
 ```
 
 ## Quality is measured, not vibed
