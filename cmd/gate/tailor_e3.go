@@ -732,6 +732,158 @@ func killRule(w io.Writer, rs []e3Result) int {
 	return 0
 }
 
+// e3Verdict is the E3 gate as revised on 2026-10-23. The PRD's version asked
+// for term_parity and must_have_evidence to rise, and on this CV neither can:
+// term_parity is 1.000 on the verbatim page, and the must-haves the page does
+// not meet are mostly unmet by the whole of cv.md, which T3 says stays unmet.
+// boolean_pass has the room: a must-have term the ledger supports, missing from
+// the page, is a recruiter's AND search failing, and on most such offers the
+// line carrying the user's approved framing of it is already on the page.
+//
+// It prints each clause and its verdict. The exit code stays the kill rule's.
+func e3Verdict(w io.Writer, rs, base []e3Result, led *ledger.Ledger) {
+	baseBy := map[string]e3Result{}
+	for _, r := range base {
+		if r.Err == "" {
+			baseBy[r.Offer] = r
+		}
+	}
+	var ok []e3Result
+	for _, r := range rs {
+		if _, b := baseBy[r.Offer]; r.Err == "" && b {
+			ok = append(ok, r)
+		}
+	}
+	fmt.Fprintf(w, "\nE3 gate (revised), %d offer(s) paired against verbatim\n", len(ok))
+	if len(ok) == 0 {
+		fmt.Fprintln(w, "  no paired offers: run --arm=verbatim on the same sample")
+		return
+	}
+	met := true
+	line := func(pass bool, clause, detail string) {
+		v := "PASS"
+		if !pass {
+			v, met = "FAIL", false
+		}
+		fmt.Fprintf(w, "  %-4s  %-11s %s\n", v, clause, detail)
+	}
+	pending := func(clause, detail string) { fmt.Fprintf(w, "  ....  %-11s %s\n", clause, detail) }
+
+	kills, keepDrops := 0, 0
+	for _, r := range ok {
+		if r.Metrics["unapproved"] > 0 || r.Metrics["entity_violations"] > 0 {
+			kills++
+		}
+		if k, okK := r.Metrics["keep_rate"]; okK && k < baseBy[r.Offer].Metrics["keep_rate"] {
+			keepDrops++
+		}
+	}
+	line(kills == 0 && keepDrops == 0, "safety", fmt.Sprintf("%d offer(s) breach the kill rule, %d lose a must-keep item verbatim kept", kills, keepDrops))
+
+	recoverable, recovered, lost := 0, 0, 0
+	for _, r := range ok {
+		b := baseBy[r.Offer]
+		bp, okB := b.Metrics["boolean_pass"]
+		ap, okA := r.Metrics["boolean_pass"]
+		if !okA || !okB {
+			continue
+		}
+		if bp == 0 && framedOnPage(led, b.Page, b.BooleanMissing) {
+			recoverable++
+		}
+		switch {
+		case bp == 0 && ap == 1:
+			recovered++
+		case bp == 1 && ap == 0:
+			lost++
+		}
+	}
+	d, fl := pairedDelta(ok, baseBy, "boolean_pass")
+	line(d > fl && lost == 0, "primary", fmt.Sprintf("boolean_pass %+.3f (floor %.3f): %d recovered of %d recoverable, %d lost",
+		d, fl, recovered, recoverable, lost))
+
+	var worse []string
+	for _, m := range []struct {
+		name   string
+		higher bool // higher is better
+	}{{"one_page", true}, {"front_load", true}, {"exp_starved", false}, {"must_have_evidence", true}} {
+		d, fl := pairedDelta(ok, baseBy, m.name)
+		if math.IsNaN(d) {
+			continue
+		}
+		if (m.higher && d < -fl) || (!m.higher && d > fl) {
+			worse = append(worse, fmt.Sprintf("%s %+.3f", m.name, d))
+		}
+	}
+	detail := "one_page, front_load, exp_starved"
+	if _, have := ok[0].Metrics["must_have_evidence"]; have {
+		detail += ", must_have_evidence"
+	}
+	if len(worse) > 0 {
+		detail = strings.Join(worse, ", ")
+	}
+	line(len(worse) == 0, "no regress", detail)
+	if _, have := ok[0].Metrics["must_have_evidence"]; !have {
+		pending("no regress", "must_have_evidence: run gate ats on both arms")
+	}
+	pending("quality", "pairwise_pref on the changed lines: not built; then E6, your blind read")
+
+	mx := 0.0
+	for _, r := range ok {
+		mx = max(mx, r.AdaptS)
+	}
+	line(mx <= adaptBudget.Seconds(), "time", fmt.Sprintf("adapt max %.0f s of %.0f s", mx, adaptBudget.Seconds()))
+
+	if met {
+		fmt.Fprintln(w, "  verdict: met on every clause measured; quality still pending")
+	} else {
+		fmt.Fprintln(w, "  verdict: NOT MET")
+	}
+}
+
+// pairedDelta is the arm's mean minus verbatim's over the offers both scored,
+// and the A/A floor's max for it (zero when no floor was recorded, which for
+// the deterministic verbatim path is the measured value). NaN when no offer
+// has the metric on both sides.
+func pairedDelta(rs []e3Result, baseBy map[string]e3Result, name string) (float64, float64) {
+	var xs, ys []float64
+	for _, r := range rs {
+		x, okX := r.Metrics[name]
+		y, okY := baseBy[r.Offer].Metrics[name]
+		if okX && okY {
+			xs, ys = append(xs, x), append(ys, y)
+		}
+	}
+	if len(xs) == 0 {
+		return math.NaN(), 0
+	}
+	fl, _ := floorOf(rs, name)
+	return mean(xs) - mean(ys), fl.Max
+}
+
+// framedOnPage is true when some missing term is an approved framing of a
+// line the page already prints, so adapt could recover it without changing
+// what was selected.
+func framedOnPage(led *ledger.Ledger, page string, missing []string) bool {
+	flat := strings.Join(strings.Fields(page), " ")
+	for _, t := range missing {
+		for _, e := range led.Entries {
+			for _, b := range e.Bullets {
+				head := []rune(strings.Join(strings.Fields(b.Text), " "))
+				if len(head) == 0 || !strings.Contains(flat, string(head[:min(len(head), 45)])) {
+					continue
+				}
+				for _, fr := range b.Framings {
+					if fr.Approved && !fr.Rejected && strings.EqualFold(fr.Phrase, t) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // firstChanged prints up to n changed lines, original above shipped, so the
 // first outputs get read by a person (benchmark rule 7).
 func firstChanged(w io.Writer, rs []e3Result, n int) {
@@ -826,7 +978,7 @@ func gateTailor(args []string) int {
 	}
 	lb, _ := os.ReadFile(env.l.CVLedger())
 	keyP := ""
-	if armName == "adapt" {
+	if armName != "verbatim" {
 		pb, _ := os.ReadFile(env.l.Prompt("p3-rewrite.md"))
 		keyP = short(string(pb), minicheck.Model)
 	}
@@ -844,6 +996,9 @@ func gateTailor(args []string) int {
 	report(os.Stdout, armName, rs, base)
 	fmt.Println()
 	code := killRule(os.Stdout, rs)
+	if armName != "verbatim" {
+		e3Verdict(os.Stdout, rs, base, led)
+	}
 	firstChanged(os.Stdout, rs, 5)
 	fmt.Printf("\nresults: %s\n", path)
 	if code == 0 && countWhere(rs, func(r e3Result) bool { return r.Err != "" }) > 0 {

@@ -388,3 +388,41 @@ func TestReportPairsAgainstBaseline(t *testing.T) {
 		}
 	}
 }
+
+func TestE3Verdict(t *testing.T) {
+	text := "Ran the platform on AWS from Terraform and GitHub Actions"
+	led := &ledger.Ledger{Entries: []ledger.Entry{{ID: "x", Bullets: []ledger.Bullet{
+		{Text: text, Framings: []ledger.Framing{{Phrase: "DevOps", Approved: true}}},
+	}}}}
+	m := func(boolean float64) map[string]float64 {
+		return map[string]float64{"boolean_pass": boolean, "one_page": 1, "keep_rate": 1, "front_load": 0.3, "exp_starved": 0}
+	}
+	base := []e3Result{
+		{Offer: "1", Page: "Work\n • " + text + "\n", BooleanMissing: []string{"DevOps"}, Metrics: m(0)},
+		{Offer: "2", Page: "Work\n • something else\n", BooleanMissing: []string{"DevOps"}, Metrics: m(0)},
+		{Offer: "3", Page: "Work\n", Metrics: m(1)},
+	}
+	run := func(rs []e3Result) string {
+		var b strings.Builder
+		e3Verdict(&b, rs, base, led)
+		return b.String()
+	}
+	out := run([]e3Result{{Offer: "1", Metrics: m(1)}, {Offer: "2", Metrics: m(0)}, {Offer: "3", Metrics: m(1)}})
+	for _, want := range []string{"PASS  primary", "1 recovered of 1 recoverable, 0 lost", "PASS  safety", "PASS  no regress", "verdict: met"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// Recovering one and losing another is no gain.
+	out = run([]e3Result{{Offer: "1", Metrics: m(1)}, {Offer: "2", Metrics: m(0)}, {Offer: "3", Metrics: m(0)}})
+	if !strings.Contains(out, "FAIL  primary") || !strings.Contains(out, "verdict: NOT MET") {
+		t.Errorf("a lost offer passed:\n%s", out)
+	}
+	// A page that grew onto a second page is a regression whatever it gained.
+	two := m(1)
+	two["one_page"] = 0
+	out = run([]e3Result{{Offer: "1", Metrics: two}, {Offer: "2", Metrics: m(0)}, {Offer: "3", Metrics: m(1)}})
+	if !strings.Contains(out, "FAIL  no regress  one_page") {
+		t.Errorf("a two-page CV passed:\n%s", out)
+	}
+}
