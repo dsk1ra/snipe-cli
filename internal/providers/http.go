@@ -101,7 +101,11 @@ func (h *HTTP) do(ctx context.Context, target string, opts Options, accept strin
 	}
 	defer res.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	limit := opts.MaxBytes
+	if limit <= 0 {
+		limit = 8 << 20
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, limit))
 	if err != nil {
 		return nil, err
 	}

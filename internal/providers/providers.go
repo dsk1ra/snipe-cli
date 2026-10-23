@@ -82,6 +82,9 @@ type Options struct {
 	// take minutes, and holding one connection open is how its API is designed
 	// to be called.
 	Timeout time.Duration
+	// MaxBytes overrides the 8 MB response cap. A SuccessFactors board is one
+	// response with every description in it, and CNH's passes 8 MB.
+	MaxBytes int64
 	// NoRedirect refuses to follow redirects. Combined with a hostname
 	// allowlist it is what closes SSRF via a server-side redirect: the
 	// allowlist checks the URL we send, the refusal stops it becoming another.
