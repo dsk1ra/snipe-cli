@@ -153,7 +153,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Drain works through the queue file, one id at a time, so a JD pasted
 	// while a run is active is picked up rather than colliding with it.
 	if r.Opt.Drain {
-		err = r.drain(ctx, offers)
+		err = r.drain(ctx)
 	} else {
 		err = r.pipeline(ctx, offers)
 	}
@@ -186,7 +186,7 @@ func (r *Runner) suggestAliases(ctx context.Context) {
 	}
 }
 
-func (r *Runner) drain(ctx context.Context, offers map[int]state.Offer) error {
+func (r *Runner) drain(ctx context.Context) error {
 	for {
 		id, ok := popQueue(r.L.Queue())
 		if !ok {
@@ -198,11 +198,18 @@ func (r *Runner) drain(ctx context.Context, offers map[int]state.Offer) error {
 			return ErrStopped
 		}
 		r.out("── picked up queued offer #%d ──", id)
+		// Re-read every pop: an id queued mid-run is an offer the map read at
+		// the start has never seen, and the pipeline would drop it unrun.
+		offers, err := state.LoadOffers(r.L.Input())
+		if err != nil {
+			pushQueueFront(r.L.Queue(), id)
+			return err
+		}
 		sub := r.Opt
 		sub.OnlyID = id
 		saved := r.Opt
 		r.Opt = sub
-		err := r.pipeline(ctx, offers)
+		err = r.pipeline(ctx, offers)
 		r.Opt = saved
 		if err != nil && !errors.Is(err, ErrStopped) {
 			return err
