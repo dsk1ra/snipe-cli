@@ -160,6 +160,19 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   tailor arm (`RevertUnsupportedBullets`, `StripFabricatedProducts`,
   `FilterSkillItems` and the rest): the verbatim writer prints only cv.md's own
   lines, so they had nothing to guard.
+- The `snipe-cv` model (Qwen2.5 7B Coder) from setup. Phase 3 has picked
+  cv.md's own lines since the Go port and never calls it, yet the README and
+  `docs/SETUP.md` had every new user pull 5.4 GB for it. SETUP also pointed
+  `ollama create` at `batch/Modelfile.*`, which moved to `prompts/` in 0.6.0.
+- `prompts/ollama-eval-prompt.md`, the classic Phase 2 prompt, which nothing
+  has read since the staged evaluator replaced it.
+- `batch/README.md`. It described the Node runner: `npm run merge`,
+  `import-pipeline.mjs`, flags `snipe run` does not have, and a layout from
+  before `batch/state/` and `batch/cache/`.
+- Three August planning docs whose work is done or was never started:
+  `SESSION-HANDOFF.md`, `TAILORING-QUALITY-PLAN.md` (results are in
+  `PHASE3-GENERATION-LEDGER.md`) and `PHASE3-TAILORING-STRATEGY.md`. All
+  three are in git history.
 - Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
   Posting Legitimacy, and the judgment call stops writing them. Nothing
   downstream read them, yet they were most of that call's output: on the 18

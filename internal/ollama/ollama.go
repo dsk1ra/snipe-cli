@@ -25,7 +25,6 @@ const DefaultURL = "http://localhost:11434"
 const (
 	ModelScreen = "snipe-screen" // Phase 1 pre-score, Qwen3 4B
 	ModelEval   = "snipe-eval"   // Phase 2 judgment + Phase 3 rerank, Qwen3 30B-A3B
-	ModelCV     = "snipe-cv"     // Phase 3 tailor, Qwen2.5 7B Coder
 	ModelEmbed  = "snipe-embed"  // Qwen3 Embedding 0.6B
 )
 

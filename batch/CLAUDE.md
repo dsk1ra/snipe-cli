@@ -11,8 +11,8 @@
 > checkout of the `oracle/node-complete` tag, and `git log --diff-filter=D --
 > batch/` finds the last version of each file.
 
-Rules for everything under `batch/`. The repo-wide data contract, conventions
-and ethics rules are in the root `CLAUDE.md` and still apply.
+Rules for everything under `batch/`. The repo-wide data contract is in
+`docs/ARCHITECTURE.md` and still applies.
 
 ## The 3-phase pipeline (`internal/run`)
 

@@ -42,7 +42,7 @@ data throughout.</sub>
   /scan  ───┤        Phase 1            Phase 2              Phase 3
   scan   ───┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
      queue ────►│  pre-score   │─►│   evaluate   │──►│   tailor CV +    │──► output/
-                │ snipe-screen │  │  snipe-eval  │   │   snipe-cv → PDF │    *.pdf
+                │ snipe-screen │  │  snipe-eval  │   │ snipe-embed → PDF│    *.pdf
                 └──────────────┘  └──────────────┘   └──────────────────┘
                    score ≥ 2.5?      full report        score ≥ 3.0?
                                   reports/NNN-*.md
@@ -52,7 +52,7 @@ data throughout.</sub>
 |-------|-------|--------|
 | 1 · pre-score | `snipe-screen` (Qwen3 4B) | `batch/scores/<id>.json` |
 | 2 · evaluate | `snipe-eval` (Qwen3 30B-A3B) | `reports/<NNN>-<slug>-<date>.md` |
-| 3 · tailor CV | `snipe-cv` (Qwen2.5 7B Coder) | `output/<date>_<slug>_<NNN>/` (PDF) |
+| 3 · tailor CV | `snipe-embed` picks cv.md's own lines | `output/<date>_<slug>_<NNN>/` (PDF) |
 
 `snipe-embed` (Qwen3 Embedding 0.6B) does the evidence matching in Phase 2 and
 the bullet selection in Phase 3. Scores run 0–5. Below 3.0 the verdict is Skip, and an Apply
@@ -92,18 +92,16 @@ providers (LinkedIn, Indeed, Glassdoor); without a key those sit out and
 everything else, the whole pipeline included, runs as normal. The key is read
 into the environment at startup and sent as a bearer token, never in a URL.
 
-Build the four models once, then start the server with a q8_0 KV cache or the
+Build the three models once, then start the server with a q8_0 KV cache or the
 30B's context will not fit:
 
 ```bash
 ollama pull qwen3:4b-instruct-2507-q8_0
 ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M
-ollama pull qwen2.5-coder:7b-instruct-q5_K_M
 ollama pull qwen3-embedding:0.6b-q8_0
 
 ollama create snipe-screen -f prompts/Modelfile.snipe-screen
 ollama create snipe-eval   -f prompts/Modelfile.snipe-eval
-ollama create snipe-cv     -f prompts/Modelfile.snipe-cv
 ollama create snipe-embed  -f prompts/Modelfile.snipe-embed
 
 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve

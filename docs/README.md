@@ -45,9 +45,6 @@ trusting a number in one.
 | `REWORK-PLAN.md` | the lean-report / posting-vocabulary / supervised-skills rework — status table, what is built, what is next, and what was ruled out |
 | `PHASE3-NEXT.md` | current attribution, open experiments, and ideas already closed — **read before re-opening any Phase 3 idea** |
 | `CV-GENERATION-BACKLOG.md` | candidate improvements to CV generation — the pick-list, most items now struck through with results |
-| `SESSION-HANDOFF.md` | where the CV-generation work stands, what is open, and what is waiting on the user — written to be read cold |
-| `TAILORING-QUALITY-PLAN.md` | execution plan for the tailoring campaign |
-| `PHASE3-TAILORING-STRATEGY.md` | proposed, awaiting verification — nothing here is implemented |
 
 ## Reference
 
