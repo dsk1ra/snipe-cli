@@ -1,7 +1,6 @@
 package cvselect
 
 import (
-	"math"
 	"regexp"
 	"sort"
 )
@@ -311,17 +310,4 @@ func AllocateLines(entries []*Entry, budget float64, caps map[*Entry]int,
 		}
 	}
 	return n
-}
-
-// TotalLines is what an allocation costs the page, for the caller that wants to
-// check its own arithmetic.
-func TotalLines(entries []*Entry, n map[*Entry]int) float64 {
-	var total float64
-	for _, e := range entries {
-		ranked := sortedScored(e)
-		for i := 0; i < n[e] && i < len(ranked); i++ {
-			total += BulletCost(ranked[i].Text)
-		}
-	}
-	return math.Round(total*1000) / 1000
 }

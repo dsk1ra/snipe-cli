@@ -156,6 +156,10 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   `interview-prep/` and `data/parser-output/` folders only they wrote to. The
   binary never read them. `docs/CUSTOMIZATION.md` loses its negotiation-script
   and agent-hook sections with them.
+- Thirteen functions nothing called. Most are the fabrication guards from the 7B
+  tailor arm (`RevertUnsupportedBullets`, `StripFabricatedProducts`,
+  `FilterSkillItems` and the rest): the verbatim writer prints only cv.md's own
+  lines, so they had nothing to guard.
 - Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
   Posting Legitimacy, and the judgment call stops writing them. Nothing
   downstream read them, yet they were most of that call's output: on the 18

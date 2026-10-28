@@ -1,7 +1,6 @@
 package phase2
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -178,11 +177,3 @@ func dedupe(in []string, cap int) []string {
 
 // trimFloat renders a score the way JSON.stringify does: no trailing zeros.
 func trimFloat(f float64) string { return fmt.Sprintf("%g", f) }
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
-}

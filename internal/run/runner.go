@@ -121,8 +121,6 @@ func New(l paths.Layout, opt Options, ph Phases, st *state.Store, cl *ollama.Cli
 // not have to coordinate with this.
 func (r *Runner) RequestStop() { r.stopping.Store(true) }
 
-func (r *Runner) Stopping() bool { return r.stopping.Load() }
-
 // Run executes the pipeline. The lock is held for its whole duration; a second
 // runner refuses rather than interleaving.
 func (r *Runner) Run(ctx context.Context) error {
