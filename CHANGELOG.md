@@ -152,6 +152,10 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   the repo needs Node now. The
   `oracle/node-complete` tag still has the Node tree. The Go gates (`goldset`,
   `skills`, `typed`, `tailor`, `ats`, `e2`) stay.
+- `modes/`, the prompts for driving snipe through a coding agent, and the
+  `interview-prep/` and `data/parser-output/` folders only they wrote to. The
+  binary never read them. `docs/CUSTOMIZATION.md` loses its negotiation-script
+  and agent-hook sections with them.
 - Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
   Posting Legitimacy, and the judgment call stops writing them. Nothing
   downstream read them, yet they were most of that call's output: on the 18

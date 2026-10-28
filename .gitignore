@@ -9,9 +9,6 @@ data/pipeline.md
 data/scan-history.tsv
 # Rebuilt from public data by `snipe registry`; a crawl of thousands of sites.
 data/registry.tsv
-data/parser-output/**/*.json
-!data/parser-output/.gitkeep
-!data/parser-output/**/.gitkeep
 data/cache/
 reports/*.md
 !reports/.gitkeep
@@ -40,9 +37,6 @@ batch/cv-index.json
 batch/jd-index.json
 batch/cv-spike.json
 
-# Interview prep (accumulated STAR+R stories — user data)
-interview-prep/*
-!interview-prep/.gitkeep
 
 # User config and customization (never auto-updated; *.template.md / *.example.yml stay tracked)
 config/profile.yml

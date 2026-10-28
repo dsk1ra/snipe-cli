@@ -3,12 +3,11 @@
 ## System Overview
 
 ```
-      ┌────────────────────────┐   ┌─────────────────────────────────┐
-      │       snipe TUI        │   │       AI Coding CLI Agent       │
-      │       cmd/snipe        │   │      (reads modes/*.md)         │
-      └───────────┬────────────┘   └──────────────┬──────────────────┘
-                  └───────────────┬───────────────┘
-                                  │
+                   ┌────────────────────────┐
+                   │       snipe TUI        │
+                   │       cmd/snipe        │
+                   └───────────┬────────────┘
+                               │
             ┌──────────────────┼──────────────────────┐
             │                  │                       │
      ┌──────▼──────┐   ┌──────▼──────┐   ┌───────────▼────────┐
@@ -64,14 +63,13 @@ measures the Go pipeline against hand labels and the cached postings instead:
 
 **User layer — never auto-update, all personalization goes here:**
 `cv.md`, `config/profile.yml`, `config/profile.md`, `article-digest.md`,
-`portals.yml`, `data/*`, `reports/*`, `output/*`, `interview-prep/*`
+`portals.yml`, `data/*`, `reports/*`, `output/*`
 
 **System layer — safe to edit as code:**
-`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`.
+`internal/*`, `cmd/*`, `prompts/*`, `templates/*`.
 
 **Rule:** customization (archetypes, narrative, comp targets, location policy,
-scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
-`modes/_shared.md`.
+scoring weights) goes in `config/profile.md` or `config/profile.yml`.
 
 `config/profile.md` is a hard dependency: `internal/phase1` and
 `internal/phase2` read it at runtime.

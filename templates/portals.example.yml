@@ -1150,7 +1150,6 @@ tracked_companies:
   #     (private health insurance), servis (company shuttle)
   #   - Probation (deneme süresi): max 2 months by law
   #   - Severance (kıdem tazminatı): 1 month per year of service
-  #   - Use modes/tr/ for Turkish-language evaluations and applications
   # ============================================================
 
   - name: Trendyol

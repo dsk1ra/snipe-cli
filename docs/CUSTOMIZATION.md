@@ -46,35 +46,8 @@ Requires TeX Live (`titlesec`, `enumitem`, `tabularx`, `marvosym`, `fancyhdr`,
 was the least ATS-safe thing in the old template.
 
 
-## Negotiation Scripts (modes/_shared.md)
-
-The negotiation section provides frameworks for salary discussions. Replace the example scripts with your own:
-- Target ranges
-- Geographic arbitrage strategy
-- Pushback responses
-
-## Hooks (Optional)
-
-Snipe can integrate with external systems via Claude Code hooks. Example hooks:
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "echo 'Snipe session started'"
-      }]
-    }]
-  }
-}
-```
-
-Save hooks in `.claude/settings.json` (Claude Code). OpenCode does not support hooks. For equivalent functionality, use custom commands (`.opencode/commands/`) or agents (`.opencode/agents/`) — see https://opencode.ai/docs/commands/.
-
 ## States (templates/states.yml)
 
 The canonical states rarely need changing. If you add new states, update:
 1. `templates/states.yml`
 2. `internal/tracker` (alias mappings, applied by `snipe tracker fix`)
-3. `modes/_shared.md` (any references)

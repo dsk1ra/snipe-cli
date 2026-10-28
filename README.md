@@ -299,12 +299,12 @@ both user data that is never committed.
 ## Data & privacy
 
 Everything personal stays on your machine and is gitignored. Only the system
-layer — scripts, modes, templates — is tracked:
+layer — code, prompts, templates — is tracked:
 
 - **What you wrote** — `cv.md`, `article-digest.md`, `config/profile.*`,
   `portals.yml`, `.env`
 - **What the pipeline produced** — `data/`, `reports/`, `output/`,
-  `interview-prep/`, and the working artifacts that are easy to overlook:
+  and the working artifacts that are easy to overlook:
   `batch/jds/` (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
   `batch/errors/`, `batch/logs/`, and the run state under `batch/state/`
 - **Derived copies of your CV**, personal for the same reason `cv.md` is:
