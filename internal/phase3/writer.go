@@ -366,6 +366,7 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 
 	type ranked struct {
 		item  string // as the block prints it
+		cv    string // as cv.md writes it
 		i     int
 		score int
 		tier  int
@@ -395,7 +396,7 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 			// and a posting naming no tool by its full name (Spotify's
 			// enterprise security role: "identity, devices, networks") got
 			// cv.md's first five categories in order, Data before Security.
-			rows = append(rows, ranked{item: spelling(item), i: i, score: max(h, hits(spelling(item))), tier: t})
+			rows = append(rows, ranked{item: spelling(item), cv: item, i: i, score: max(h, hits(spelling(item))), tier: t})
 		}
 		// Tier first, so a related item outranks a floor item but never
 		// displaces one the posting actually named. Stable on the CV's order.
@@ -463,15 +464,48 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 	// holding two of them side by side, for no gain.
 	sortStable(out, func(a, b cat) bool { return a.idx < b.idx })
 
+	// Aliases are approved per item, so two items can print as one skill: on
+	// Coder's posting "agentic workflows" printed as AI tools and "AI-assisted
+	// development" as AI tooling, side by side. The first keeps the posting's
+	// spelling; a later one falls back to cv.md's, and is dropped only if that
+	// repeats too.
+	seen := map[string]bool{}
 	picks := make([]SkillPick, 0, len(out))
 	for _, c := range out {
 		names := make([]string, 0, len(c.items))
 		for _, r := range c.items {
-			names = append(names, r.item)
+			name := r.item
+			if seen[skillKey(name)] {
+				name = r.cv
+			}
+			if k := skillKey(name); !seen[k] {
+				seen[k] = true
+				names = append(names, name)
+			}
 		}
-		picks = append(picks, SkillPick{Category: c.category, Items: strings.Join(names, ", ")})
+		if len(names) > 0 {
+			picks = append(picks, SkillPick{Category: c.category, Items: strings.Join(names, ", ")})
+		}
 	}
 	return picks
+}
+
+// skillKey is a printed skill reduced to what it names: NormPhrase with each
+// word's final -s or -ing dropped, so "AI tools" and "AI tooling" are one skill.
+//
+// ponytail: suffix stripping, not a stemmer; "caching" and "caches" still read
+// as two. Swap in a real stemmer if near-duplicates keep shipping.
+func skillKey(s string) string {
+	words := strings.Fields(NormPhrase(s))
+	for i, w := range words {
+		switch {
+		case len(w) >= 7 && strings.HasSuffix(w, "ing"): // "spring" and "string" are words
+			words[i] = w[:len(w)-3]
+		case len(w) >= 4 && strings.HasSuffix(w, "s") && !strings.HasSuffix(w, "ss"):
+			words[i] = w[:len(w)-1]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // sortStable is sort.SliceStable with the element type kept, so the comparators

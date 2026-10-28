@@ -215,3 +215,29 @@ func TestSelectSkillsPrintsThePostingsSpelling(t *testing.T) {
 		t.Errorf("Languages reads %q with no aliases, want cv.md's strings only", got)
 	}
 }
+
+// Aliases are approved per item, so two items could print as one skill: Coder's
+// posting says both "AI tools" and "AI tooling", one an alias of each item.
+func TestSelectSkillsPrintsEachSkillOnce(t *testing.T) {
+	cv := "# X\n\n## Skills\n\n**AI Engineering:** agentic workflows, AI-assisted development, RAG\n"
+	aliases := map[string][]string{
+		"agentic workflows":       {"AI tools"},
+		"ai-assisted development": {"AI tooling"},
+	}
+	jd := "Coder embraces the use of AI tools. Using AI tooling for take-home assessments is permitted."
+	got := SelectSkills(cv, jd, 6, 12, 1, aliases)
+	if len(got) != 1 || got[0].Items != "AI tools, AI-assisted development" {
+		t.Errorf("block reads %+v, want AI tools once and the second item in cv.md's spelling", got)
+	}
+
+	for _, p := range [][2]string{{"AI tools", "AI tooling"}, {"unit tests", "unit testing"}, {"event-driven", "Event driven"}} {
+		if skillKey(p[0]) != skillKey(p[1]) {
+			t.Errorf("%q and %q read as two skills", p[0], p[1])
+		}
+	}
+	for _, p := range [][2]string{{"Spring", "Spr"}, {"AWS", "AW"}, {"CSS", "CS"}} {
+		if skillKey(p[0]) == skillKey(p[1]) {
+			t.Errorf("%q and %q read as one skill", p[0], p[1])
+		}
+	}
+}
