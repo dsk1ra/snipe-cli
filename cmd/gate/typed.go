@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,3 +181,5 @@ func gateTyped(args []string) int {
 	fmt.Fprintln(os.Stderr, "wrote", dst)
 	return 0
 }
+
+func atoi(s string) int { n, _ := strconv.Atoi(s); return n }

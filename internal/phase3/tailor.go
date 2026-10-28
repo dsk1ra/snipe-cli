@@ -198,9 +198,8 @@ type selectInput struct {
 }
 
 // Build turns a scored CV into the tailored content the template is filled
-// from. Separated from Run so the P3 gate can drive selection and the writer
-// without a LaTeX installation or a state file — which is the only way to
-// compare it against the oracle.
+// from. Separated from Run so a gate can drive selection and the writer
+// without a LaTeX installation or a state file.
 func (t *Tailor) Build(score map[string]float64, jd string) fill.Content {
 	opt := cvselect.DefaultOptions()
 	opt.PinnedProjects = t.Cfg.PinnedProjects

@@ -22,15 +22,15 @@ import (
 
 // The Phase 2 evidence gold set.
 //
-// Every other gate in this directory asks "does Go agree with the Node oracle".
-// That question cannot see a retrieval defect both implementations share, and
+// The parity gates that proved the port asked "does Go agree with the Node
+// oracle". That question cannot see a retrieval defect both implementations share, and
 // they shared one: a Skills or Education catalogue line was rank-1 for 44% of
 // real requirements, took two of the three candidate slots on 17.8% of them and
 // all three on 3.2% — evidence fit.Catalogue caps at Transferable before the
 // grader reads it. Both implementations agreed perfectly while doing it.
 //
 // So this gate asks the other question — does retrieval agree with a human —
-// and it is the only one here that needs one. It is the Node `batch/goldset.mjs`
+// and it needs one. It is the Node `batch/goldset.mjs`
 // idea moved to the space the defect lives in: that sheet ranked whole CV atoms
 // per OFFER for Phase 3 selection, this one ranks them per REQUIREMENT for
 // Phase 2 evidence.

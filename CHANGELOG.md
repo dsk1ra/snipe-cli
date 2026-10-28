@@ -141,6 +141,17 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ### Removed
 
+- The Node oracle and the parity gates. 0.6.0 kept `batch/*.mjs` for `cmd/gate`
+  to diff against and `batch/bench-tools/` to re-derive the tuned constants. The
+  October rework made Go differ from Node by design (skill aliases, whole-phrase
+  naming, the slimmed judgment), so the Phase 2 and Phase 3 parity checks fail
+  by construction, and no run touched Node. Gone with them: `scripts/`, the
+  `salary`, `cleanjd`, `p3`, `p3norm`, `fill`, `tex`, `select`, `atoms` and
+  `fit` gates, the npm tree (`package.json`, `package-lock.json`),
+  `prompts/local-tailor-prompt.md` and `prompts/Modelfile.snipe-cv`. Nothing in
+  the repo needs Node now. The
+  `oracle/node-complete` tag still has the Node tree. The Go gates (`goldset`,
+  `skills`, `typed`, `tailor`, `ats`, `e2`) stay.
 - Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
   Posting Legitimacy, and the judgment call stops writing them. Nothing
   downstream read them, yet they were most of that call's output: on the 18

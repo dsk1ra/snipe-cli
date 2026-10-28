@@ -3,11 +3,13 @@
 > **On the file names below.** This file is the authority for every measured
 > constant, and the passages explaining why a number is that number name the
 > Node modules the measurements were taken against. Those modules were retired
-> in v0.5.0 and the logic lives in `internal/` now. The names are left as
+> in v0.6.0, the oracle and `bench-tools/` that outlived it left on 2026-10-28,
+> and the logic lives in `internal/` now. The names are left as
 > written: a measurement is a record of what was run, and renaming the code it
 > ran on would make the record say something that never happened. The mapping is
-> in `docs/ARCHITECTURE.md`, and `oracle/node-complete` is the tag that still
-> has the files.
+> in `docs/ARCHITECTURE.md`. Every `node batch/...` command below runs from a
+> checkout of the `oracle/node-complete` tag, and `git log --diff-filter=D --
+> batch/` finds the last version of each file.
 
 Rules for everything under `batch/`. The repo-wide data contract, conventions
 and ethics rules are in the root `CLAUDE.md` and still apply.

@@ -336,8 +336,8 @@ func readOfferIDs(path string) ([]string, error) {
 	return parseOfferIDs(names), nil
 }
 
-// newTailorEnv reads the CV the gate is told to use, not the home's cv.md, as
-// gate p3 does: two runs have to rank the same document.
+// newTailorEnv reads the CV the gate is told to use, not the home's cv.md: two
+// runs have to rank the same document.
 func newTailorEnv(home, cvPath string) (*tailorEnv, error) {
 	// SNIPE_CODE points the prompts and templates at a dev tree when the home is
 	// the live install, whose pinned checkout may predate the prompt being tested.

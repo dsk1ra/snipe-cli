@@ -22,10 +22,6 @@ snipe is a single Go binary. It was a Node project through v0.4.0 and was
 ported component by component, each one checked against the original over a
 corpus of real postings before the original was removed.
 
-What is left of Node is the oracle those checks run against and the benchmark
-harness that measured the pipeline's constants. Neither is on the path of a
-run.
-
 Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
 applications and your reports never leave the machine.
 
@@ -288,27 +284,17 @@ go test ./...          # must stay green; this is what CI runs
 The tests needing Ollama, `pdflatex` or a real `cv.md` skip themselves, which on
 a runner is always.
 
-Beyond them, `cmd/gate` diffs this implementation against the Node original over
-a corpus of real postings. That is what proved the port, and it still runs: the
-oracle it compares against is the one part of the Node code that was kept.
+Beyond them, `cmd/gate` measures the pipeline over a corpus of real postings:
+`goldset` checks evidence selection against hand labels, `skills` the skills
+block, `tailor` and `ats` the finished page.
 
 ```bash
-npm install            # js-yaml, nothing else
-npm run gate:fit       # 351 of 351 identical
-npm run gate:salary    # 351 of 351
-npm run gate:cleanjd   # 351 of 351
-npm run gate:atoms     # 68 of 68
+go run ./cmd/gate skills <home>
+go run ./cmd/gate goldset score <home> batch/bench/evidence-goldset.md
 ```
 
 They are not in CI because they need the cached JD corpus and a real `cv.md`,
-both user data that is never committed. A gate agreeing with Node is not the
-same as being right, so `go run ./cmd/gate goldset` asks a human instead.
-
-Coverage counts every `.mjs` file, including the ones the suite never loads, so
-no exclusion flatters the number. None of it needs a GPU, a terminal or the
-network: the Ollama-driven phases run for real against a stand-in model server,
-the TUI is driven headlessly through a fake TTY, and the portal scanner and job
-providers get a fixture and a stub transport.
+both user data that is never committed.
 
 ## Data & privacy
 

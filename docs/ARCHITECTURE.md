@@ -38,7 +38,7 @@
 ## What is here
 
 One Go binary. `internal/` is a package per concern, `cmd/snipe` is the binary,
-`cmd/gate` the oracle harness.
+`cmd/gate` the quality gates.
 
 | concern | package |
 |---|---|
@@ -55,17 +55,10 @@ splits by what you lose if it is gone: `batch/state/` is the record,
 `batch/cache/` is derived and safe to delete, and the per-offer directories are
 their own thing.
 
-Two pieces of the Node implementation this replaced are still in the tree, and
-neither is on the path of a run:
-
-- `batch/*.mjs`, the oracle `cmd/gate` diffs against. It is what proved the port
-  and what would catch a regression in the ported logic.
-- `batch/bench-tools/`, the sweeps that measured the tuned constants.
-
-Everything else is at the `oracle/node-complete` tag.
-
-`cmd/gate` agreeing with the oracle is not the same as being right: both can
-share a defect and agree perfectly. `gate goldset` asks a human instead.
+The Node implementation this replaced, with the oracle and the sweeps that
+measured the tuned constants, is at the `oracle/node-complete` tag. `cmd/gate`
+measures the Go pipeline against hand labels and the cached postings instead:
+`gate goldset` asks a human, `gate skills` and `gate tailor` score the page.
 
 ## Data contract
 
@@ -74,8 +67,7 @@ share a defect and agree perfectly. `gate goldset` asks a human instead.
 `portals.yml`, `data/*`, `reports/*`, `output/*`, `interview-prep/*`
 
 **System layer — safe to edit as code:**
-`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`, `scripts/*`, and
-the Node oracle under `batch/` that the gates compare against.
+`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`.
 
 **Rule:** customization (archetypes, narrative, comp targets, location policy,
 scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
@@ -90,8 +82,8 @@ substring of the `### ` title. It is the escape hatch for an entry whose value i
 not its subject — an Honours dissertation loses the cut on any posting with no
 use for its topic, and is the first thing a reader of a graduate CV looks for.
 Each pin spends one of the three slots, so it is a project the ranker no longer
-chooses. **It also moves the benchmark**: the sweeps under `batch/bench-tools/`
-read this file, so a pin changes selection for every arm. Note it when comparing
+chooses. **It also moves the benchmark**: `gate tailor` reads this file too, so
+a pin changes selection for every arm. Note it when comparing
 against a run made before the pin existed.
 
 ## Entry points
