@@ -28,7 +28,7 @@ func VerbatimContent(selectedCV, cvText, jdText string, projectBullets int, alia
 
 	exp := make([]fill.ContentExp, 0, len(sel.Exp))
 	for _, e := range sel.Exp {
-		exp = append(exp, fill.ContentExp{Company: e.Company, Bullets: e.Bullets})
+		exp = append(exp, fill.ContentExp{Company: e.Company, Role: e.Role, Bullets: e.Bullets})
 	}
 
 	// An empty description makes PadProjectDescriptions build the whole blurb

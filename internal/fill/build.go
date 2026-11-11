@@ -134,7 +134,7 @@ func BuildExperience(cvExp []Exp, jsonExp []ContentExp, maxBullets int) string {
 	for _, e := range ordered {
 		bullets := e.Bullets
 		for _, je := range jsonExp {
-			if matchCompany(je.Company, e.Company) {
+			if matchCompany(je.Company, e.Company) && (je.Role == "" || strings.EqualFold(je.Role, e.Role)) {
 				bullets = je.Bullets
 				break
 			}

@@ -22,7 +22,9 @@ type Content struct {
 }
 
 type ContentExp struct {
-	Company string   `json:"company"`
+	Company string `json:"company"`
+	// Role tells two entries at one employer apart; empty matches any role.
+	Role    string   `json:"role,omitempty"`
 	Bullets []string `json:"bullets"`
 }
 

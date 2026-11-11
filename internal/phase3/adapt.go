@@ -496,7 +496,7 @@ func swapBullets(c fill.Content, repl map[string]string) fill.Content {
 	}
 	exp := make([]fill.ContentExp, len(c.Experience))
 	for i, e := range c.Experience {
-		exp[i] = fill.ContentExp{Company: e.Company, Bullets: swap(e.Bullets)}
+		exp[i] = fill.ContentExp{Company: e.Company, Role: e.Role, Bullets: swap(e.Bullets)}
 	}
 	c.Experience = exp
 	if picks, ok := c.ProjectPicks(); ok {
