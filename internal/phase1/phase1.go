@@ -231,7 +231,14 @@ func (s *Scorer) call(ctx context.Context, id int, jd, url string) (modelReply, 
 // since with no salary data it was a dead constant. The score is pure fit, in
 // the same 5:3 ratio Phase 2 uses, so the two phases stay consistent.
 func (s *Scorer) validate(m modelReply, jd, url string, id int, facts *extract.Facts, cvLangs []string) *Score {
-	cvRaw, nsRaw := clampDim(m.CVMatch, 3), clampDim(m.NorthStar, 3)
+	// north_star is looked up from the archetype's tier in profile.yml, as
+	// Phase 2 does, not taken from the model. On 108 fresh scores the 4B gave a
+	// primary archetype 1 or 3 often enough to put three offers under the gate
+	// that the lookup keeps: two the user rated 4 and one they applied to. It
+	// let no extra offer through that Phase 2 then scored under 3.
+	// ponytail: the model still writes north_star. Taking the field out of the
+	// schema changes the prompt, and that needs its own Phase 1 run.
+	cvRaw, nsRaw := clampDim(m.CVMatch, 3), s.Cfg.NorthStar(m.Archetype)
 
 	stack := fit.StackMismatchCap(jd, s.Cfg.CVRaw, 0, 0)
 	// Location and language come from the extracted facts, and nothing caps when

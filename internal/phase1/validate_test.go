@@ -1,12 +1,15 @@
 package phase1
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/extract"
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 )
 
 const testProfile = `location:
@@ -70,5 +73,39 @@ func TestValidateStackCapFromExtractedLanguages(t *testing.T) {
 	}
 	if got := s.validate(m, jd, "u", 1, facts, []string{"go", "swift"}); got.CVCap != 5 {
 		t.Errorf("a covered language caps nothing: %+v", got.CVCap)
+	}
+}
+
+// north_star comes from the archetype's tier, whatever number the model wrote.
+func TestValidateLooksNorthStarUpFromTheArchetype(t *testing.T) {
+	home := t.TempDir()
+	l := paths.Layout{Home: home, Code: home}
+	os.MkdirAll(filepath.Dir(l.ProfileYML()), 0o755)
+	os.WriteFile(l.CV(), []byte("Ada\n"), 0o644)
+	os.WriteFile(l.ProfileYML(), []byte(`target_roles:
+  archetypes:
+    - name: "Backend Engineer"
+      fit: "primary"
+    - name: "Platform Engineer"
+      fit: "secondary"
+`), 0o644)
+	cfg, err := config.Load(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Scorer{Cfg: cfg}
+	for _, c := range []struct {
+		archetype string
+		model     int
+		want      int
+	}{
+		{"Backend Engineer", 1, 5},  // the model undersold a primary target
+		{"Platform Engineer", 5, 3}, // and oversold a secondary one
+		{config.OutsideTargets, 4, 1},
+	} {
+		got := s.validate(modelReply{Role: "Engineer", Archetype: c.archetype, CVMatch: 4, NorthStar: c.model}, "Engineer\n", "u", 1, nil, nil)
+		if got.NorthStar != c.want {
+			t.Errorf("%s with the model's %d: north_star %d, want %d", c.archetype, c.model, got.NorthStar, c.want)
+		}
 	}
 }
