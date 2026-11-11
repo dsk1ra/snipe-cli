@@ -105,7 +105,7 @@ func TestSectionOrderOnTheRealDocuments(t *testing.T) {
 	// The four section headings render.go substitutes, with the certifications
 	// spelling that only appears when cv.md has any.
 	doc := strings.NewReplacer(
-		"{{SECTION_EXPERIENCE}}", "Work Experience",
+		"{{SECTION_EXPERIENCE}}", "Experience",
 		"{{SECTION_PROJECTS}}", "Projects",
 		"{{SECTION_EDUCATION}}", `Education \& Certifications`,
 		"{{SECTION_SKILLS}}", "Technical Skills",

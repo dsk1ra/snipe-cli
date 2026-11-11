@@ -22,7 +22,7 @@ command.
 layer extract cleanly — that is the ATS guarantee, and it is why the template
 keeps them.
 
-**Sections:** Technical Skills, Work Experience, Projects, Education. There is
+**Sections:** Technical Skills, Experience, Projects, Education. There is
 no summary: Jake's has none, and the pipeline's summary stage is disconnected
 in `internal/phase3`. Skills sits directly under the header rather than last,
 which is a deliberate departure from upstream — `internal/fill` treats it as
