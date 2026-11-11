@@ -121,6 +121,22 @@ func (t *Tailor) judgeSetup() (string, []Shot) {
 	return strings.TrimRight(string(b), "\n"), shots
 }
 
+// BenchScores is scoreBullets split in two for gate judge, with the exemplars
+// given rather than read from JudgeShots: base is the score with the judge
+// off, grades the judge's 0-3 per bullet. The live blend is
+// base + cvselect.JudgeBlend*grade.
+func (t *Tailor) BenchScores(ctx context.Context, reqs []string, jd string, shots []Shot) (base, grades map[string]float64, err error) {
+	if base, err = t.scoreBullets(ctx, reqs, jd, "", nil); err != nil {
+		return nil, nil, err
+	}
+	b, err := os.ReadFile(t.L.Prompt("p3-judge.md"))
+	if err != nil {
+		return nil, nil, err
+	}
+	grades, err = judgeGrades(ctx, t.OL, strings.TrimRight(string(b), "\n"), shots, cvBullets(t.Cfg.CVRaw), reqs, jd)
+	return base, grades, err
+}
+
 type grade struct {
 	ID    int     `json:"id"`
 	Grade float64 `json:"grade"`
