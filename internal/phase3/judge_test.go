@@ -36,9 +36,10 @@ const judgeCV = `# Sam Lee
 // fakeOllama embeds by text length and answers /api/chat with reply, recording
 // every chat body.
 type fakeOllama struct {
-	mu    sync.Mutex
-	chats []map[string]any
-	reply func() (int, string)
+	mu       sync.Mutex
+	chats    []map[string]any
+	embedded int // texts sent to /api/embed
+	reply    func() (int, string)
 }
 
 func (f *fakeOllama) serve(t *testing.T) *ollama.Client {
@@ -49,6 +50,9 @@ func (f *fakeOllama) serve(t *testing.T) *ollama.Client {
 		switch r.URL.Path {
 		case "/api/embed":
 			var vecs [][]float64
+			f.mu.Lock()
+			f.embedded += len(body["input"].([]any))
+			f.mu.Unlock()
 			for _, s := range body["input"].([]any) {
 				n := float64(len(s.(string)))
 				vecs = append(vecs, []float64{1, math.Mod(n, 7), math.Mod(n, 5)})
