@@ -323,23 +323,10 @@ func (t *Tailor) embed(ctx context.Context, texts []string) ([][]float64, error)
 }
 
 // fingerprint identifies what actually produced the vectors, so a rebuilt
-// embedding model invalidates the spike cache instead of silently keeping it.
+// embedding model or a change of device invalidates the spike cache instead of
+// silently keeping it.
 func (t *Tailor) fingerprint(ctx context.Context) string {
-	var show struct {
-		Details struct {
-			ParentModel   string `json:"parent_model"`
-			ParameterSize string `json:"parameter_size"`
-			Quantization  string `json:"quantization_level"`
-		} `json:"details"`
-	}
-	if err := t.OL.Show(ctx, ollama.ModelEmbed, &show); err != nil {
-		return ollama.ModelEmbed
-	}
-	parent := show.Details.ParentModel
-	if parent == "" {
-		parent = ollama.ModelEmbed
-	}
-	return strings.Join([]string{ollama.ModelEmbed, parent, show.Details.ParameterSize, show.Details.Quantization}, "|")
+	return (&embed.Indexer{OL: t.OL}).Fingerprint(ctx)
 }
 
 func maxCosine(qs [][]float64, v []float64) float64 {

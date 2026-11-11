@@ -207,7 +207,27 @@ type embedRequest struct {
 	Model    string   `json:"model"`
 	Input    []string `json:"input"`
 	Truncate bool     `json:"truncate"`
+	// Always sent, never omitted: Ollama serves a request that names no
+	// num_gpu from whichever instance of the model is loaded.
+	Options struct {
+		NumGPU int `json:"num_gpu"`
+	} `json:"options"`
 }
+
+// EmbedDevice is where the embedder runs, "cpu" or "gpu".
+//
+// Only one model fits in 6 GB of VRAM. On the GPU the embedder evicts the 30B
+// every time it is called, 12 to 26 s to swap in and 6 s more for the next chat
+// call to load the 30B back, some 45 s an offer. On the CPU it loads in a
+// second beside the 30B and embeds about 16 short texts a second against 70,
+// which a dozen requirements never notice.
+//
+// The CPU also returns the same vector for the same text every time, which the
+// GPU does not, and the two disagree enough to pick a different top three for
+// one requirement in seven. So it is one device for everything, and the device
+// is part of embed.Indexer.Fingerprint: changing it rebuilds every cache of
+// vectors rather than comparing across the two.
+const EmbedDevice = "cpu"
 
 type embedResponse struct {
 	Embeddings [][]float64 `json:"embeddings"`
@@ -223,7 +243,11 @@ func (c *Client) Embed(ctx context.Context, texts []string, model string) ([][]f
 	if len(texts) == 0 {
 		return nil, nil
 	}
-	body, err := json.Marshal(embedRequest{Model: model, Input: texts, Truncate: true})
+	req := embedRequest{Model: model, Input: texts, Truncate: true}
+	if EmbedDevice == "gpu" {
+		req.Options.NumGPU = 99 // above any layer count: offload everything
+	}
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}

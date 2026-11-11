@@ -107,8 +107,10 @@ func (ix *Indexer) Fingerprint(ctx context.Context) string {
 		fp = strings.Join([]string{model, parent, show.Details.ParameterSize, show.Details.Quantization}, "|")
 	}
 	// An offline or older Ollama degrades to the tag, which is the old behaviour.
-	ix.fpCache = fp
-	return fp
+	// The device is part of what produced the vectors: the CPU and the GPU give
+	// different ones for the same text (see ollama.EmbedDevice).
+	ix.fpCache = fp + "|" + ollama.EmbedDevice
+	return ix.fpCache
 }
 
 func (ix *Indexer) model() string {
