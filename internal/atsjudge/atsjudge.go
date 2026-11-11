@@ -273,6 +273,11 @@ func (j *Judge) ask(ctx context.Context, q, cv, cvNorm, cvHash string) (cached, 
 var (
 	verdictRe = regexp.MustCompile(`(?im)^\s*\**\s*VERDICT\s*:?\s*\**\s*(met|partly|unmet)\b`)
 	quoteRe   = regexp.MustCompile(`(?im)^\s*\**\s*QUOTE\s*:?\s*\**\s*(.*)$`)
+	// bareRe is the same two lines with the labels left off. gemma3 answers
+	// that way when the CV is the whole of cv.md rather than one page, and
+	// every --ceiling call came back "no usable reply". The verdict has to be
+	// the whole first line, so prose that opens with "Met" is still no verdict.
+	bareRe = regexp.MustCompile(`(?is)^\s*\**(met|partly|unmet)\**\.?[ \t]*(?:\n(.*))?$`)
 )
 
 // parseReply reads the two labelled lines. Quote marks the model wraps the
@@ -281,7 +286,12 @@ var (
 func parseReply(text string) (verdict, quote string, ok bool) {
 	m := verdictRe.FindStringSubmatch(text)
 	if m == nil {
-		return "", "", false
+		b := bareRe.FindStringSubmatch(text)
+		if b == nil {
+			return "", "", false
+		}
+		quote, _, _ = strings.Cut(strings.TrimSpace(b[2]), "\n")
+		return strings.ToLower(b[1]), strings.Trim(strings.TrimSpace(quote), "\"“”'`*"), true
 	}
 	verdict = strings.ToLower(m[1])
 	if q := quoteRe.FindStringSubmatch(text); q != nil {

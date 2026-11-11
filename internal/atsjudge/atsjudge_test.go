@@ -299,14 +299,17 @@ func TestParseReplyIsLenientAboutQuoting(t *testing.T) {
 		"VERDICT: met\nQUOTE: Wrote Kafka consumers",
 		"**VERDICT:** met\nQUOTE: “Wrote Kafka consumers”",
 		"verdict: Met\nquote: 'Wrote Kafka consumers'\n\nExtra commentary.",
+		"met\nWrote Kafka consumers", // the labels left off
 	} {
 		v, q, ok := parseReply(in)
 		if !ok || v != "met" || q != "Wrote Kafka consumers" {
 			t.Errorf("%q -> %q %q %v", in, v, q, ok)
 		}
 	}
-	if _, _, ok := parseReply("I think the CV is fine."); ok {
-		t.Error("a reply without a verdict parsed")
+	for _, in := range []string{"I think the CV is fine.", "Met the brief in full.\nWrote Kafka consumers"} {
+		if _, _, ok := parseReply(in); ok {
+			t.Errorf("%q parsed as a verdict", in)
+		}
 	}
 }
 
