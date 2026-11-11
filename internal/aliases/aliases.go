@@ -22,6 +22,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/ledger"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/phase3"
@@ -96,7 +97,15 @@ func Suggest(ctx context.Context, l paths.Layout, cfg *config.Config, ol *ollama
 
 	var out []Suggestion
 	if len(terms) > 0 {
-		iv, err := embed.Batch(ctx, ol, items, ollama.ModelEmbed)
+		// The same 800 terms come back on every run, and embedding them all was
+		// 21 s at the end of each one. Kept by text, a run embeds only the new.
+		// ponytail: a term no posting uses any more stays in the file; delete
+		// the file to shrink it.
+		emb := ledger.CachedEmbed(filepath.Join(l.CacheDir(), "alias-embed.json"), (&embed.Indexer{OL: ol}).Fingerprint(ctx),
+			func(ctx context.Context, texts []string) ([][]float64, error) {
+				return embed.Batch(ctx, ol, texts, ollama.ModelEmbed)
+			})
+		iv, err := emb(ctx, items)
 		if err != nil {
 			return 0, err
 		}
@@ -104,7 +113,7 @@ func Suggest(ctx context.Context, l paths.Layout, cfg *config.Config, ol *ollama
 		for i, k := range terms {
 			q[i] = instruct + uses[k].spelling()
 		}
-		tv, err := embed.Batch(ctx, ol, q, ollama.ModelEmbed)
+		tv, err := emb(ctx, q)
 		if err != nil {
 			return 0, err
 		}

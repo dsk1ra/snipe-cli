@@ -154,6 +154,15 @@ func TestSuggest(t *testing.T) {
 		t.Errorf("second row %+v, want the rejection kept", ss[1])
 	}
 
+	// A second run finds every vector in alias-embed.json and embeds nothing.
+	before := len(asked)
+	if _, err := Suggest(context.Background(), l, cfg, ollama.New(srv.URL, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != before {
+		t.Errorf("second run embedded %v again", asked[before:])
+	}
+
 	// Accepting writes the alias and takes the row off the queue.
 	if err := Accept(l, "Apache Kafka", "Kafka"); err != nil {
 		t.Fatal(err)
