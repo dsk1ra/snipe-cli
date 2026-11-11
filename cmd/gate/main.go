@@ -13,7 +13,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gate <goldset|skills|typed|tailor|ats|judge> <home> ...\n       gate e2 <home> [--checker minicheck|eval] [--split whole|clause] [--n 150] [--out report.json]")
+		fmt.Fprintln(os.Stderr, "usage: gate <goldset|skills|typed|tailor|ats|judge|labels> <home> ...\n       gate e2 <home> [--checker minicheck|eval] [--split whole|clause] [--n 150] [--out report.json]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -25,6 +25,8 @@ func main() {
 		os.Exit(gateTailor(os.Args[2:]))
 	case "judge":
 		os.Exit(gateJudge(os.Args[2:]))
+	case "labels":
+		os.Exit(gateLabels(os.Args[2:]))
 	case "ats":
 		os.Exit(gateATS(os.Args[2:]))
 	case "e2":
