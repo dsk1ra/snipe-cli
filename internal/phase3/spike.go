@@ -48,10 +48,12 @@ type spikeCache struct {
 // posting's requirements, or nil when there is not enough corpus to be worth
 // subtracting.
 //
+// bv is the bullets' vectors, which scoreBullets already has.
+//
 // nil is not an error: any failure here — too few reports, an unreadable cache,
 // an embedder that will not answer — must leave the plain cosine scores
 // standing rather than take the offer down.
-func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, fingerprint string) []float64 {
+func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, bv [][]float64, fingerprint string) []float64 {
 	// Held across the cache read as well as the rebuild: a worker that waits
 	// here has to see the file the winner wrote, or it does the same minutes of
 	// work over again for the same answer.
@@ -104,18 +106,19 @@ func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, fingerpr
 		reqSets = append(reqSets, cvselect.ExtractBlockBRequirements(string(b)))
 	}
 	if len(fresh) > 0 {
-		flat := append([]string{}, bullets...)
+		// Only the requirements: the caller has just embedded the bullets.
+		var flat []string
 		for _, set := range reqSets {
 			flat = append(flat, set...)
 		}
 		var vecs [][]float64
-		if len(flat) > len(bullets) { // a report with no Block B needs no embedding
+		if len(flat) > 0 { // a report with no Block B needs no embedding
 			var err error
 			if vecs, err = t.embed(ctx, flat); err != nil || len(vecs) != len(flat) {
 				return nil
 			}
 		}
-		at := len(bullets)
+		at := 0
 		for k, set := range reqSets {
 			// A report with no parseable Block B keeps an empty row, so it is not
 			// read again and adds nothing to the mean. A zero would drag it down.
@@ -126,7 +129,7 @@ func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, fingerpr
 				// Max over the set's requirements, matching how a live offer is scored.
 				row = make([]float64, len(bullets))
 				for i := range bullets {
-					row[i] = maxCosine(qv, vecs[i])
+					row[i] = maxCosine(qv, bv[i])
 				}
 			}
 			cache.Rows[fresh[k]] = row

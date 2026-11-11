@@ -275,7 +275,7 @@ func (t *Tailor) scoreBullets(ctx context.Context, reqs []string, jd, system str
 	// cosine part sevenfold, which matters the moment a judge term calibrated
 	// against unscaled cosine is added back.
 	if w := cvselect.DefaultOptions().SpikeWeight; w > 0 {
-		if bg := t.spikeBackground(ctx, bullets, t.fingerprint(ctx)); bg != nil {
+		if bg := t.spikeBackground(ctx, bullets, bv, t.fingerprint(ctx)); bg != nil {
 			alpha := cvselect.SpikeAlpha(w)
 			for i := range scores {
 				scores[i] -= alpha * bg[i]

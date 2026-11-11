@@ -33,28 +33,33 @@ func TestSpikeBackgroundEmbedsOnlyNewReports(t *testing.T) {
 		writeReport(t, dir, n, blockB(n))
 	}
 	ctx := context.Background()
+	bv, err := tl.embed(ctx, bullets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.embedded = 0
 
-	if tl.spikeBackground(ctx, bullets, "fp") == nil {
+	if tl.spikeBackground(ctx, bullets, bv, "fp") == nil {
 		t.Fatal("no background over 20 reports")
 	}
-	if want := len(bullets) + 2*spikeMinOffers; f.embedded != want {
+	if want := 2 * spikeMinOffers; f.embedded != want {
 		t.Fatalf("first build embedded %d texts, want %d", f.embedded, want)
 	}
-	tl.spikeBackground(ctx, bullets, "fp")
-	if want := len(bullets) + 2*spikeMinOffers; f.embedded != want {
+	tl.spikeBackground(ctx, bullets, bv, "fp")
+	if want := 2 * spikeMinOffers; f.embedded != want {
 		t.Fatalf("an unchanged corpus embedded again: %d texts", f.embedded)
 	}
 
 	writeReport(t, dir, 21, blockB(21))
 	writeReport(t, dir, 22, "# a report with no evidence table\n")
 	before := f.embedded
-	inc := tl.spikeBackground(ctx, bullets, "fp")
-	if got := f.embedded - before; got != len(bullets)+2 {
-		t.Fatalf("one new report embedded %d texts, want the bullets and its 2 requirements", got)
+	inc := tl.spikeBackground(ctx, bullets, bv, "fp")
+	if got := f.embedded - before; got != 2 {
+		t.Fatalf("one new report embedded %d texts, want its 2 requirements", got)
 	}
 
 	os.Remove(tl.L.Spike())
-	full := tl.spikeBackground(ctx, bullets, "fp")
+	full := tl.spikeBackground(ctx, bullets, bv, "fp")
 	for i := range full {
 		if inc[i] != full[i] {
 			t.Fatalf("bullet %d: incremental mean %v, rebuilt mean %v", i, inc[i], full[i])
@@ -63,8 +68,8 @@ func TestSpikeBackgroundEmbedsOnlyNewReports(t *testing.T) {
 
 	// A different embedder is a different vector space: nothing carries over.
 	before = f.embedded
-	tl.spikeBackground(ctx, bullets, "other")
-	if got := f.embedded - before; got != len(bullets)+2*(spikeMinOffers+1) {
+	tl.spikeBackground(ctx, bullets, bv, "other")
+	if got := f.embedded - before; got != 2*(spikeMinOffers+1) {
 		t.Fatalf("a new fingerprint embedded %d texts, want everything", got)
 	}
 }
