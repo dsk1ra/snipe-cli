@@ -161,6 +161,12 @@ type Row struct {
 	// Shadow says where the old patterns graded the row differently from the
 	// parsed terms; it goes to cap_shadow in the eval file.
 	Shadow string `json:"shadow,omitempty"`
+	// Shown is every line the grader was offered and Picked the one it chose,
+	// "" for none. A Gap row prints no evidence, so `gate goldset grade` reads
+	// these to tell a retrieval miss from a grading miss. Not serialised: the
+	// row's JSON is part of the judgment's checkpoint key.
+	Shown  []string `json:"-"`
+	Picked string   `json:"-"`
 }
 
 type match struct {
@@ -361,7 +367,10 @@ func (e *Evaluator) stage2(ctx context.Context, id int, reqs []Requirement, cvIn
 		row := Row{
 			Requirement: r.Text, MustHave: r.MustHave, Strength: strength,
 			SameActivity: m.SameActivity, SameTooling: m.SameTooling,
-			Evidence: "—", Note: m.Note, Shadow: shadow,
+			Evidence: "—", Note: m.Note, Shadow: shadow, Picked: atomText,
+		}
+		for _, c := range candidates[i] {
+			row.Shown = append(row.Shown, c.Text)
 		}
 		if shown >= 0 {
 			row.Evidence = candidates[i][shown].Text

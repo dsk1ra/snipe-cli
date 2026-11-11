@@ -50,7 +50,8 @@ import (
 func gateGoldset(args []string) int {
 	if len(args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md [--remap]]\n"+
-			"       gate goldset score <home> <sheet.md> [--facts]")
+			"       gate goldset score <home> <sheet.md> [--facts]\n"+
+			"       gate goldset grade <home> <sheet.md>")
 		return 2
 	}
 	home := args[1]
@@ -71,6 +72,12 @@ func gateGoldset(args []string) int {
 			return 2
 		}
 		return goldsetScore(home, args[2], len(args) > 3 && args[3] == "--facts")
+	case "grade":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: gate goldset grade <home> <sheet.md>")
+			return 2
+		}
+		return goldsetGrade(home, args[2])
 	}
 	fmt.Fprintf(os.Stderr, "unknown goldset mode %q\n", args[0])
 	return 2
