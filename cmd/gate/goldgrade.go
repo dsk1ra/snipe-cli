@@ -153,6 +153,24 @@ func goldsetGrade(home, sheet string) int {
 				shown++
 			}
 			fmt.Printf("  R%d %-12s %-22s %s\n", k+1, row.Strength, mark, clipTo(c.req, 70))
+			// A miss is only useful with the lines in front of you: what it
+			// cited, and what the sheet wanted and whether the grader saw it.
+			if mark != "ok" && mark != "blank, gap" {
+				if row.Picked != "" {
+					fmt.Printf("       cited   %s\n", clipTo(row.Picked, 110))
+				}
+				for id := range index {
+					if c.want[id] {
+						seen := "not shown"
+						for _, t := range row.Shown {
+							if t == index[id].Text {
+								seen = "shown"
+							}
+						}
+						fmt.Printf("       ticked  %s (%s)\n", clipTo(index[id].Text, 110), seen)
+					}
+				}
+			}
 		}
 	}
 
