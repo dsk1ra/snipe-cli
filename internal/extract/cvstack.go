@@ -57,7 +57,7 @@ func (e *Extractor) cvLanguages(ctx context.Context, call bool) ([]string, error
 				ollama.F("language", ollama.Str(Languages...)),
 			)), 200)),
 		)),
-		Options: ollama.Options{Temperature: 0, NumCtx: 8192},
+		Options: ollama.Options{Temperature: 0, NumCtx: numCtx},
 		Timeout: 3 * time.Minute, Label: "p1.cvstack",
 	}, &r)
 	if err != nil {

@@ -32,8 +32,11 @@ import (
 )
 
 // numCtx is fixed so the same prompt is the same request on every run. The
-// posting is capped at 10k characters upstream, about 2.5k tokens.
-const numCtx = 8192
+// posting is capped at 10k characters upstream, about 2.5k tokens, so 8192
+// would hold it. It is 12288 because that is what p1.score asks for: Ollama
+// reloads a model whenever num_ctx changes, and with 8192 here the 4B was
+// loaded twice per new posting, 3.7 s each time.
+const numCtx = 12288
 
 // Posting is the text the extraction reads and the quotes are checked against:
 // the cleaned posting, capped. Every caller must use it, or the cache misses.
