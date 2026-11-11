@@ -183,7 +183,7 @@ func stage2Schema() ollama.Schema {
 			ollama.F("req", ollama.Obj(ollama.F("type", "integer"), ollama.F("minimum", 1))),
 			// `pick` first so the model commits to a piece of evidence before it
 			// judges it — the axes are then about a fixed line, not a moving one.
-			ollama.F("pick", ollama.Str("A", "B", "C", "none")),
+			ollama.F("pick", ollama.Str("A", "B", "C", "D", "none")),
 			ollama.F("same_activity", ollama.Obj(ollama.F("type", "boolean"))),
 			// Three-way, not boolean: plenty of requirements name no technology
 			// at all (a degree, communication, mentoring). Forcing a yes/no
@@ -195,17 +195,24 @@ func stage2Schema() ollama.Schema {
 	))
 }
 
-const letters = "ABC"
+const letters = "ABCD"
 
-// topKCandidates is deliberately 3.
+// TopKCandidates is how many CV lines the grader sees per requirement.
 //
-// Measured: top-6 with a 320-char slice cut retrieval starvation hard (pick
-// "none" 33 → 21 rows, Gap-despite-tech-in-CV 7 → 3) but made the model MORE
-// generous overall — rho 0.522 → 0.468, pair accuracy 78.9% → 75.7%,
-// mis-grounded 6.3% → 7.6%, one atom answering 5 of 12 requirements on one
-// offer, and another overflowing stage 3. More candidates gave it more rope to
-// find a plausible-looking line for every requirement.
-const topKCandidates = 3
+// It was 3. On the evidence gold sheet (63 ticked requirements, 25 blank) a
+// fourth candidate puts a ticked line in front of the grader for 57 of them
+// instead of 50, and a fifth adds none. Graded end to end with 4: 38 citations
+// land on a ticked line against 35, 24 on an unticked one against 26, false
+// gaps 1 against 2, and 10 of the blank requirements are graded Gap against 9.
+// On the 18 rated offers the score orders 67.5 of 83 pairs either way.
+//
+// Six is the number not to go back to. Top-6 with a 320-char slice cut
+// retrieval starvation hard (pick "none" 33 → 21 rows) and made the model more
+// generous overall: rho 0.522 → 0.468, pair accuracy 78.9% → 75.7%, one atom
+// answering 5 of 12 requirements on one offer. That run changed the slice and
+// the prompt as well, so it never said which of the three did it; at 4 with
+// nothing else changed the generosity does not appear.
+const TopKCandidates = 4
 
 // TopCandidates ranks demonstrations and catalogue lines in separate pools.
 //
@@ -226,9 +233,8 @@ const topKCandidates = 3
 // catalogue line reachable for what it genuinely answers: a degree, or a
 // technology no bullet names.
 //
-// One slot, not a fourth: k=3 was measured, and top-6 made the model markedly
-// more generous (rho 0.522 → 0.468). Substituting keeps the rope the same
-// length rather than handing it more.
+// The catalogue line substitutes for the last demonstration rather than adding
+// a slot, so k is the whole of what the grader sees.
 func TopCandidates(q []float64, demo, catalogue []embed.Atom, k int) ([]embed.Scored, error) {
 	out, err := embed.TopK(q, demo, k)
 	if err != nil {
@@ -283,7 +289,7 @@ func (e *Evaluator) stage2(ctx context.Context, id int, reqs []Requirement, cvIn
 	candidates := make([][]embed.Scored, len(reqs))
 	var b strings.Builder
 	for i := range reqs {
-		candidates[i], err = TopCandidates(vecs[i], demo, catalogue, topKCandidates)
+		candidates[i], err = TopCandidates(vecs[i], demo, catalogue, TopKCandidates)
 		if err != nil {
 			return nil, err
 		}

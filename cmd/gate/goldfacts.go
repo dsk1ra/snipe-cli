@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/embed"
 	"github.com/dsk1ra/snipe-cli/internal/fit"
@@ -18,7 +19,7 @@ import (
 // fact counts through its parent bullet, and a bullet that two picks share
 // counts once: a slot spent on a second fact of a bullet already shown adds
 // nothing for the grader to see. Printed beside the bullet ranker's numbers on
-// the same requirements; the verdict is on hit@3 and on distinct ticked bullets
+// the same requirements; the verdict is on hit@k and on distinct ticked bullets
 // per slot.
 func goldsetFacts(home string, index []embed.Atom, marked []goldCase, vecs [][]float64, bulletHits, bulletSlots int) int {
 	l := paths.Layout{Home: home, Code: home}
@@ -51,7 +52,7 @@ func goldsetFacts(home string, index []embed.Atom, marked []goldCase, vecs [][]f
 		}
 	}
 
-	const prodK = 3
+	const prodK = phase2.TopKCandidates
 	var distinctHits, slots, dup int
 	var hit [prodK + 1]int
 	for k := 1; k <= prodK; k++ {
@@ -141,11 +142,18 @@ func goldsetFacts(home string, index []embed.Atom, marked []goldCase, vecs [][]f
 	}
 	n := float64(len(marked))
 	fmt.Printf("\nfacts: %d fact atoms from the ledger plus %d other atoms\n", nFacts, len(fx)-nFacts)
-	fmt.Printf("  %-22s  hit@1 %.3f  hit@2 %.3f  hit@3 %.3f   p@3 %.3f (distinct ticked bullets per slot)   %d repeat-bullet slots\n\n",
-		"facts, two pool", float64(hit[1])/n, float64(hit[2])/n, float64(hit[3])/n, float64(distinctHits)/float64(slots), dup)
-	fmt.Printf("  %-22s  hit@1 %.3f  hit@2 %.3f  hit@3 %.3f   p@3 %.3f\n",
-		"bullets by best fact", float64(maxHit[1])/n, float64(maxHit[2])/n, float64(maxHit[3])/n, float64(maxDistinct)/float64(maxSlots))
-	fmt.Printf("  bullets, two pool: p@3 %.3f\n\n", float64(bulletHits)/float64(bulletSlots))
+	hits := func(h [prodK + 1]int) string {
+		var b strings.Builder
+		for k := 1; k <= prodK; k++ {
+			fmt.Fprintf(&b, "  hit@%d %.3f", k, float64(h[k])/n)
+		}
+		return b.String()
+	}
+	fmt.Printf("  %-22s%s   p@%d %.3f (distinct ticked bullets per slot)   %d repeat-bullet slots\n\n",
+		"facts, two pool", hits(hit), prodK, float64(distinctHits)/float64(slots), dup)
+	fmt.Printf("  %-22s%s   p@%d %.3f\n",
+		"bullets by best fact", hits(maxHit), prodK, float64(maxDistinct)/float64(maxSlots))
+	fmt.Printf("  bullets, two pool: p@%d %.3f\n\n", prodK, float64(bulletHits)/float64(bulletSlots))
 	return 0
 }
 

@@ -518,7 +518,7 @@ func goldsetScore(home, sheet string, facts bool) int {
 	// the requirement's one real match. Ranked separately at each k rather than
 	// sliced from the k=3 result — the two-pool ranker allocates its slots
 	// between the pools, so its top 1 of 3 is not what it would return for 1.
-	const prodK = 3
+	const prodK = phase2.TopKCandidates
 	at := make([]struct{ before, after tally }, prodK+1)
 	for k := 1; k <= prodK; k++ {
 		for i, c := range marked {
@@ -552,8 +552,13 @@ func goldsetScore(home, sheet string, facts bool) int {
 		fmt.Printf("   %.2f\n", float64(pick(prodK).catSlots)/n)
 	}
 	fmt.Printf("%s — %d labelled requirements over %d atoms\n\n", filepath.Base(sheet), len(marked), len(index))
-	fmt.Printf("  %-22s  %-5s  %-5s  %-5s  %-5s  %-5s  %-5s   %s\n",
-		"", "p@1", "p@2", "p@3", "hit@1", "hit@2", "hit@3", "cat/req")
+	fmt.Printf("  %-22s", "")
+	for _, m := range []string{"p", "hit"} {
+		for k := 1; k <= prodK; k++ {
+			fmt.Printf("  %-5s", fmt.Sprintf("%s@%d", m, k))
+		}
+	}
+	fmt.Printf("   %s\n", "cat/req")
 	row("single pool (before)", func(k int) tally { return at[k].before })
 	row("two pool (after)", func(k int) tally { return at[k].after })
 	fmt.Println()
