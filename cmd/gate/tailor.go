@@ -336,6 +336,17 @@ func readOfferIDs(path string) ([]string, error) {
 	return parseOfferIDs(names), nil
 }
 
+// gateClient is the client for a gate's model calls. A gate repeats one call
+// across postings and the model reuses the prefix they share. SNIPE_GATE_COLD=1
+// makes every call read its prompt from the start (see ollama.Client.Cold). Run
+// a gate both ways: the difference is noise that rerunning the same binary
+// cannot show, because a rerun repeats the same call states.
+func gateClient() *ollama.Client {
+	c := ollama.New("", nil)
+	c.Cold = os.Getenv("SNIPE_GATE_COLD") != ""
+	return c
+}
+
 // newTailorEnv reads the CV the gate is told to use, not the home's cv.md: two
 // runs have to rank the same document.
 func newTailorEnv(home, cvPath string) (*tailorEnv, error) {
@@ -365,7 +376,7 @@ func newTailorEnv(home, cvPath string) (*tailorEnv, error) {
 	}
 	return &tailorEnv{
 		l: l, cfg: cfg, tpl: string(tpl), tmp: tmp,
-		t: &phase3.Tailor{L: l, Cfg: cfg, OL: ollama.New("", nil)},
+		t: &phase3.Tailor{L: l, Cfg: cfg, OL: gateClient()},
 	}, nil
 }
 

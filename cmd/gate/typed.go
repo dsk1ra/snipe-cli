@@ -23,7 +23,7 @@ import (
 const typedUsage = "usage: gate typed <home> [--n 30] [--grade 8]"
 
 // typedClient is the model client; a test points it at a fake server.
-var typedClient = func() *ollama.Client { return ollama.New("", nil) }
+var typedClient = gateClient
 
 // gateTyped is the PRD §5.2 stage 1 check: parse a spread of cached postings
 // with the typed schema and report how often the quote holds, what kinds come

@@ -43,7 +43,7 @@ func goldsetGrade(home, sheet string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	ol := ollama.New("", nil)
+	ol := gateClient()
 	ix := &embed.Indexer{OL: ol, CVPath: l.CVIndex(), JDPath: l.JDIndex(), JDsDir: l.JDs()}
 	index, err := ix.LoadCV(context.Background(), embed.ExtractAtoms(cfg.CVRaw, embed.ReadFileOr(l.Digest())))
 	if err != nil {

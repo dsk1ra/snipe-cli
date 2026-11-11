@@ -32,6 +32,14 @@ type Client struct {
 	BaseURL string
 	HTTP    *http.Client
 	Timing  *TimingLog
+	// Cold sends a throwaway one-token chat before every real one, so the real
+	// call shares no prefix with what the model last read. A model that stays
+	// loaded keeps the previous prompt and re-reads only what differs. The two
+	// paths differ in floating point, and at temperature 0 that is enough to
+	// change an answer: the Phase 3 judge graded 5 of 12 postings differently
+	// from a byte-identical prompt, warm against cold. The gates set it under
+	// SNIPE_GATE_COLD to measure how far a number moves on call state alone.
+	Cold bool
 }
 
 func New(baseURL string, timing *TimingLog) *Client {
@@ -129,6 +137,18 @@ func (c *Client) Chat(ctx context.Context, req Request, out any) error {
 	}
 
 	dumpRequest(req.Label, body)
+	if c.Cold {
+		// Same model and window, so nothing reloads; another prompt, so the
+		// real one shares no prefix with what the model last read. A failure
+		// here is the real call's to report.
+		flush, _ := json.Marshal(chatRequest{
+			Model:    req.Model,
+			Messages: []Message{{Role: "system", Content: "-"}, {Role: "user", Content: "-"}},
+			Options:  Options{NumCtx: req.Options.NumCtx, NumPredict: 1},
+			Think:    think,
+		})
+		_ = c.post(ctx, "/api/chat", flush, &chatResponse{})
+	}
 	var resp chatResponse
 	if err := c.post(ctx, "/api/chat", body, &resp); err != nil {
 		return fmt.Errorf("%s: %w", req.Label, err)
