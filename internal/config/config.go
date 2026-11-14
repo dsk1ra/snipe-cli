@@ -27,6 +27,8 @@ type Config struct {
 	ProfileMD  string // config/profile.md
 	ProfileYML string // config/profile.yml, raw text
 	Archetypes []string
+	// fit is each archetype's `fit` tier from profile.yml, read by NorthStar.
+	fit        map[string]string
 	Comp       *text.CompTargets
 	Thresholds Thresholds
 	Candidate  Candidate
@@ -34,6 +36,10 @@ type Config struct {
 	// PinnedProjects ship whatever the posting scores them. A deliberate
 	// override of the relevance ranker, so it belongs in the user layer.
 	PinnedProjects []string
+	// Aliases are config/skills.yml's approved spellings of a cv.md skill item,
+	// keyed by the item lowercased. The tailored CV prints whichever spelling the
+	// posting uses. Nil when the file is absent.
+	Aliases map[string][]string
 }
 
 // Goals are the targets the queue's side panel measures the day against.
@@ -81,13 +87,22 @@ func (s scalar) String() string { return string(s) }
 // Thresholds are the profile's own gates, overriding the built-in defaults.
 type Thresholds struct {
 	AutoPDFScore float64
+	// InferMinScore is the lowest Phase 2 score at which a posting's tool may be
+	// proposed as an inference about the CV (PRD-TAILORING-REWORK §1.1). The 4.0
+	// default is a guess; E7 tunes it.
+	InferMinScore float64
 }
+
+// DefaultInferMinScore is Thresholds.InferMinScore until profile.yml says
+// otherwise.
+const DefaultInferMinScore = 4.0
 
 type profileDoc struct {
 	TargetRoles struct {
 		Archetypes []archetype `yaml:"archetypes"`
 	} `yaml:"target_roles"`
 	AutoPDFScoreThreshold float64   `yaml:"auto_pdf_score_threshold"`
+	InferMinScore         float64   `yaml:"infer_min_score"`
 	Candidate             Candidate `yaml:"candidate"`
 	Goals                 Goals     `yaml:"goals"`
 	CV                    struct {
@@ -99,6 +114,7 @@ type profileDoc struct {
 // appear in real profiles.
 type archetype struct {
 	Name string
+	Fit  string
 }
 
 func (a *archetype) UnmarshalYAML(b []byte) error {
@@ -109,11 +125,12 @@ func (a *archetype) UnmarshalYAML(b []byte) error {
 	}
 	var m struct {
 		Name string `yaml:"name"`
+		Fit  string `yaml:"fit"`
 	}
 	if err := yaml.Unmarshal(b, &m); err != nil {
 		return err
 	}
-	a.Name = m.Name
+	a.Name, a.Fit = m.Name, m.Fit
 	return nil
 }
 
@@ -133,17 +150,23 @@ func Load(l paths.Layout) (*Config, error) {
 	c.ProfileYML = readSafe(l.ProfileYML())
 	c.Comp = text.ParseCompTargets(c.ProfileYML)
 	c.Thresholds.AutoPDFScore = 3.0
+	c.Thresholds.InferMinScore = DefaultInferMinScore
 	c.Goals = DefaultGoals
 
 	var doc profileDoc
 	if yaml.Unmarshal([]byte(c.ProfileYML), &doc) == nil {
+		c.fit = map[string]string{}
 		for _, a := range doc.TargetRoles.Archetypes {
 			if a.Name != "" {
 				c.Archetypes = append(c.Archetypes, a.Name)
+				c.fit[a.Name] = strings.ToLower(strings.TrimSpace(a.Fit))
 			}
 		}
 		if doc.AutoPDFScoreThreshold > 0 {
 			c.Thresholds.AutoPDFScore = doc.AutoPDFScoreThreshold
+		}
+		if doc.InferMinScore > 0 {
+			c.Thresholds.InferMinScore = doc.InferMinScore
 		}
 		// Per field, so a profile that sets one goal does not zero the other
 		// two back to nothing.
@@ -158,6 +181,25 @@ func Load(l paths.Layout) (*Config, error) {
 		}
 		c.Candidate = doc.Candidate
 		c.PinnedProjects = doc.CV.PinnedProjects
+	}
+
+	var skills struct {
+		Aliases map[string][]string `yaml:"aliases"`
+	}
+	if b, err := os.ReadFile(l.SkillsYML()); err == nil {
+		// Unlike profile.yml a broken skills.yml is reported, not ignored: the
+		// file exists only to be read, and a typo silently dropping every alias
+		// looks exactly like the aliases not mattering.
+		if err := yaml.Unmarshal(b, &skills); err != nil {
+			return nil, fmt.Errorf("%s: %w", l.SkillsYML(), err)
+		}
+		for item, forms := range skills.Aliases {
+			if c.Aliases == nil {
+				c.Aliases = map[string][]string{}
+			}
+			key := strings.ToLower(strings.TrimSpace(item))
+			c.Aliases[key] = append(c.Aliases[key], forms...)
+		}
 	}
 	return c, nil
 }
@@ -181,6 +223,33 @@ func (c *Config) ArchetypeEnum() []string {
 		return nil
 	}
 	return append(append([]string{}, c.Archetypes...), OutsideTargets)
+}
+
+// NorthStar is the north_star dimension for an archetype, read from its `fit`
+// tier in profile.yml rather than asked of the model.
+//
+// The model was doing this lookup anyway: over 167 enum-era scores every
+// `primary` archetype scored 5 and `secondary` scored 3 in 11 of 16. Seniority
+// stretch, the other half of the old rubric, is applied after this by the
+// seniority caps in code.
+//
+// An archetype with no tier is a target the profile lists without ranking, so it
+// counts as primary. With no archetype list at all there is nothing to measure
+// fit against, and the dimension stays neutral.
+func (c *Config) NorthStar(archetype string) int {
+	if len(c.Archetypes) == 0 {
+		return 3
+	}
+	fit, listed := c.fit[archetype]
+	switch {
+	case !listed:
+		return 1 // Outside targets, or a label the profile does not list
+	case fit == "secondary":
+		return 3
+	case fit == "adjacent":
+		return 2
+	}
+	return 5
 }
 
 // Hash fingerprints the CV, for cache keys that must invalidate when it changes.

@@ -272,13 +272,20 @@ func Merge(trackerPath, additionsDir string) (Result, error) {
 	return res, nil
 }
 
-// findDuplicate applies the three signals in order of confidence: the same
-// report number, the same row id at the same company, then a fuzzy role match
-// at the same company.
+// findDuplicate applies the four signals in order of confidence: the same
+// report number, the same posting URL, the same row id at the same company,
+// then a fuzzy role match at the same company.
 func findDuplicate(apps []Application, add Addition) (*Application, int) {
 	if n, ok := reportNum(add.Report); ok {
 		for i := range apps {
 			if m, ok := reportNum(apps[i].Report); ok && m == n {
+				return &apps[i], i
+			}
+		}
+	}
+	if u := postingURL(add.Notes); u != "" {
+		for i := range apps {
+			if postingURL(apps[i].Notes) == u {
 				return &apps[i], i
 			}
 		}
@@ -295,6 +302,21 @@ func findDuplicate(apps []Application, add Addition) (*Application, int) {
 		}
 	}
 	return nil, -1
+}
+
+var urlRe = regexp.MustCompile(`https?://\S+`)
+
+// postingURL is the last link in a row's notes, where Phase 3 writes the
+// posting's URL, or "". A re-evaluation of the same offer repeats it exactly,
+// while its report number is new and a title like "Backend Engineer" is all
+// baseline tokens, which RoleFuzzyMatch never matches: on 2026-10-28, re-running
+// nine offers added six as second rows.
+func postingURL(notes string) string {
+	m := urlRe.FindAllString(notes, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return m[len(m)-1]
 }
 
 func lineOf(lines []string, num int) int {

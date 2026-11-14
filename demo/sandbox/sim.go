@@ -302,7 +302,7 @@ func runOne(ctx context.Context, l paths.Layout, st *state.Store, id int, thresh
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	_ = os.WriteFile(filepath.Join(dir, "Denys-Skira-CV.pdf"), []byte("%PDF-1.4\n% demo placeholder — no CV was tailored\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, demoCVFile()), []byte("%PDF-1.4\n% demo placeholder — no CV was tailored\n"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, "cv-content.json"), []byte(fmt.Sprintf(
 		"{\n  \"demo\": true,\n  \"company\": %q,\n  \"role\": %q,\n  \"pages\": 1\n}\n", t.Company, t.Role)), 0o644)
 	fmt.Printf("#%d CV written to %s\n", id, filepath.Base(dir))
@@ -452,7 +452,7 @@ func reportBody(t plan, num, date, url string) string {
 **Score pre-screening (local model):** %.1f/5
 **Legitimacy:** High Confidence
 **URL:** %s
-**PDF:** output/%s_%s_%s/Denys-Skira-CV.pdf
+**PDF:** output/%s_%s_%s/`+demoCVFile()+`
 
 > Demo report. Written by demo/sandbox with invented data — no job description
 > was read, no model ran, and no CV was scored.

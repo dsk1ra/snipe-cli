@@ -99,6 +99,17 @@ func (c *Checkpoint) Done() []string {
 	return out
 }
 
+// Stage decodes a stage's cached output into out, whatever input it was cached
+// for. It is for a later phase reading what an earlier one produced (Phase 3
+// wants Phase 2's parsed posting); a stage that must be current for its own
+// input goes through Staged.
+func (c *Checkpoint) Stage(name string, out any) bool {
+	c.mu.Lock()
+	raw, ok := c.Stages[name]
+	c.mu.Unlock()
+	return ok && json.Unmarshal(raw, out) == nil
+}
+
 // Interrupted is the stage that was in flight when the run stopped, empty when
 // the offer stopped cleanly between stages.
 //

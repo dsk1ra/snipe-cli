@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -275,6 +276,42 @@ func TestQueueDrainPutsBackOnStop(t *testing.T) {
 	}
 	if got := string(b); got != "2\n" {
 		t.Errorf("queue is %q, want \"2\\n\"", got)
+	}
+}
+
+// A JD pasted while the drain is busy is a new row in batch-input.tsv as well
+// as a new line in the queue. The drain used to read the offers once, so it
+// popped the new id, found no such offer and dropped it, and the next ▶ only
+// ran whatever had been queued since.
+func TestQueueDrainPicksUpOffersAddedMidRun(t *testing.T) {
+	l := fixture(t, 1)
+	if err := os.WriteFile(l.Queue(), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var scored []int
+	o := opts()
+	o.Drain = true
+	r := silence(newT(t, l, o, Phases{
+		Score: func(ctx context.Context, id int, ck *state.Checkpoint) error {
+			scored = append(scored, id)
+			if id == 1 {
+				if err := state.AppendOffer(l.Input(), state.Offer{ID: 2, URL: "manual:snipe-2", Source: "snipe"}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(l.Queue(), []byte("2\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return nil
+		},
+		EvalScore: func(int) (float64, bool) { return 0, false },
+	}), t)
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(scored) != "[1 2]" {
+		t.Errorf("scored %v, want [1 2]", scored)
 	}
 }
 

@@ -41,7 +41,7 @@ func contact(c config.Candidate) string {
 func Render(template string, cv CV, c Content, cand config.Candidate, opt Opts) string {
 	targetRole := ""
 	if r := strings.TrimSpace(opt.TargetRole); r != "" {
-		targetRole = `\small{\textit{` + latex.Escape(r) + `}} \\ \vspace{1pt}`
+		targetRole = `\large{\textit{` + latex.Escape(r) + `}} \\ \vspace{1pt}`
 	}
 	eduHeading := "Education"
 	if len(cv.Certs) > 0 {
@@ -51,7 +51,7 @@ func Render(template string, cv CV, c Content, cand config.Candidate, opt Opts) 
 		"{{NAME}}", latex.Escape(cand.FullName),
 		"{{TARGET_ROLE}}", targetRole,
 		"{{CONTACT}}", contact(cand),
-		"{{SECTION_EXPERIENCE}}", "Work Experience",
+		"{{SECTION_EXPERIENCE}}", "Experience",
 		"{{EXPERIENCE}}", BuildExperience(cv.Exp, c.Experience, opt.MaxBullets),
 		"{{SECTION_PROJECTS}}", "Projects",
 		"{{PROJECTS}}", BuildProjects(cv.Projects, c.projects(), opt.MaxProjBullets),

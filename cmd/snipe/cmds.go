@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -8,20 +9,29 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
+	"github.com/dsk1ra/snipe-cli/internal/ledger"
+	"github.com/dsk1ra/snipe-cli/internal/minicheck"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/phase1"
 	"github.com/dsk1ra/snipe-cli/internal/phase2"
 	"github.com/dsk1ra/snipe-cli/internal/phase3"
 	"github.com/dsk1ra/snipe-cli/internal/providers"
+	"github.com/dsk1ra/snipe-cli/internal/registry"
 	"github.com/dsk1ra/snipe-cli/internal/run"
 	"github.com/dsk1ra/snipe-cli/internal/scan"
 	"github.com/dsk1ra/snipe-cli/internal/state"
@@ -35,7 +45,9 @@ func cmdTUI() error {
 	return err
 }
 
-func cmdRun(args []string) error {
+// parseRun reads `snipe run`'s flags. The writer is validated here, before any
+// model is touched.
+func parseRun(args []string) (run.Options, string, error) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	opt := run.DefaultOptions()
 	fs.IntVar(&opt.OnlyID, "only-id", 0, "process just this offer")
@@ -52,7 +64,17 @@ func cmdRun(args []string) error {
 	fs.IntVar(&opt.ParallelEval, "parallel-eval", opt.ParallelEval, "Phase 2 workers")
 	fs.IntVar(&opt.ParallelPDF, "parallel-pdf", opt.ParallelPDF, "Phase 3 workers (VRAM-shared — keep low)")
 	fs.StringVar(&opt.OllamaURL, "ollama-url", ollama.DefaultURL, "Ollama base URL")
+	writer := fs.String("writer", phase3.WriterVerbatim, "how Phase 3 words the CV's lines: verbatim, or adapt (needs snipe ledger and ollama pull bespoke-minicheck)")
 	if err := fs.Parse(args); err != nil {
+		return opt, "", err
+	}
+	w, err := phase3.ParseWriter(*writer)
+	return opt, w, err
+}
+
+func cmdRun(args []string) error {
+	opt, writer, err := parseRun(args)
+	if err != nil {
 		return err
 	}
 
@@ -84,6 +106,11 @@ func cmdRun(args []string) error {
 		if err := requireModels(models, opt, cfg); err != nil {
 			return err
 		}
+		// Not required: an offer without it ships verbatim, and says so. Said
+		// once here so it is not a surprise on the first offer.
+		if writer == phase3.WriterAdapt && !opt.SkipPhase3 && !hasModel(models, minicheck.Model) {
+			fmt.Printf("warning: --writer adapt needs %s to verify drafts; offers will ship verbatim until: ollama pull %s\n", minicheck.Model, minicheck.Model)
+		}
 	}
 
 	st, err := state.Open(l.State())
@@ -94,6 +121,18 @@ func cmdRun(args []string) error {
 		L: l, Cfg: cfg, OL: cl, Model: ollama.ModelScreen, Store: st,
 		Timeout: 120 * time.Second,
 	}
+	// Without the prompt the word-list caps decide, as before.
+	if sys, err := config.Prompt(l, "p1-extract.md"); err == nil {
+		scorer.Extract = extract.New(cl, l.CacheDir(), ollama.ModelScreen, sys)
+		// The CV side of the stack cap classifies the ledger's entities. No
+		// ledger or prompt leaves the stack table in charge.
+		if cvSys, err := config.Prompt(l, "p1-cvstack.md"); err == nil {
+			scorer.Extract.CVSystem = cvSys
+			if led, err := ledger.Load(l.CVLedger()); err == nil {
+				scorer.Extract.Entities = led.EntityNames()
+			}
+		}
+	}
 	cache := state.NewCache()
 
 	ix := &embed.Indexer{
@@ -103,7 +142,7 @@ func cmdRun(args []string) error {
 	evaluator := &phase2.Evaluator{
 		L: l, Cfg: cfg, OL: cl, IX: ix, Store: st,
 		Model: ollama.ModelEval, NumCtx: 8192,
-		Timeout: 300 * time.Second, RAG: os.Getenv("SNIPE_NO_RAG") == "", Threshold: opt.Threshold,
+		Extract: scorer.Extract, Timeout: 300 * time.Second, RAG: os.Getenv("SNIPE_NO_RAG") == "", Threshold: opt.Threshold,
 	}
 
 	ph := run.Phases{
@@ -126,7 +165,7 @@ func cmdRun(args []string) error {
 		},
 	}
 
-	tailor := &phase3.Tailor{L: l, Cfg: cfg, OL: cl, Store: st, Cache: cache}
+	tailor := &phase3.Tailor{L: l, Cfg: cfg, OL: cl, Store: st, Cache: cache, Writer: writer}
 	ph.PDF = tailor.Run
 
 	r := run.New(l, opt, ph, st, cl, tl)
@@ -139,6 +178,12 @@ func cmdRun(args []string) error {
 		return nil
 	}
 	return err
+}
+
+func hasModel(available []string, want string) bool {
+	return slices.ContainsFunc(available, func(got string) bool {
+		return got == want || strings.HasPrefix(got, want+":")
+	})
 }
 
 // requireModels fails before the first offer rather than during it.
@@ -156,14 +201,7 @@ func requireModels(available []string, opt run.Options, cfg *config.Config) erro
 		need = append(need, ollama.ModelEmbed)
 	}
 	for _, want := range need {
-		found := false
-		for _, got := range available {
-			if got == want || strings.HasPrefix(got, want+":") {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !hasModel(available, want) {
 			return fmt.Errorf("model %q not in Ollama (have: %s)\nbuild it: ollama create %s -f prompts/Modelfile.%s",
 				want, strings.Join(available, ", "), want, want)
 		}
@@ -412,6 +450,13 @@ func cmdScan(args []string) error {
 	if err != nil {
 		return fmt.Errorf("portals.yml: %w — run onboarding first", err)
 	}
+	// The registry's boards are scanned whenever it exists: building it with
+	// `snipe registry` is the opt-in.
+	reg, err := registry.Load(l.Registry())
+	if err != nil {
+		return err
+	}
+	fromRegistry := cfg.AddBoards(registry.Entries(reg))
 	if *company != "" {
 		cfg.TrackedCompanies = filterByName(cfg.TrackedCompanies, *company)
 		cfg.JobBoards = filterByName(cfg.JobBoards, *company)
@@ -422,8 +467,8 @@ func cmdScan(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("scanning %d companies, %d boards — %d URLs, %d company+role pairs already known\n",
-		len(cfg.TrackedCompanies), len(cfg.JobBoards), len(known.URLs), len(known.Roles))
+	fmt.Printf("scanning %d companies (%d from the registry), %d boards — %d URLs, %d company+role pairs already known\n",
+		len(cfg.TrackedCompanies), fromRegistry, len(cfg.JobBoards), len(known.URLs), len(known.Roles))
 
 	ctx, cleanup := signalCtx(func() {})
 	defer cleanup()
@@ -435,10 +480,27 @@ func cmdScan(args []string) error {
 	fmt.Printf("%d fetched | dropped %d title, %d location, %d age, %d duplicate, %d same role | %d new\n",
 		res.Fetched, res.Filtered.Title, res.Filtered.Location, res.Filtered.Age,
 		res.Filtered.Duplicate, res.Filtered.Role, len(res.Kept))
+	if cfg.Placing() && len(res.Kept) > 0 {
+		by := map[string]int{}
+		for _, j := range res.Kept {
+			by[scan.Place(j.Location).Label()]++
+		}
+		var parts []string
+		for _, l := range []string{"West Midlands", "West Midlands + London", "London", "UK-wide", "elsewhere in the UK", "unplaced"} {
+			if by[l] > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", by[l], l))
+			}
+		}
+		fmt.Printf("new by place: %s\n", strings.Join(parts, ", "))
+	}
 
 	if *dryRun {
 		for _, j := range res.Kept {
-			fmt.Printf("  %s — %s (%s)\n", j.Company, j.Title, j.URL)
+			where := ""
+			if cfg.Placing() {
+				where = " [" + scan.Place(j.Location).Label() + "]"
+			}
+			fmt.Printf("  %s — %s · %s%s (%s)\n", j.Company, j.Title, cmp.Or(j.Location, "no location"), where, j.URL)
 		}
 		return nil
 	}
@@ -455,6 +517,100 @@ func cmdScan(args []string) error {
 	}
 	if n > 0 {
 		fmt.Printf("queued %d — `snipe run` scores them\n", n)
+	}
+	return nil
+}
+
+// cmdRegistry rebuilds data/registry.tsv: every employer the gender pay gap
+// service lists, and the ATS behind each one's careers page.
+//
+// A stop keeps what was resolved. The first signal finishes the sites in
+// flight, the second drops them, and either way the file is written; the next
+// build resolves only what is left.
+func cmdRegistry(args []string) error {
+	fs := flag.NewFlagSet("registry", flag.ExitOnError)
+	workers := fs.Int("workers", 24, "sites resolved at a time")
+	maxAge := fs.Int("max-age", 30, "days a site's resolution is reused before it is checked again")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	l := layout()
+	now := time.Now()
+	web := registry.NewWeb()
+	var stopping atomic.Bool
+	ctx, cleanup := signalCtx(func() { stopping.Store(true) })
+	defer cleanup()
+
+	prev, err := registry.Load(l.Registry())
+	if err != nil {
+		return err
+	}
+	es, err := registry.Download(ctx, web, now)
+	if err != nil {
+		return fmt.Errorf("pay gap data: %w", err)
+	}
+	todo := registry.Carry(es, prev, now, *maxAge)
+	withSite := 0
+	for _, e := range es {
+		if e.Site != "" {
+			withSite++
+		}
+	}
+	fmt.Printf("%d employers, %d with a website — %d sites to resolve, %d at a time\n", len(es), withSite, len(todo), *workers)
+
+	type outcome struct{ ats, board string }
+	var mu sync.Mutex
+	got := map[string]outcome{}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(*workers)
+	r := registry.Resolver{G: web}
+	for _, site := range todo {
+		if stopping.Load() || gctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			if stopping.Load() {
+				return nil
+			}
+			ats, board := r.Resolve(gctx, site)
+			// A crawl cut short by the second signal reads as Unreachable,
+			// which is the cancel talking, not the site.
+			if gctx.Err() != nil {
+				return nil
+			}
+			mu.Lock()
+			got[site] = outcome{ats, board}
+			n := len(got)
+			mu.Unlock()
+			if n%250 == 0 {
+				fmt.Fprintf(os.Stderr, "  %d/%d resolved\n", n, len(todo))
+			}
+			return nil
+		})
+	}
+	_ = g.Wait() // workers never return an error
+
+	day := now.Format("2006-01-02")
+	tally := map[string]int{}
+	for i := range es {
+		if o, ok := got[es[i].Site]; ok {
+			es[i].ATS, es[i].Board, es[i].Checked = o.ats, o.board, day
+		}
+		if es[i].Site != "" {
+			tally[cmp.Or(es[i].ATS, "not yet resolved")]++
+		}
+	}
+	if err := registry.Save(l.Registry(), es); err != nil {
+		return err
+	}
+	names := make([]string, 0, len(tally))
+	for k := range tally {
+		names = append(names, k)
+	}
+	sort.Slice(names, func(i, j int) bool { return tally[names[i]] > tally[names[j]] })
+	fmt.Printf("wrote %s — employers by ATS:\n", l.Registry())
+	for _, k := range names {
+		fmt.Printf("  %6d  %s\n", tally[k], k)
 	}
 	return nil
 }
@@ -510,5 +666,52 @@ func cmdTracker(args []string) error {
 		return nil
 	}
 	fmt.Printf("\n%d change(s) written to %s\n", res.Changed(), l.Tracker())
+	return nil
+}
+
+// cmdTailor is the two after-the-fact steps on a finished CV: suggest asks the
+// model for rewordings, rebuild renders the PDF with the accepted ones. They are
+// separate commands because the person decides between them.
+func cmdTailor(name string, args []string) error {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	ollamaURL := fs.String("ollama-url", ollama.DefaultURL, "Ollama base URL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: snipe %s <id>", name)
+	}
+	id, err := strconv.Atoi(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("%q is not an offer id", fs.Arg(0))
+	}
+
+	l := layout()
+	cfg, err := config.Load(l)
+	if err != nil {
+		return err
+	}
+	st, err := state.Open(l.State())
+	if err != nil {
+		return err
+	}
+	t := &phase3.Tailor{L: l, Cfg: cfg, Store: st, Cache: state.NewCache(),
+		OL: ollama.New(*ollamaURL, ollama.NewTimingLog(l.Timings()))}
+	ctx, cleanup := signalCtx(func() {})
+	defer cleanup()
+
+	if name == "suggest" {
+		n, err := t.Suggest(ctx, id)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("#%d: %d suggestion(s)\n", id, n)
+		return nil
+	}
+	n, pages, err := t.Rebuild(ctx, id)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("#%d: rebuilt with %d accepted change(s), %d page(s)\n", id, n, pages)
 	return nil
 }

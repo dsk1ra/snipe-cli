@@ -3,14 +3,16 @@
 > **On the file names below.** This file is the authority for every measured
 > constant, and the passages explaining why a number is that number name the
 > Node modules the measurements were taken against. Those modules were retired
-> in v0.5.0 and the logic lives in `internal/` now. The names are left as
+> in v0.6.0, the oracle and `bench-tools/` that outlived it left on 2026-10-28,
+> and the logic lives in `internal/` now. The names are left as
 > written: a measurement is a record of what was run, and renaming the code it
 > ran on would make the record say something that never happened. The mapping is
-> in `docs/ARCHITECTURE.md`, and `oracle/node-complete` is the tag that still
-> has the files.
+> in `docs/ARCHITECTURE.md`. Every `node batch/...` command below runs from a
+> checkout of the `oracle/node-complete` tag, and `git log --diff-filter=D --
+> batch/` finds the last version of each file.
 
-Rules for everything under `batch/`. The repo-wide data contract, conventions
-and ethics rules are in the root `CLAUDE.md` and still apply.
+Rules for everything under `batch/`. The repo-wide data contract is in
+`docs/ARCHITECTURE.md` and still applies.
 
 ## The 3-phase pipeline (`internal/run`)
 
@@ -18,10 +20,12 @@ and ethics rules are in the root `CLAUDE.md` and still apply.
 |-------|--------|-------|--------|
 | 1 pre-score | `internal/phase1` | `snipe-screen` (Qwen3 4B q8_0) | `batch/scores/<id>.json` |
 | 2 evaluate | `internal/phase2` | `snipe-eval` (Qwen3 30B-A3B Q4_K_M) | `reports/<NNN>-<slug>-<date>.md`, `batch/evals/<id>.json` |
-| 3 tailor CV | `internal/phase3` | `snipe-cv` (Qwen2.5 7B Coder Q5_K_M) | `output/<date>_<slug>_<NNN>/` |
+| 3 tailor CV | `internal/phase3` | `snipe-embed` selects, `snipe-eval` reranks when there are exemplars; `--writer adapt` adds `snipe-eval` rewrites and `bespoke-minicheck` checks | `output/<date>_<slug>_<NNN>/` |
 
 `snipe-embed` (Qwen3 Embedding 0.6B q8_0) backs Phase 2's evidence matching and
-Phase 3's bullet selection — see `batch/embeddings.mjs`.
+Phase 3's bullet selection (`internal/embed`). `snipe-cv` (Qwen2.5 7B Coder) is
+no longer called by the Go pipeline. `gate ats` grades with `gemma3:4b-it-q8_0`,
+a different family from the Qwen writer.
 
 Then the tracker merge → `data/applications.md`, and the integrity pass (`internal/tracker`).
 
@@ -37,6 +41,16 @@ to avoid anchoring. Salary is parsed from the JD in code (`text-utils.mjs`),
 never guessed; when present the weights become `cv×0.50 + ns×0.30 + comp×0.20`.
 Seniority, stack-mismatch, language and **location** caps (`fit-rules.mjs`) are
 code-enforced in both phases.
+
+**The judgment writes only what decides the CV** — dimensions, gaps, strengths,
+strategy and the personalisation table. STAR stories, hard questions, LinkedIn
+tweaks and the legitimacy verdict are gone: output 3,022 → 982 tokens, the call
+158 s → 57 s, about 95 s off every offer, with pair accuracy on the 18 labels
+moved by one `cv_match` flip on one offer. **`north_star` is not judged** in
+Phase 2: it is the archetype's `fit` tier from `profile.yml` (primary 5,
+secondary 3, adjacent 2, unlisted 1), then capped. Stage 3's `archetype` is an
+enum of the profile's list for that reason. Numbers and the per-offer reading:
+`docs/REWORK-PLAN.md` §1.
 
 The location cap exists because `hard_stops` never reaches `final_decision`:
 Phase 2 printed the profile's "hybrid or on-site outside the commutable base"
@@ -105,6 +119,32 @@ could read and cost 4.4 rendered lines on a page whose entire evidence budget is
 3. **floor** — `minItems` (3) in `cv.md`'s own order, so a block never shrinks to
    a mirror of the posting. Without it the CV reads as pandering and loses the
    distinctive evidence, which is `docs/PHASE3-RETENTION-LEDGER.md` §1 all over
+
+**The block prints the posting's spelling** when `config/skills.yml` approves
+it (`config/skills.example.yml` has the rules). An item the posting names only by
+an alias — "RESTful" against cv.md's "REST APIs", "Golang" against "Go" — counts
+as named and prints as the posting wrote it, longest matching form first; when
+the posting also uses cv.md's spelling, that one stays. `go run ./cmd/gate skills
+.` scores it over every cached JD, paired with and without aliases: with the
+first nine aliases, **48 skill mentions in 351 JDs were named only by an alias and
+0 reached the page in that spelling; now all 48 do**, the 1,830 named in cv.md's
+own spelling are unmoved, and 46 of 351 blocks change. The Node harness's
+`skill_coverage` is blind to this by construction — it only knows cv.md's
+strings, so an alias-only mention is absent from its denominator, not a miss. An
+alias replaces the whole item, so a compound item (`Terraform / Infrastructure
+as Code`) must be split in cv.md before it can take one.
+
+**The Go selector names by whole forms and ships 5/7/3** (`phase3.SkillCats`,
+`SkillItems`, `SkillFloor`). Token overlap let a single shared word name an item:
+"engineering" named a category in 241 of 351 cached postings, so nearly every
+category counted as named and the cap never bound (7.3 categories, 37 items).
+Now the posting must contain the item, one side of its ` / `, an alias or its
+other number, and that decides only what may not be cut: token overlap still
+ranks, or a posting naming no tool in full gets cv.md's order. `go
+run ./cmd/gate skills . --sweep` chose the limits; 5/7/3 keeps 2,568 of 2,574
+named mentions in about 22 items and an estimated 5.3 lines, down from 9.8. The
+`selectSkills` described here still names by token overlap at 6/12/3, which is
+why `gate p3` no longer diffs the skills block.
 
 `maxCats` (6) budgets only the categories the posting did *not* name; one it did
 is never cut, which costs a seventh row on 2 of 32 offers and is why LADDER step 0
@@ -318,13 +358,13 @@ Models are built once from the Modelfiles:
 ```bash
 ollama pull qwen3:4b-instruct-2507-q8_0          # bases, once
 ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M
-ollama pull qwen2.5-coder:7b-instruct-q5_K_M
 ollama pull qwen3-embedding:0.6b-q8_0
+ollama pull bespoke-minicheck                    # --writer adapt only
+ollama pull gemma3:4b-it-q8_0                    # gate ats only
 
-ollama create snipe-screen -f batch/Modelfile.snipe-screen
-ollama create snipe-eval   -f batch/Modelfile.snipe-eval
-ollama create snipe-cv     -f batch/Modelfile.snipe-cv
-ollama create snipe-embed  -f batch/Modelfile.snipe-embed
+ollama create snipe-screen -f prompts/Modelfile.snipe-screen
+ollama create snipe-eval   -f prompts/Modelfile.snipe-eval
+ollama create snipe-embed  -f prompts/Modelfile.snipe-embed
 ```
 
 ## Quality is measured, not vibed

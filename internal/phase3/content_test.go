@@ -42,7 +42,7 @@ BEng | 2022 - 2026
 // The writer is verbatim: every string it emits has to have come out of the CV,
 // because that grounding is why Phase 3 runs no fabrication guards.
 func TestVerbatimContentIsLiftedFromTheCV(t *testing.T) {
-	c := VerbatimContent(testCV, testCV, "We need Rust and AES-256-GCM encryption.", 4)
+	c := VerbatimContent(testCV, testCV, "We need Rust and AES-256-GCM encryption.", 4, nil)
 
 	if len(c.Experience) != 1 || c.Experience[0].Company != "Acme" {
 		t.Fatalf("experience is %+v, want one entry for Acme", c.Experience)
@@ -80,7 +80,7 @@ func TestVerbatimContentIsLiftedFromTheCV(t *testing.T) {
 // projectBullets is a ceiling, not a count — cv-select has already allocated
 // the budget across the projects it kept.
 func TestVerbatimContentCapsProjectBullets(t *testing.T) {
-	c := VerbatimContent(testCV, testCV, "Rust.", 1)
+	c := VerbatimContent(testCV, testCV, "Rust.", 1, nil)
 	var projects []fill.ProjectPick
 	if err := json.Unmarshal(c.Projects, &projects); err != nil {
 		t.Fatal(err)

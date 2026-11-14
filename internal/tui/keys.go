@@ -52,7 +52,9 @@ type queueKeys struct {
 	Cycle   key.Binding // Tab: inputs ⇄ ▶ ⇄ list
 	Start   key.Binding
 	Open    key.Binding
-	Detail  key.Binding
+	Skills  key.Binding
+	Tailor  key.Binding
+	Ledger  key.Binding
 	Applied key.Binding
 	Skip    key.Binding
 	Yes     key.Binding
@@ -74,7 +76,12 @@ func newQueueKeys() queueKeys {
 		Cycle:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "input ⇄ ▶ ⇄ list")),
 		Start:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "start / resume")),
 		Open:    key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open the folder")),
-		Detail:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "read it here")),
+		Skills:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "review skills")),
+		Tailor:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tailored text")),
+		// g, not a shifted letter: a terminal that reports keys without their
+		// text sends shift+l, which matches neither "L" nor anything else, and one
+		// that drops the modifier sends a plain l, which is next tab.
+		Ledger:  key.NewBinding(key.WithKeys("g", "L", "shift+l"), key.WithHelp("g", "fact ledger")),
 		Applied: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "mark applied")),
 		Skip:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "mark skipped")),
 		Yes:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "evaluate anyway")),

@@ -6,51 +6,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/dsk1ra/snipe-cli/internal/cvselect"
 	"github.com/dsk1ra/snipe-cli/internal/fill"
 )
-
-// VerifyProjectFigures strips a clause claiming a figure this project's own CV
-// entry does not state.
-//
-// Projects had no figure guard at all — only the product one, which knows names
-// and not numbers. Observed on one CV: a blurb claiming "970%+ revenue growth"
-// (absent from cv.md entirely) alongside another claiming "sub-500ms load times"
-// (real, but a different project's). One entry-scoped check catches both,
-// because neither figure is in the entry doing the claiming.
-//
-// Clause surgery rather than reversion: a blurb is synthesised from several
-// source bullets, so reverting joins them into a run-on — which is exactly what
-// shipped on 3 of 12 CVs as a 55-word paragraph next to 12-word siblings.
-//
-// A project whose name resolves to nothing is left alone rather than gutted.
-func VerifyProjectFigures(projects []fill.ProjectPick, cvText string) []fill.ProjectPick {
-	entries := section(cvText, "Projects")
-	if entries == nil {
-		return projects
-	}
-	byName := map[string]map[string]bool{}
-	for _, e := range entries {
-		byName[strings.ToLower(entryTitle(e))] = NumbersIn(entryText(e))
-	}
-
-	out := make([]fill.ProjectPick, len(projects))
-	copy(out, projects)
-	for i, p := range out {
-		allowed, ok := byName[strings.ToLower(strings.TrimSpace(p.Name))]
-		if !ok {
-			continue
-		}
-		out[i].Description = StripUnsupportedClauses(p.Description, func(t string) bool {
-			for n := range NumbersIn(t) {
-				if !allowed[n] {
-					return true
-				}
-			}
-			return false
-		})
-	}
-	return out
-}
 
 // splitClauses cuts on a full stop or semicolon at bracket depth zero.
 //
@@ -222,4 +180,37 @@ func PadProjectDescriptions(projects []fill.ProjectPick, cvText string, minWords
 		out[i].Description = desc
 	}
 	return out
+}
+
+// upperFirst mirrors JS `s.charAt(0).toUpperCase() + s.slice(1)`, which operates
+// on the first UTF-16 code unit. Every string reaching it here starts with an
+// ASCII letter, but the rune-aware form is the one that cannot corrupt a
+// multi-byte opener.
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+var hashPrefix = regexp.MustCompile(`^###\s+`)
+
+// section returns one named section's entries, or nil.
+func section(cvText, name string) []*cvselect.Entry {
+	for _, s := range cvselect.ParseSections(cvText) {
+		if s.Name == name {
+			return cvselect.ParseEntries(s.Lines).Entries
+		}
+	}
+	return nil
+}
+
+// entryTitle is a Projects entry's name, as the model is asked to spell it.
+func entryTitle(e *cvselect.Entry) string {
+	if len(e.Head) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(hashPrefix.ReplaceAllString(e.Head[0], ""))
 }

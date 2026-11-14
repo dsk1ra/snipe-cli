@@ -22,10 +22,6 @@ snipe is a single Go binary. It was a Node project through v0.4.0 and was
 ported component by component, each one checked against the original over a
 corpus of real postings before the original was removed.
 
-What is left of Node is the oracle those checks run against and the benchmark
-harness that measured the pipeline's constants. Neither is on the path of a
-run.
-
 Every model call goes to a local [Ollama](https://ollama.com). Your CV, your
 applications and your reports never leave the machine.
 
@@ -46,7 +42,7 @@ data throughout.</sub>
   /scan  ───┤        Phase 1            Phase 2              Phase 3
   scan   ───┘   ┌──────────────┐  ┌──────────────┐   ┌──────────────────┐
      queue ────►│  pre-score   │─►│   evaluate   │──►│   tailor CV +    │──► output/
-                │ snipe-screen │  │  snipe-eval  │   │   snipe-cv → PDF │    *.pdf
+                │ snipe-screen │  │  snipe-eval  │   │ snipe-embed → PDF│    *.pdf
                 └──────────────┘  └──────────────┘   └──────────────────┘
                    score ≥ 2.5?      full report        score ≥ 3.0?
                                   reports/NNN-*.md
@@ -56,7 +52,7 @@ data throughout.</sub>
 |-------|-------|--------|
 | 1 · pre-score | `snipe-screen` (Qwen3 4B) | `batch/scores/<id>.json` |
 | 2 · evaluate | `snipe-eval` (Qwen3 30B-A3B) | `reports/<NNN>-<slug>-<date>.md` |
-| 3 · tailor CV | `snipe-cv` (Qwen2.5 7B Coder) | `output/<date>_<slug>_<NNN>/` (PDF) |
+| 3 · tailor CV | `snipe-embed` picks cv.md's own lines | `output/<date>_<slug>_<NNN>/` (PDF) |
 
 `snipe-embed` (Qwen3 Embedding 0.6B) does the evidence matching in Phase 2 and
 the bullet selection in Phase 3. Scores run 0–5. Below 3.0 the verdict is Skip, and an Apply
@@ -96,18 +92,16 @@ providers (LinkedIn, Indeed, Glassdoor); without a key those sit out and
 everything else, the whole pipeline included, runs as normal. The key is read
 into the environment at startup and sent as a bearer token, never in a URL.
 
-Build the four models once, then start the server with a q8_0 KV cache or the
+Build the three models once, then start the server with a q8_0 KV cache or the
 30B's context will not fit:
 
 ```bash
 ollama pull qwen3:4b-instruct-2507-q8_0
 ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M
-ollama pull qwen2.5-coder:7b-instruct-q5_K_M
 ollama pull qwen3-embedding:0.6b-q8_0
 
 ollama create snipe-screen -f prompts/Modelfile.snipe-screen
 ollama create snipe-eval   -f prompts/Modelfile.snipe-eval
-ollama create snipe-cv     -f prompts/Modelfile.snipe-cv
 ollama create snipe-embed  -f prompts/Modelfile.snipe-embed
 
 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
@@ -121,7 +115,7 @@ OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
 ## Using the TUI
 
 ```bash
-go build -o bin/snipe ./cmd/snipe && ./bin/snipe
+go build -o snipe ./cmd/snipe && ./snipe
 ```
 
 Once a second it re-reads what's on disk: the queue, the scores, the evals, the
@@ -223,19 +217,40 @@ pipeline (the row had already finished) and is recorded in
 You don't need the TUI. Every command works standalone:
 
 ```bash
-./bin/snipe add -jd "<paste JD text>"    # add one JD and run it
-./bin/snipe add -f job.txt -link <url>   # same, JD read from a file
-./bin/snipe add -queue "<text>"          # queue only, don't run yet
-./bin/snipe run                          # process everything queued
-./bin/snipe scan                         # scan the configured boards
-./bin/snipe status                       # what is running, and where
-./bin/snipe stop                         # stop after the current stage
-./bin/snipe pause                        # drop the stage in flight; resume reruns it
-./bin/snipe doctor                       # setup, state and tracker integrity
-./bin/snipe tracker fix                  # canonical statuses, one row per opening
+./snipe add -jd "<paste JD text>"    # add one JD and run it
+./snipe add -f job.txt -link <url>   # same, JD read from a file
+./snipe add -queue "<text>"          # queue only, don't run yet
+./snipe run                          # process everything queued
+./snipe scan                         # scan the configured boards
+./snipe status                       # what is running, and where
+./snipe stop                         # stop after the current stage
+./snipe pause                        # drop the stage in flight; resume reruns it
+./snipe doctor                       # setup, state and tracker integrity
+./snipe tracker fix                  # canonical statuses, one row per opening
 ```
 
 Run any subcommand with `-h` for its flags.
+
+### `snipe run --writer adapt`
+
+Phase 3 prints your CV's lines as `cv.md` words them (`--writer verbatim`, the
+default). `--writer adapt` lets the 30B reword the selected lines toward the
+posting, only where the facts behind each line allow it. Every draft is checked
+by code and by MiniCheck before it can ship, and the original line wins any tie.
+Each offer's folder gets a `truth.json` saying what changed and what licensed it.
+
+It needs three things, and an offer missing any of them ships verbatim with one
+line saying why, never failing:
+
+- a current fact ledger: `snipe ledger`, then `snipe ledger --framings`, then
+  approve the facts and framings in the TUI's ledger screen
+- the verifier: `ollama pull bespoke-minicheck` (CC BY-NC 4.0, so it is not
+  shipped with this repo)
+- `cv.md` unchanged since the ledger was built; rerun `snipe ledger` after edits
+
+Tools the posting names that your CV does not, but that your work suggests, are
+queued as pending inferences in the ledger. None reaches a PDF until you approve
+it. Design: `docs/PRD-TAILORING-REWORK.md` §6.
 
 ---
 
@@ -254,8 +269,8 @@ reads its cadence from there. Runs merge into it automatically. Editing an exist
 fine.
 
 ```bash
-./bin/snipe doctor          # setup, state and tracker integrity
-./bin/snipe tracker fix     # canonical statuses, one row per opening, working links
+./snipe doctor          # setup, state and tracker integrity
+./snipe tracker fix     # canonical statuses, one row per opening, working links
 ```
 
 ## Tests
@@ -267,37 +282,27 @@ go test ./...          # must stay green; this is what CI runs
 The tests needing Ollama, `pdflatex` or a real `cv.md` skip themselves, which on
 a runner is always.
 
-Beyond them, `cmd/gate` diffs this implementation against the Node original over
-a corpus of real postings. That is what proved the port, and it still runs: the
-oracle it compares against is the one part of the Node code that was kept.
+Beyond them, `cmd/gate` measures the pipeline over a corpus of real postings:
+`goldset` checks evidence selection against hand labels, `skills` the skills
+block, `tailor` and `ats` the finished page.
 
 ```bash
-npm install            # js-yaml, nothing else
-npm run gate:fit       # 351 of 351 identical
-npm run gate:salary    # 351 of 351
-npm run gate:cleanjd   # 351 of 351
-npm run gate:atoms     # 68 of 68
+go run ./cmd/gate skills <home>
+go run ./cmd/gate goldset score <home> batch/bench/evidence-goldset.md
 ```
 
 They are not in CI because they need the cached JD corpus and a real `cv.md`,
-both user data that is never committed. A gate agreeing with Node is not the
-same as being right, so `go run ./cmd/gate goldset` asks a human instead.
-
-Coverage counts every `.mjs` file, including the ones the suite never loads, so
-no exclusion flatters the number. None of it needs a GPU, a terminal or the
-network: the Ollama-driven phases run for real against a stand-in model server,
-the TUI is driven headlessly through a fake TTY, and the portal scanner and job
-providers get a fixture and a stub transport.
+both user data that is never committed.
 
 ## Data & privacy
 
 Everything personal stays on your machine and is gitignored. Only the system
-layer — scripts, modes, templates — is tracked:
+layer — code, prompts, templates — is tracked:
 
 - **What you wrote** — `cv.md`, `article-digest.md`, `config/profile.*`,
   `portals.yml`, `.env`
 - **What the pipeline produced** — `data/`, `reports/`, `output/`,
-  `interview-prep/`, and the working artifacts that are easy to overlook:
+  and the working artifacts that are easy to overlook:
   `batch/jds/` (full text of every JD fetched), `batch/scores/`, `batch/evals/`,
   `batch/errors/`, `batch/logs/`, and the run state under `batch/state/`
 - **Derived copies of your CV**, personal for the same reason `cv.md` is:

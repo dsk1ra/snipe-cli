@@ -7,9 +7,8 @@ data/applications.db
 data/follow-ups.md
 data/pipeline.md
 data/scan-history.tsv
-data/parser-output/**/*.json
-!data/parser-output/.gitkeep
-!data/parser-output/**/.gitkeep
+# Rebuilt from public data by `snipe registry`; a crawl of thousands of sites.
+data/registry.tsv
 data/cache/
 reports/*.md
 !reports/.gitkeep
@@ -38,28 +37,18 @@ batch/cv-index.json
 batch/jd-index.json
 batch/cv-spike.json
 
-# Interview prep (accumulated STAR+R stories — user data)
-interview-prep/*
-!interview-prep/.gitkeep
 
 # User config and customization (never auto-updated; *.template.md / *.example.yml stay tracked)
 config/profile.yml
 config/profile.md
+config/skills.yml
 portals.yml
 
 # Personal model-prompt overrides (real metrics; shipped *.md is the generic placeholder)
 batch/*.local.md
 
-# Benchmark runs + labels (personal CV/JD evaluation data — the harness ships, the runs don't)
-# Bench scratch is ignored, with one exception: example_copy_pct (tailor-harness.mjs)
-# and test/units.test.mjs both read example-bullets.json, and the metric reads 0 by
-# construction without it — the worked example it snapshots is gone from the prompt.
-# A directory exclusion cannot be negated per-file, hence the glob.
-# The committed copy is generic placeholder text. A personal worked example is
-# lifted from a real CV, so it belongs in example-bullets.local.json, which the
-# glob above already ignores and which snapshotShingles prefers when present.
-batch/bench/*
-!batch/bench/example-bullets.json
+# Benchmark runs, gold sheets and labels (personal CV/JD evaluation data)
+batch/bench/
 batch/labels.tsv
 batch/labels/
 batch/labels.xlsx
@@ -67,13 +56,12 @@ batch/labels.xlsx
 # Secrets (never commit — use .env.example as template)
 .env
 
-# Generated
-node_modules/
 # Report-number reservation sentinels (ephemeral, created by reserve-report-num.mjs)
 reports/*-RESERVED.md
 
 # Backup files (normalize-statuses.mjs, dedup-tracker.mjs, manual *.bak snapshots)
 *.bak
+*.bak-*
 # nano's emergency save on a crashed edit of an unnamed buffer
 nano.*.save
 
@@ -100,7 +88,6 @@ cv.pdf
 batch/judge-shots.json
 batch/timings.tsv
 # Every cv.md bullet's source text, employers and dates — cv.md by another name.
-# Regenerate: node batch/bench-tools/gen-cv-bank.mjs
 batch/cv-bank.json
 
 # Demo. The recording rig is source and is committed: the vhs tapes, the sandbox
@@ -116,9 +103,10 @@ demo/snipe-demo.gif
 demo/snipe-hero.mp4
 
 # ── Go port ──────────────────────────────────────────────────────────────────
-# The Go binary cannot take ./snipe while the Node bash script of that name is
-# still tracked, so it builds to bin/ for the duration of the port and claims
-# the plain name when the script retires.
+# The Go binary builds to ./snipe, beside prompts/ and templates/: it takes its
+# code root from its own folder, so that is where it finds them from any
+# working directory. bin/ is where it lived while the Node script held the name.
+/snipe
 /bin/
 /gate
 /sandbox

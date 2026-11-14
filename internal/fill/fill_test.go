@@ -120,3 +120,20 @@ func TestResolveSkillsDropsInventedAndRestoresLanguages(t *testing.T) {
 		}
 	}
 }
+
+// Two roles at one employer (a teaching job and an industry project at the same
+// university) used to both render the first role's bullets.
+func TestTwoRolesAtOneEmployerKeepTheirOwnBullets(t *testing.T) {
+	cv := []Exp{
+		{Role: "Teaching Assistant", Company: "Edinburgh Napier University", Period: "Sep 2025 – Present"},
+		{Role: "Software Engineer", Company: "Edinburgh Napier University, industry project", Period: "Feb 2024 – May 2024"},
+	}
+	js := []ContentExp{
+		{Company: cv[0].Company, Role: cv[0].Role, Bullets: []string{"taught labs"}},
+		{Company: cv[1].Company, Role: cv[1].Role, Bullets: []string{"built a SIEM"}},
+	}
+	out := BuildExperience(cv, js, 5)
+	if strings.Count(out, "taught labs") != 1 || strings.Count(out, "built a SIEM") != 1 {
+		t.Fatalf("each role should render its own bullet once:\n%s", out)
+	}
+}

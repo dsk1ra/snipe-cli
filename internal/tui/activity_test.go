@@ -21,7 +21,8 @@ import (
 func newDatedActivity(t *testing.T, at time.Time, when ...time.Time) *activityTab {
 	t.Helper()
 	home := t.TempDir()
-	evals := filepath.Join(home, "batch", "evals")
+	l := paths.Layout{Home: home, Code: home}
+	evals := l.Evals()
 	if err := os.MkdirAll(evals, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func newDatedActivity(t *testing.T, at time.Time, when ...time.Time) *activityTa
 			t.Fatal(err)
 		}
 	}
-	a := newActivityTab(paths.Layout{Home: home, Code: home}, state.NewCache())
+	a := newActivityTab(l, state.NewCache())
 	a.setSize(100, 24)
 	a.at = at
 	return a

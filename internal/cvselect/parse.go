@@ -24,6 +24,9 @@ import (
 // 708px box, so each bullet costs about 15% more lines.
 const charsPerLine = 108
 
+// CharsPerLine is charsPerLine for the packages that check a rewrite's length.
+const CharsPerLine = charsPerLine
+
 // bulletOverhead is what a \resumeItem costs on top of its line height, in
 // line-heights.
 //
@@ -300,10 +303,19 @@ func UnmatchedPins(cv string, pins []string) []string {
 var blockBHeaderRe = regexp.MustCompile(`(?i)^\|\s*JD Requirement\s*\|\s*Candidate evidence\s*\|`)
 var mustMarkerRe = regexp.MustCompile(`(?i)\*\*\[must\]\*\*`)
 
-// ExtractBlockBRequirements pulls the requirement column out of a Phase 2
-// report's evidence table. Requirements of eight characters or fewer are
-// dropped as table artifacts rather than demands.
-func ExtractBlockBRequirements(report string) []string {
+// BlockBRow is one row of a Phase 2 report's evidence table as the report
+// keeps it: stage 2's grade per requirement, evidence clipped to 160 characters
+// and pipes turned into slashes.
+type BlockBRow struct {
+	Requirement string
+	MustHave    bool
+	Evidence    string
+	Strength    string
+}
+
+// ExtractBlockB reads the evidence table. Requirements of eight characters or
+// fewer are dropped as table artifacts rather than demands.
+func ExtractBlockB(report string) []BlockBRow {
 	lines := strings.Split(report, "\n")
 	start := -1
 	for i, l := range lines {
@@ -315,16 +327,32 @@ func ExtractBlockBRequirements(report string) []string {
 	if start == -1 {
 		return nil
 	}
-	var out []string
+	var out []BlockBRow
 	for j := start + 2; j < len(lines) && strings.HasPrefix(lines[j], "|"); j++ {
 		cells := strings.Split(lines[j], "|")
 		if len(cells) < 2 {
 			continue
 		}
 		req := strings.TrimSpace(mustMarkerRe.ReplaceAllString(cells[1], ""))
-		if len(req) > 8 {
-			out = append(out, req)
+		if len(req) <= 8 {
+			continue
 		}
+		row := BlockBRow{Requirement: req, MustHave: mustMarkerRe.MatchString(cells[1])}
+		if len(cells) > 3 {
+			row.Evidence = strings.TrimSpace(cells[2])
+			row.Strength = strings.TrimSpace(cells[3])
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// ExtractBlockBRequirements pulls the requirement column out of a Phase 2
+// report's evidence table.
+func ExtractBlockBRequirements(report string) []string {
+	var out []string
+	for _, r := range ExtractBlockB(report) {
+		out = append(out, r.Requirement)
 	}
 	return out
 }

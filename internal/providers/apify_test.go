@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The three built-in actors emit three different shapes for the same five
@@ -71,7 +72,7 @@ func TestApifyPostedAtAcceptsBothShapes(t *testing.T) {
 	if days == 0 {
 		t.Fatal("an age in days parsed to zero")
 	}
-	if now := apifyPosted("2026-08-26"); days > now {
+	if now := apifyPosted(time.Now().Format("2006-01-02")); days > now {
 		t.Error("three days ago should be older than a date this week")
 	}
 }

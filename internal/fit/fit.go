@@ -101,15 +101,19 @@ func (e ecosystem) countMatches(text string) int {
 	return n
 }
 
-var skillsSection = regexp.MustCompile(`(?is)\n##\s*Skills\b.*?(\n##\s|$)`)
+// skillsSection is the skills catalogue under either heading style: "## Skills"
+// or a bold-alone "**Skills**" line. It ends at the next heading of either style.
+// The CV moved from the first to the second, and the first alone stopped matching,
+// so the languages line counted as evidence.
+var skillsSection = regexp.MustCompile(`(?is)\n(?:##\s*|\*\*)Skills\b.*?(\n##\s|\n\*\*[^*:\n]+\*\*[ \t]*(?:\n|$)|$)`)
 
-// evidenceText is cv.md minus its `## Skills` taxonomy.
+// EvidenceText is cv.md minus its `## Skills` taxonomy.
 //
 // Same doctrine the evidence grader applies: a catalogue line is a claim, not a
 // demonstration. An ecosystem named only in the skills block has no bullet
 // behind it anywhere on the CV, so StackMismatchCap must not read it as
 // coverage.
-func evidenceText(cv string) string {
+func EvidenceText(cv string) string {
 	return skillsSection.ReplaceAllString(cv, "\n")
 }
 
@@ -123,7 +127,7 @@ func evidenceText(cv string) string {
 // for a stack with no project behind it.
 func CandidateEcosystems(cv string) map[string]bool {
 	have := map[string]bool{}
-	ev := evidenceText(cv)
+	ev := EvidenceText(cv)
 	for _, e := range ecosystems {
 		if e.countMatches(ev) > 0 {
 			have[e.name] = true
@@ -205,8 +209,6 @@ type Caps struct {
 }
 
 var (
-	highYearsRe = regexp.MustCompile(`\b(8|9|10|11|12|15)\+?\s*years`)
-	midYearsRe  = regexp.MustCompile(`\b(5|6|7)\+?\s*years`)
 	fwdRe       = regexp.MustCompile(`\bforward[\s-]?deployed\b|\bfde\b`)
 	architectRe = regexp.MustCompile(`\barchitect\b`)
 	// People-management titles count as Staff+ for an early-career IC: an
@@ -215,23 +217,21 @@ var (
 	seniorishRe = regexp.MustCompile(`\b(senior|sr\.?|lead)\b`)
 )
 
-// SeniorityCaps applies the ceilings an early-career candidate faces. stage1
-// carries the structured fields when the staged evaluator has them; Phase 1
-// passes zero values and works off the title and the text.
-func SeniorityCaps(roleTitle, jdText string, yearsRequired int, seniorityLevel string) Caps {
+// SeniorityCaps applies the ceilings an early-career candidate faces. The title
+// is read here, by the words that carry a level. The years demanded come from the
+// caller: the extracted minimum, or stage 1's parse. They are not searched for in
+// the posting, since "15 years" there is as likely the company's age.
+func SeniorityCaps(roleTitle string, yearsRequired int, seniorityLevel string) Caps {
 	title := strings.ToLower(roleTitle)
-	jd := strings.ToLower(jdText)
 	level := strings.ToLower(seniorityLevel)
 
-	highYears := yearsRequired >= 8 || highYearsRe.MatchString(jd)
-	midYears := (yearsRequired >= 5 && yearsRequired < 8) || midYearsRe.MatchString(jd)
 	staffish := staffishRe.MatchString(title) || strings.Contains(level, "staff") || strings.Contains(level, "principal")
 	seniorish := seniorishRe.MatchString(title) || strings.Contains(level, "senior")
 
 	switch {
-	case staffish || architectRe.MatchString(title) || highYears:
+	case staffish || architectRe.MatchString(title) || yearsRequired >= 8:
 		return Caps{CV: 2, NS: 3, Reason: "Staff/Principal/8+ yrs demand"}
-	case seniorish || fwdRe.MatchString(title) || midYears:
+	case seniorish || fwdRe.MatchString(title) || (yearsRequired >= 5 && yearsRequired < 8):
 		return Caps{CV: 3, NS: 4, Reason: "Senior/5+ yrs demand"}
 	}
 	return Caps{CV: 5, NS: 5}
@@ -239,17 +239,9 @@ func SeniorityCaps(roleTitle, jdText string, yearsRequired int, seniorityLevel s
 
 // ── Natural language ─────────────────────────────────────────────────────────
 
-// English is never a mismatch: the CV is in English.
-var humanLanguages = []string{
-	"german", "french", "spanish", "italian", "dutch", "portuguese",
-	"japanese", "korean", "mandarin", "chinese", "arabic", "polish", "swedish",
-	"norwegian", "danish", "finnish", "turkish", "czech", "ukrainian", "russian",
-}
-
 var (
 	langSectionRe = regexp.MustCompile(`(?is)\*\*Languages\*\*\s*\n(.*?)(\n\s*\*\*|$)`)
 	langItemRe    = regexp.MustCompile(`^\s*-\s*([A-Za-z]+)`)
-	softMentionRe = regexp.MustCompile(`(?i)\bplus\b|\bbonus\b|nice[\s-]to[\s-]have|preferred|advantage|desirable`)
 )
 
 // CandidateLanguages are the languages listed under the CV's Languages section.
@@ -267,164 +259,54 @@ func CandidateLanguages(cv string) map[string]bool {
 	return have
 }
 
-// LanguageMismatchCap caps hard when the JD requires fluency in a natural
-// language the candidate does not have.
-//
-// One missed requirement barely moves the coverage average, so a "(German
-// speaking)" role scores a 4.5 unless this is a code-level gate. Nice-to-have
-// mentions do not trigger it.
-func LanguageMismatchCap(jdText, cv string) (Caps, string) {
-	jd := strings.ToLower(jdText)
-	have := CandidateLanguages(cv)
-	for _, lang := range humanLanguages {
-		if have[lang] {
-			continue
-		}
-		re := regexp.MustCompile(`(?i)\b` + lang + `[\s-]*(speaking|fluen\w*|proficien\w*|native)|` +
-			`\b(fluen\w*|proficien\w*|native)[^.\n]{0,30}\b` + lang + `\b`)
-		loc := re.FindStringIndex(jd)
-		if loc == nil {
-			continue
-		}
-		if softMentionRe.MatchString(window(jd, loc[0], loc[1], 60)) {
-			continue
-		}
-		return Caps{CV: 2, NS: 2}, lang
-	}
-	return Caps{CV: 5, NS: 5}, ""
-}
-
 // ── Location policy ──────────────────────────────────────────────────────────
 
-// A named city list, not "any capitalised word": a JD names a dozen places it
-// is not hiring in — the HQ, the customers, the last funding round's office —
-// and every one of them would cap an otherwise remote role.
-var ukCities = []string{
-	"london", "manchester", "leeds", "liverpool", "sheffield", "nottingham",
-	"leicester", "bristol", "cardiff", "newcastle", "york", "cambridge", "oxford",
-	"reading", "brighton", "southampton", "portsmouth", "edinburgh", "glasgow",
-	"aberdeen", "dundee", "belfast", "dublin", "milton keynes", "swindon",
-	"derby", "norwich", "exeter", "bath",
-}
-
 var (
-	onsiteSignal    = regexp.MustCompile(`(?i)\bon-?site\b|\bhybrid\b|\bin[- ]office\b|\boffice[- ]based\b|\d\s*days?\s*(?:a|per)\s*week\s*(?:in|at|from)\b`)
-	fullyRemote     = regexp.MustCompile(`(?i)\b(?:fully|100%|entirely|permanently)\s+remote\b|\bremote[- ]first\b|\bwork\s+from\s+anywhere\b`)
-	monthlyCadence  = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*month|\bmonthly\s+(?:travel|visit|on-?site)`)
-	weeklyCadence   = regexp.MustCompile(`(?i)\d+\s*days?\s*(?:a|per)\s*week|\bweekly\s+(?:travel|visit|on-?site)`)
-	profileCityRe   = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
-	searchLocsRe    = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|$)`)
+	profileCityRe = regexp.MustCompile(`(?m)^\s*city:\s*["']?([^"'\n]+)`)
+	// \z, not $: under (?m) the lazy group stopped at the first end of line,
+	// so only the first search_locations entry was ever read.
+	searchLocsRe    = regexp.MustCompile(`(?ms)^\s*search_locations:\s*\n(.*?)(\n\s*\w+:|\z)`)
 	remoteOnlyRe    = regexp.MustCompile(`(?i)remote\s+only`)
+	onsiteOKRe      = regexp.MustCompile(`(?i)on-?site`)
+	hybridOKRe      = regexp.MustCompile(`(?i)\bhybrid\b`)
 	listItemRe      = regexp.MustCompile(`^\s*-\s`)
 	listItemStripRe = regexp.MustCompile(`^\s*-\s*["']?`)
 )
 
-// proximity is how far either side of a city name the on-site signal must sit.
-const proximity = 160
-
-// CommutableTerms are the places the candidate will physically attend an
-// office, from config/profile.yml: location.city plus any search_locations
-// entry that is not remote-only.
-//
-// That is the whole policy — one commutable base, everywhere else remote — so
-// it is read from the user layer rather than hardcoded here.
-func CommutableTerms(profileYML string) []string {
+// commuteTiers splits the places the candidate will attend: full are full-time
+// bases, hybrid are search_locations entries that allow hybrid and not on-site
+// ("London — hybrid or remote"), commuted to part of the week only.
+func commuteTiers(profileYML string) (full, hybrid []string) {
 	seen := map[string]bool{}
-	var terms []string
-	add := func(s string) {
+	add := func(to *[]string, s string) {
 		s = strings.ToLower(strings.TrimSpace(s))
 		if s != "" && !seen[s] {
 			seen[s] = true
-			terms = append(terms, s)
+			*to = append(*to, s)
 		}
 	}
 	if m := profileCityRe.FindStringSubmatch(profileYML); m != nil {
-		add(m[1])
+		add(&full, m[1])
 	}
 	if m := searchLocsRe.FindStringSubmatch(profileYML); m != nil {
 		for _, line := range strings.Split(m[1], "\n") {
 			if !listItemRe.MatchString(line) || remoteOnlyRe.MatchString(line) {
 				continue
 			}
+			to := &full
+			if hybridOKRe.MatchString(line) && !onsiteOKRe.MatchString(line) {
+				to = &hybrid
+			}
 			place := listItemStripRe.ReplaceAllString(line, "")
 			place = strings.FieldsFunc(place, func(r rune) bool {
 				return r == '—' || r == '–' || r == '"' || r == '\''
 			})[0]
 			for _, part := range strings.Split(place, "/") {
-				add(part)
+				add(to, part)
 			}
 		}
 	}
-	return terms
-}
-
-// LocationMismatchCap caps hard when the JD requires office presence somewhere
-// the candidate will not commute to.
-//
-// It exists because a detected hard stop was decoration: hard_stops never fed
-// final_decision, so Phase 2 printed "hybrid or on-site outside the commutable
-// base" verbatim on offers it then scored 4.9 and told the user to Apply to,
-// with a tailored PDF. Capping both dimensions at 2 lands the composite at 2.0
-// — under Phase 1's gate and under Phase 2's `< 3 ⇒ Skip`.
-//
-// Deliberately conservative: a false positive deletes a good offer, while a
-// false negative only leaves noise the human discards. Both signals must be
-// NEAR each other, which is how these ads are actually written. Testing them
-// independently capped a posting that says it has *no* in-office requirement
-// and lists London among its global offices, 1.7k characters apart.
-//
-// ponytail: a JD saying both "hybrid" and "fully remote" is left uncapped.
-// Telling the two apart needs more than proximity, and no such offer has shown
-// up yet.
-func LocationMismatchCap(jdText, profileYML string) (Caps, string) {
-	none := Caps{CV: 5, NS: 5}
-	jd := strings.ToLower(jdText)
-	commutable := CommutableTerms(profileYML)
-
-	if len(commutable) == 0 {
-		return none, "" // no stated policy, no gate
-	}
-	if !onsiteSignal.MatchString(jd) {
-		return none, "" // nothing demands attendance
-	}
-	for _, t := range commutable {
-		if strings.Contains(jd, t) {
-			return none, ""
-		}
-	}
-	if fullyRemote.MatchString(jd) {
-		return none, ""
-	}
-	for _, city := range ukCities {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(city) + `\b`)
-		for _, loc := range re.FindAllStringIndex(jd, -1) {
-			w := window(jd, loc[0], loc[1], proximity)
-			if !onsiteSignal.MatchString(w) {
-				continue
-			}
-			// The policy allows a monthly cadence and refuses a weekly one, so
-			// "6 days a month travel to office" is a yes and must not be capped
-			// for saying "hybrid" in the same breath.
-			if monthlyCadence.MatchString(w) && !weeklyCadence.MatchString(w) {
-				continue
-			}
-			return Caps{CV: 2, NS: 2}, city
-		}
-	}
-	return none, ""
-}
-
-// window is the text around a match, clamped to the string.
-func window(s string, start, end, pad int) string {
-	lo := start - pad
-	if lo < 0 {
-		lo = 0
-	}
-	hi := end + pad
-	if hi > len(s) {
-		hi = len(s)
-	}
-	return s[lo:hi]
+	return full, hybrid
 }
 
 // ── Evidence strength ────────────────────────────────────────────────────────
@@ -463,14 +345,8 @@ func Catalogue(source string) bool { return source == "skills" || source == "edu
 // boolean it collapsed "no tooling involved" into "wrong tooling" and quietly
 // taxed every degree, communication and mentoring requirement.
 func StrengthFrom(pick string, sameActivity bool, tooling, requirement, evidence, source string) string {
-	if pick == "none" || !sameActivity {
-		return Gap
-	}
-	if tooling == "different" {
-		return Transferable
-	}
-	if Catalogue(source) {
-		return Transferable
+	if s, done := strengthBase(pick, sameActivity, tooling, source); done {
+		return s
 	}
 	// Same catalogue as VerifyAgainstCv but the opposite quantifier: a *claim*
 	// naming two technologies asserts both, a *requirement* listing them ("AWS,
@@ -498,6 +374,57 @@ func StrengthFrom(pick string, sameActivity bool, tooling, requirement, evidence
 		}
 	}
 	return Strong
+}
+
+// NamedTech lists the ecosystems and tools the patterns find in text. It exists
+// so `gate typed` can compare the patterns with the parsed terms.
+func NamedTech(text string) []string {
+	var out []string
+	for _, e := range append(append([]ecosystem{}, ecosystems...), tools...) {
+		if e.countMatches(text) > 0 {
+			out = append(out, e.name)
+		}
+	}
+	return out
+}
+
+// StrengthFromTerms is StrengthFrom with the technologies the requirement names
+// read by the JD parse (quoted and checked) instead of found by the ecosystem
+// and tool patterns. The rule is the same: a row whose requirement names
+// technologies and whose evidence names none of them is demoted.
+func StrengthFromTerms(pick string, sameActivity bool, tooling, evidence, source string, terms []string) string {
+	if s, done := strengthBase(pick, sameActivity, tooling, source); done {
+		return s
+	}
+	if len(terms) > 0 {
+		ev := phraseSpace(evidence)
+		for _, t := range terms {
+			if strings.Contains(ev, phraseSpace(t)) {
+				return Strong
+			}
+		}
+		return Transferable
+	}
+	return Strong
+}
+
+// strengthBase is the part of the grade that does not look at technology names.
+func strengthBase(pick string, sameActivity bool, tooling, source string) (string, bool) {
+	if pick == "none" || !sameActivity {
+		return Gap, true
+	}
+	if tooling == "different" || Catalogue(source) {
+		return Transferable, true
+	}
+	return "", false
+}
+
+var phraseNoise = regexp.MustCompile(`[^a-z0-9+#.&-]+`)
+
+// phraseSpace lower-cases and pads with spaces so a phrase match cannot straddle
+// a word boundary, and keeps the symbols that are part of names (C++, Node.js).
+func phraseSpace(s string) string {
+	return " " + strings.TrimSpace(phraseNoise.ReplaceAllString(strings.ToLower(s), " ")) + " "
 }
 
 // ── Multi-posting ────────────────────────────────────────────────────────────

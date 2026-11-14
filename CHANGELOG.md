@@ -4,7 +4,221 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `snipe registry` builds `data/registry.tsv`, the scanner's company list from
+  public data instead of portals.yml: every employer the gender pay gap service
+  lists (all UK employers with 250+ staff, 11,231 in October 2026), and for each
+  one with a website, the ATS behind its careers page and the board URL it
+  answers on. It reads the home page, the careers link on it and the "search
+  jobs" link on that, and recognises 36 ATSs and career-site platforms. A
+  resolution is reused for 30 days, and a stopped build keeps what it resolved.
+  `snipe scan` fetches every registry board a provider can read, alongside
+  portals.yml's, whenever the registry exists.
+- A Workday provider. `careers_url: https://<tenant>.wdN.myworkdayjobs.com/<site>`
+  (or the `myworkdaysite.com/recruiting/` form) is detected like any other ATS,
+  and an optional `country:` keeps only that country's postings. 169 of the 305
+  reachable Workday boards in the registry have a country facet, which cuts
+  their 66,202 postings to 5,515 in the UK before anything is fetched; for the
+  other 136, each office's country is read off one posting and cached, and a
+  "3 Locations" posting is placed only once it has passed the title filter. On
+  the first full scan, 27 of a 60-posting sample of the new Workday matches were
+  multi-location ones that had passed the location filter blank, Juniper's Ohio
+  sales roles among them. Phase 1 reads Workday descriptions from the same API,
+  since the posting page is a script shell and the HTML fallback got nothing
+  from it.
+- `config/skills.yml`, approved spellings of cv.md's skills. The tailored skills
+  block prints the one the posting uses ("RESTful APIs" where cv.md says "REST
+  APIs"), and a skill named only by an alias now counts as named. Rules and the
+  traps (compound items, ordinary English words) are in
+  `config/skills.example.yml`.
+- `go run ./cmd/gate skills <home>` scores the skills block in the posting's own
+  spelling over every cached JD, with and without aliases. With the first nine,
+  48 alias-only mentions across 351 JDs went from 0 carried to all 48, and none
+  of the 1,830 cv.md-spelled ones moved.
+- Skill spellings are suggested from the postings and approved in the TUI.
+  When a run ends, report keywords that name nothing in cv.md are matched to the
+  nearest cv.md item by embedding; those in two or more postings scoring 0.68
+  or better are queued (46 over 228 reports, in 8–10 s). The review shows the
+  skills block the posting would get and the whole queue, this posting's terms
+  first and quoted. Enter adds the spelling to `config/skills.yml` and `n`
+  rejects it for good. Nothing applies itself, and an item with a spaced ` / `
+  is refused until it is split in cv.md.
+- The tailored page prints a Languages row when the posting names a language
+  cv.md lists, as a whole word. cv.md keeps its human languages outside
+  Skills, so no page said English, and a posting whose must-have is English
+  fluency got no evidence for it. Over 38 tailored pages, 24 gain the row and
+  nothing else on them changes. Of their 19 English must-haves the ATS judge
+  calls 15 met, where it called 6 met.
+- `gate labels <home>` scores the Phase 1 and Phase 2 scores against the hand
+  ratings in `batch/labels`, and `gate goldset grade` scores the CV line stage
+  2 cites against the evidence gold sheet. `SNIPE_GATE_COLD=1` unloads the
+  model before each of a gate's calls, so every prompt is read from its first
+  token and a number does not depend on what the server had cached. With it
+  the judge gate gave 0.848 three times, the third straight after an Ollama
+  restart.
+- `docs/PIPELINE-REVIEW.md`: a map of the three phases and where their time
+  goes, a baseline for every gate, what each change measured, and the changes
+  that were measured and dropped.
+
+### Changed
+
+- The binary builds to `./snipe` at the repo root, which the docs now say: it
+  finds prompts/ and templates/ beside itself, so `./bin/snipe` only worked from
+  the repo root. CI also runs on pushes to `develop`, not only on pull requests
+  into it.
+- `location_filter.regions` places postings with a UK gazetteer before the
+  keyword tiers: `london`, `west-midlands` (the metropolitan county), `uk-wide`
+  and `uk`. Substring matching had kept "Sydney, New South Wales" on "Wales" and
+  "Birmingham, AL" on "Birmingham", and dropped a bare "Coventry" or "Solihull"
+  for naming no keyword. Without `regions` the filter is unchanged. The scan's
+  summary counts the new postings by place when it is on.
+- `snipe scan` fetches eight boards at a time instead of one. The postings are
+  still filtered in entry order once every fetch is in, so which copy of a
+  duplicate is kept does not depend on which board answered first.
+- Phase 2's `north_star` is read from the archetype's `fit` tier in
+  `profile.yml` (primary 5, secondary 3, adjacent 2, unlisted 1) and then capped
+  as before; the model no longer scores it. It had been doing the lookup anyway,
+  scoring every primary archetype 5. Stage 3's `archetype` is now an enum of the
+  profile's list, as Phase 1's already was, so the lookup gets an exact label. On
+  the 18 labelled offers the lookup's own moves all went toward the labels.
+- The location cap has a hybrid tier. A `search_locations` entry that allows
+  hybrid but not on-site, such as `London — hybrid or remote`, makes a posting
+  there acceptable unless it asks for full-time attendance (five days a week, or
+  on-site only). A hybrid posting offering that city alongside another ("London
+  or Manchester, hybrid") is read as the acceptable one, and a hybrid office near
+  Liverpool Street no longer reads as Liverpool. With London set to hybrid, the
+  capped postings among 351 cached JDs fell from 52 to 14, every one of them
+  full-time on-site, and pair accuracy on the 18 labelled offers rose from 63.3%
+  to 77.7%.
+- The tailored skills block names a skill only when the posting contains one of
+  its forms whole (the item itself, a side of a ` / `, an approved alias). One
+  shared word used to be enough, so "engineering" named a category in 241 of 351
+  cached postings and the category cap never bound. The limits are now 5
+  categories, 7 items and a floor of 3, down from 6, 12 and 3. Over the 351
+  postings the block falls from 37 items to about 22 and from an estimated 9.8
+  lines to 5.3, and keeps 2,568 of 2,574 named mentions. `gate p3` stops
+  comparing skills with the Node oracle, which keeps the old rule; `gate skills
+  --sweep` measures the block instead.
+- `v`, and a finished row's action (now "skills", was "report"), open that
+  review instead of the report. Reports are still written to `reports/`, and
+  the follow-ups board still opens them.
+- An offer takes 207 s end to end where it took 311 s (mean of 3 offers). The
+  embedder runs on the CPU, so it no longer evicts the 30B between calls.
+  Phase 1 uses one context window, so the 4B is not reloaded for the
+  extraction. The spike background, the alias term vectors and the requirement
+  vectors are kept between runs, so a run embeds only what is new. The CPU
+  returns different vectors from the GPU, so the first run after this rebuilds
+  the vector caches once, about 12 minutes.
+- Stage 2's grader sees four candidate CV lines per requirement, not three. On
+  the evidence gold sheet a ticked line is among those shown for 53 of 63
+  requirements, up from 50.
+- Phase 1's `north_star` is looked up from the archetype's tier, as Phase 2's
+  is. Against the 18 rated offers Phase 1 orders 52 of 83 pairs, where it
+  ordered 47: 2 more from the lookup and 3 from the embedder leaving the GPU.
+
+### Fixed
+
+- `batch/bench-tools/rho.mjs` crashed on an undefined `dirs` whenever it was run
+  from the command line.
+- The three model gates all ran the oracle from paths that no longer resolve.
+  `gate-phase1.sh` and `gate-p3.sh` invoked `batch/ollama-scorer.mjs` and
+  `batch/local-pdf-offer.mjs`, both cut from the 0.6.0 keep-list by mistake;
+  `gate-phase2.sh` copied `tracker/*.mjs`, which went with the Node tooling, and
+  died at the copy under `set -e`. Only the four no-model gates were run when
+  0.6.0 landed, which is why none of this showed.
+- The restored oracle scripts read their prompts from `batch/`, where 0.6.0's
+  deduplication removed them. They read `prompts/` now, the same file
+  `internal/config.Prompt` reads.
+- Four gate scripts defaulted their oracle root to `$HOME/projects/snipe`, which
+  resolved only because this checkout sits at that path, and used it unresolved,
+  so a relative argument produced a self-referential `node_modules` symlink.
+- `gate-phase1.sh` ran the oracle in place, against the rule that a gate must
+  not. `ollama-scorer.mjs` writes the JD it scored into its own `batch/jds/`.
+  It runs from a fixture now, and `gate-p3.sh` pins `SNIPE_ADDITIONS` to scratch
+  so a tracker row cannot depend on an argument.
+- `TestLadderProducesAOnePagePDF`, the only check that the emitted `.tex`
+  compiles, looked for one hardcoded past application and skipped itself
+  everywhere else.
+- The demo fixture wrote a real person's name into a PDF filename while seeding
+  a profile that calls the candidate "A. Candidate".
+- `TestApifyPostedAtAcceptsBothShapes` hardcoded 2026-08-26 as a date "this
+  week" and had failed every day since. It compares against today.
+- Only the first `search_locations` entry in `profile.yml` was ever read: the
+  pattern ended at `$`, and under multi-line mode the lazy match stopped at the
+  first line end. `batch/fit-rules.mjs` has the same bug, so `gate fit` now
+  differs from the Node oracle wherever a later entry matters.
+- Editing `profile.md` did not re-run a cached Phase 2 judgment. The judgment
+  prompt includes the profile but its checkpoint key did not, so an offer
+  re-run after a profile edit kept the judgment written under the old one. The
+  key changed shape, so every cached judgment re-runs once on its next pass.
+- Whole-phrase skill naming missed the posting's other grammatical number:
+  "code reviews" never named Code Review (51 of 351 cached postings), nor
+  "event-driven architectures" Event-Driven Architecture (21). Token overlap
+  had caught both on a single shared word. A form now matches its singular or
+  plural too, within limits that keep AWS, CSS and "reacts" out, and the block
+  prints the number the posting used.
+- A posting that names no tool by its full name got cv.md's first five skill
+  categories in order, because an item not named whole scored nothing for
+  ranking either. Whole-phrase naming still decides what may not be cut, and
+  token overlap ranks again. On the live CV's 394 postings, printed items
+  sharing a word with the posting rose from 27% to 43%, and 7 of 8 "Security
+  Engineer" postings get a Security row, up from 5.
+- Accepting an alias wrote `config/skills.yml` by renaming a temporary file
+  over it, which replaced a symlinked `skills.yml` with a plain file. It now
+  writes through the link to the file behind it.
+- Phase 2 scored an offer lower when Phase 1 had not run since the fact ledger
+  last changed. The stack cap read the CV's language list from Phase 1's
+  cache, and without one fell back to the word lists and did not say so. Phase
+  2 now asks for the list itself, once per ledger. One offer that wants Go
+  went from 3.8 to 4.2 on the same three stage outputs.
+- `gate ats --ceiling` reads a verdict gemma3 gives on two bare lines, without
+  its labels. It had counted all 151 such replies as unusable and reported
+  nothing.
+
+### Removed
+
+- The Node oracle and the parity gates. 0.6.0 kept `batch/*.mjs` for `cmd/gate`
+  to diff against and `batch/bench-tools/` to re-derive the tuned constants. The
+  October rework made Go differ from Node by design (skill aliases, whole-phrase
+  naming, the slimmed judgment), so the Phase 2 and Phase 3 parity checks fail
+  by construction, and no run touched Node. Gone with them: `scripts/`, the
+  `salary`, `cleanjd`, `p3`, `p3norm`, `fill`, `tex`, `select`, `atoms` and
+  `fit` gates, the npm tree (`package.json`, `package-lock.json`),
+  `prompts/local-tailor-prompt.md` and `prompts/Modelfile.snipe-cv`. Nothing in
+  the repo needs Node now. The
+  `oracle/node-complete` tag still has the Node tree. The Go gates (`goldset`,
+  `skills`, `typed`, `tailor`, `ats`, `e2`) stay.
+- `modes/`, the prompts for driving snipe through a coding agent, and the
+  `interview-prep/` and `data/parser-output/` folders only they wrote to. The
+  binary never read them. `docs/CUSTOMIZATION.md` loses its negotiation-script
+  and agent-hook sections with them.
+- Thirteen functions nothing called. Most are the fabrication guards from the 7B
+  tailor arm (`RevertUnsupportedBullets`, `StripFabricatedProducts`,
+  `FilterSkillItems` and the rest): the verbatim writer prints only cv.md's own
+  lines, so they had nothing to guard.
+- The `snipe-cv` model (Qwen2.5 7B Coder) from setup. Phase 3 has picked
+  cv.md's own lines since the Go port and never calls it, yet the README and
+  `docs/SETUP.md` had every new user pull 5.4 GB for it. SETUP also pointed
+  `ollama create` at `batch/Modelfile.*`, which moved to `prompts/` in 0.6.0.
+- `prompts/ollama-eval-prompt.md`, the classic Phase 2 prompt, which nothing
+  has read since the staged evaluator replaced it.
+- `batch/README.md`. It described the Node runner: `npm run merge`,
+  `import-pipeline.mjs`, flags `snipe run` does not have, and a layout from
+  before `batch/state/` and `batch/cache/`.
+- Three August planning docs whose work is done or was never started:
+  `SESSION-HANDOFF.md`, `TAILORING-QUALITY-PLAN.md` (results are in
+  `PHASE3-GENERATION-LEDGER.md`) and `PHASE3-TAILORING-STRATEGY.md`. All
+  three are in git history.
+- Phase 2's report drops Comp & Demand, LinkedIn changes, Interview Prep and
+  Posting Legitimacy, and the judgment call stops writing them. Nothing
+  downstream read them, yet they were most of that call's output: on the 18
+  labelled offers it fell from 3,022 to 982 tokens and from 158 s to 57 s, about
+  95 s off every offer once the stage reload is counted. Pair accuracy moved by
+  one offer. The report runs A–D now; a posted salary keeps one header line,
+  since it still carries a fifth of the score.
+- `scripts/import-data.sh`. It copied the user layer out of the Node checkout,
+  and its own guard refuses when source and destination are the same tree.
 
 ## [0.6.0] - 2026-08-26
 

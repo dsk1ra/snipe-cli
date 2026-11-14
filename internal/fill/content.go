@@ -2,6 +2,7 @@ package fill
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 )
 
@@ -21,7 +22,9 @@ type Content struct {
 }
 
 type ContentExp struct {
-	Company string   `json:"company"`
+	Company string `json:"company"`
+	// Role tells two entries at one employer apart; empty matches any role.
+	Role    string   `json:"role,omitempty"`
 	Bullets []string `json:"bullets"`
 }
 
@@ -118,3 +121,75 @@ func ParseContent(b []byte) (Content, error) {
 }
 
 func lower(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+// SkillRows is the skills block as the content carries it, nil when the field
+// is absent or not an array.
+func (c Content) SkillRows() []SkillRow {
+	picks, ok := c.skills()
+	if !ok {
+		return nil
+	}
+	rows := make([]SkillRow, 0, len(picks))
+	for _, p := range picks {
+		rows = append(rows, SkillRow{Category: p.Category, Items: p.Items})
+	}
+	return rows
+}
+
+// SkillItems splits a skills row into its items, parenthesised asides intact.
+func SkillItems(items string) []string {
+	var out []string
+	for _, x := range splitItems(items) {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// ReplaceBullet swaps the first bullet equal to old for new, looking in the
+// experience bullets and then the project picks. c is not modified.
+func (c Content) ReplaceBullet(old, new string) (Content, bool) {
+	exp := make([]ContentExp, len(c.Experience))
+	copy(exp, c.Experience)
+	for i := range exp {
+		if j := slices.Index(exp[i].Bullets, old); j >= 0 {
+			exp[i].Bullets = slices.Clone(exp[i].Bullets)
+			exp[i].Bullets[j] = new
+			c.Experience = exp
+			return c, true
+		}
+	}
+	if picks, ok := c.ProjectPicks(); ok {
+		for i := range picks {
+			if j := slices.Index(picks[i].Bullets, old); j >= 0 {
+				picks[i].Bullets[j] = new
+				return c.WithProjects(picks), true
+			}
+		}
+	}
+	return c, false
+}
+
+// ReplaceSkill swaps the first skill item equal to old for new. c is not
+// modified.
+func (c Content) ReplaceSkill(old, new string) (Content, bool) {
+	picks, ok := c.skills()
+	if !ok {
+		return c, false
+	}
+	for i := range picks {
+		items := SkillItems(picks[i].Items)
+		if j := slices.Index(items, old); j >= 0 {
+			items[j] = new
+			picks[i].Items = strings.Join(items, ", ")
+			b, err := json.Marshal(picks)
+			if err != nil {
+				return c, false
+			}
+			c.Skills = b
+			return c, true
+		}
+	}
+	return c, false
+}

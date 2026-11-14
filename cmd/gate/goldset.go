@@ -22,15 +22,15 @@ import (
 
 // The Phase 2 evidence gold set.
 //
-// Every other gate in this directory asks "does Go agree with the Node oracle".
-// That question cannot see a retrieval defect both implementations share, and
+// The parity gates that proved the port asked "does Go agree with the Node
+// oracle". That question cannot see a retrieval defect both implementations share, and
 // they shared one: a Skills or Education catalogue line was rank-1 for 44% of
 // real requirements, took two of the three candidate slots on 17.8% of them and
 // all three on 3.2% — evidence fit.Catalogue caps at Transferable before the
 // grader reads it. Both implementations agreed perfectly while doing it.
 //
 // So this gate asks the other question — does retrieval agree with a human —
-// and it is the only one here that needs one. It is the Node `batch/goldset.mjs`
+// and it needs one. It is the Node `batch/goldset.mjs`
 // idea moved to the space the defect lives in: that sheet ranked whole CV atoms
 // per OFFER for Phase 3 selection, this one ranks them per REQUIREMENT for
 // Phase 2 evidence.
@@ -49,8 +49,9 @@ import (
 // what changes.
 func gateGoldset(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md]\n"+
-			"       gate goldset score <home> <sheet.md>")
+		fmt.Fprintln(os.Stderr, "usage: gate goldset sheet <home> [offers] [previous-sheet.md [--remap]]\n"+
+			"       gate goldset score <home> <sheet.md> [--facts]\n"+
+			"       gate goldset grade <home> <sheet.md>")
 		return 2
 	}
 	home := args[1]
@@ -64,13 +65,19 @@ func gateGoldset(args []string) int {
 		if len(args) > 3 {
 			prior = args[3]
 		}
-		return goldsetSheet(home, n, prior)
+		return goldsetSheet(home, n, prior, len(args) > 4 && args[4] == "--remap")
 	case "score":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "usage: gate goldset score <home> <sheet.md>")
 			return 2
 		}
-		return goldsetScore(home, args[2])
+		return goldsetScore(home, args[2], len(args) > 3 && args[3] == "--facts")
+	case "grade":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "usage: gate goldset grade <home> <sheet.md>")
+			return 2
+		}
+		return goldsetGrade(home, args[2])
 	}
 	fmt.Fprintf(os.Stderr, "unknown goldset mode %q\n", args[0])
 	return 2
@@ -96,7 +103,7 @@ func goldsetCorpus(home string) (paths.Layout, []embed.Atom, error) {
 	if err != nil {
 		return l, nil, err
 	}
-	atoms := embed.ExtractAtoms(cfg.CVRaw, embed.ReadFileOr(filepath.Join(l.Home, "article-digest.md")))
+	atoms := embed.ExtractAtoms(cfg.CVRaw, embed.ReadFileOr(l.Digest()))
 	if len(atoms) == 0 {
 		return l, nil, fmt.Errorf("no atoms extracted from %s", l.CV())
 	}
@@ -173,6 +180,10 @@ func rank(q []float64, index []embed.Atom, k int) (before, after []int, err erro
 	return idx(old), idx(new), nil
 }
 
+// remapMin is the similarity at which a rewritten atom is proposed as the
+// home of a dropped tick.
+const remapMin = 0.85
+
 // goldsetSheet cuts a new sheet, carrying over the ticks of a previous one.
 //
 // Carrying them is not a convenience. A sheet is hand-labelled, the labels are
@@ -181,7 +192,7 @@ func rank(q []float64, index []embed.Atom, k int) (before, after []int, err erro
 // goldset's 174 ticks were lost. parseGoldsheet's atom-count check is what makes
 // it safe: if cv.md has moved, the old ids point at different atoms and the
 // carry is refused rather than silently wrong.
-func goldsetSheet(home string, n int, prior string) int {
+func goldsetSheet(home string, n int, prior string, remap bool) int {
 	l, index, err := goldsetCorpus(home)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -204,12 +215,58 @@ func goldsetSheet(home string, n int, prior string) int {
 	for _, a := range index {
 		byText[a.Text] = true
 	}
+	// With --remap, a tick whose atom has been rewritten moves to the nearest
+	// current atom as a machine proposal ("X", where a hand tick is "x"), listed
+	// on stderr with its similarity for a human to confirm or untick. Without it
+	// the tick is dropped, as before.
+	proposals := map[string]string{}
+	if remap {
+		var gone []string
+		seenGone := map[string]bool{}
+		for _, texts := range ticked {
+			for t := range texts {
+				if !byText[t] && !seenGone[t] {
+					seenGone[t] = true
+					gone = append(gone, t)
+				}
+			}
+		}
+		sort.Strings(gone)
+		if len(gone) > 0 {
+			vecs, err := embed.Batch(context.Background(), ollama.New("", nil), gone, ollama.ModelEmbed)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			for i, t := range gone {
+				top, err := embed.TopK(vecs[i], index, 2)
+				if err != nil || len(top) == 0 {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "REMAP %.3f\n  was: %.140s\n  now: %.140s\n", top[0].Sim, t, top[0].Text)
+				if len(top) > 1 {
+					fmt.Fprintf(os.Stderr, "  2nd: %.3f %.140s\n", top[1].Sim, top[1].Text)
+				}
+				if top[0].Sim >= remapMin {
+					proposals[t] = top[0].Text
+				}
+			}
+		}
+	}
 	for key, texts := range ticked {
 		for t := range texts {
-			if !byText[t] {
-				fmt.Fprintf(os.Stderr, "  %s: ticked atom is no longer in cv.md, tick dropped: %.70s\n",
-					strings.ReplaceAll(key, "\x00", " "), t)
+			if byText[t] {
+				continue
 			}
+			if np, ok := proposals[t]; ok {
+				if texts[np] == "" {
+					texts[np] = "X"
+				}
+				delete(texts, t)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "  %s: ticked atom is no longer in cv.md, tick dropped: %.70s\n",
+				strings.ReplaceAll(key, "\x00", " "), t)
 		}
 	}
 	carried, fresh, stranded := 0, 0, 0
@@ -291,8 +348,15 @@ func goldsetSheet(home string, n int, prior string) int {
 			}
 			// Ascending, never by score: listing the pool in either ranker's
 			// order anchors the ticks on the answer the sheet exists to check.
-			sort.Ints(pool)
 			was, seenBefore := ticked[name+"\x00"+r]
+			// A machine proposal may sit outside the live pool; it is listed anyway.
+			for id, a := range index {
+				if was[a.Text] == "X" && !seen[id] {
+					seen[id] = true
+					pool = append(pool, id)
+				}
+			}
+			sort.Ints(pool)
 			if seenBefore {
 				carried++
 			} else {
@@ -395,7 +459,7 @@ func parseGoldsheet(path string, atoms int) ([]goldCase, error) {
 	return out, nil
 }
 
-func goldsetScore(home, sheet string) int {
+func goldsetScore(home, sheet string, facts bool) int {
 	_, index, err := goldsetCorpus(home)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -454,7 +518,7 @@ func goldsetScore(home, sheet string) int {
 	// the requirement's one real match. Ranked separately at each k rather than
 	// sliced from the k=3 result — the two-pool ranker allocates its slots
 	// between the pools, so its top 1 of 3 is not what it would return for 1.
-	const prodK = 3
+	const prodK = phase2.TopKCandidates
 	at := make([]struct{ before, after tally }, prodK+1)
 	for k := 1; k <= prodK; k++ {
 		for i, c := range marked {
@@ -468,6 +532,11 @@ func goldsetScore(home, sheet string) int {
 		}
 	}
 	before, after := at[prodK].before, at[prodK].after
+	if facts {
+		if rc := goldsetFacts(home, index, marked, vecs, after.hits, after.slots); rc != 0 {
+			return rc
+		}
+	}
 
 	n := float64(len(marked))
 	row := func(name string, pick func(int) tally) {
@@ -483,8 +552,13 @@ func goldsetScore(home, sheet string) int {
 		fmt.Printf("   %.2f\n", float64(pick(prodK).catSlots)/n)
 	}
 	fmt.Printf("%s — %d labelled requirements over %d atoms\n\n", filepath.Base(sheet), len(marked), len(index))
-	fmt.Printf("  %-22s  %-5s  %-5s  %-5s  %-5s  %-5s  %-5s   %s\n",
-		"", "p@1", "p@2", "p@3", "hit@1", "hit@2", "hit@3", "cat/req")
+	fmt.Printf("  %-22s", "")
+	for _, m := range []string{"p", "hit"} {
+		for k := 1; k <= prodK; k++ {
+			fmt.Printf("  %-5s", fmt.Sprintf("%s@%d", m, k))
+		}
+	}
+	fmt.Printf("   %s\n", "cat/req")
 	row("single pool (before)", func(k int) tally { return at[k].before })
 	row("two pool (after)", func(k int) tally { return at[k].after })
 	fmt.Println()

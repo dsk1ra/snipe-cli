@@ -7,8 +7,7 @@
 // batch/ was a flat drop of everything the pipeline touched, inherited from the
 // Node implementation so both could read one tree during the port. It is split
 // now that they no longer have to: batch/state/ is the record, batch/cache/ is
-// derived, and the per-offer directories are their own thing. scripts/
-// import-data.sh writes the new shape.
+// derived, and the per-offer directories are their own thing.
 package paths
 
 import (
@@ -60,6 +59,17 @@ func (l Layout) Applied() string  { return filepath.Join(l.StateDir(), "applied.
 func (l Layout) Skipped() string  { return filepath.Join(l.StateDir(), "skipped.tsv") }
 func (l Layout) Declined() string { return filepath.Join(l.StateDir(), "declined.tsv") }
 
+// SkillSuggestions is the alias review queue. Its pending rows are rebuilt
+// after every run, but a rejection is a decision nothing else records.
+func (l Layout) SkillSuggestions() string {
+	return filepath.Join(l.StateDir(), "skill-suggestions.tsv")
+}
+
+// CVLedger is the fact ledger. It carries the facts, framings and inferences you
+// approved, which nothing else records, so it is state and never rebuilt from
+// scratch: `snipe ledger` merges into it.
+func (l Layout) CVLedger() string { return filepath.Join(l.StateDir(), "cv-ledger.json") }
+
 // Lock lives with the state it guards. It is the only file in there that does
 // not survive the process, which is the point: a lock found in a tree copied
 // off another machine is a lie, and one found beside the state file is at least
@@ -87,14 +97,21 @@ func (l Layout) Errors() string     { return filepath.Join(l.Batch(), "errors") 
 func (l Layout) JDs() string        { return filepath.Join(l.Batch(), "jds") }
 func (l Layout) Work() string       { return filepath.Join(l.Batch(), "work") }
 func (l Layout) CV() string         { return filepath.Join(l.Home, "cv.md") }
+func (l Layout) Digest() string     { return filepath.Join(l.Home, "article-digest.md") }
 func (l Layout) ProfileYML() string { return filepath.Join(l.Home, "config", "profile.yml") }
 func (l Layout) ProfileMD() string  { return filepath.Join(l.Home, "config", "profile.md") }
+func (l Layout) SkillsYML() string  { return filepath.Join(l.Home, "config", "skills.yml") }
 func (l Layout) Followups() string  { return filepath.Join(l.Data(), "follow-ups.md") }
 
 // ScanHistory is the scanner's long memory: every URL it has ever kept, which
 // outlives that URL's row in batch-input.tsv. It sits with the data, not the
 // cache — losing it means re-offering hundreds of postings already judged.
 func (l Layout) ScanHistory() string { return filepath.Join(l.Data(), "scan-history.tsv") }
+
+// Registry is every UK employer the scanner knows of and the ATS behind each
+// one's careers page. It is rebuilt from public data by `snipe registry`, but a
+// rebuild is a crawl of a few thousand sites, so it sits with the data.
+func (l Layout) Registry() string { return filepath.Join(l.Data(), "registry.tsv") }
 
 // Additions is batch/tracker-additions/, overridable so a fixture TSV cannot be
 // merged into the real tracker by the next run.

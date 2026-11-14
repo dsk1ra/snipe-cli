@@ -19,6 +19,8 @@ type Atom struct {
 	Text   string    `json:"text"`
 	Source string    `json:"source"`
 	Vec    []float64 `json:"vec,omitempty"`
+	// Parent is the bullet atom's text when this atom is one fact of it.
+	Parent string `json:"parent,omitempty"`
 }
 
 var cvSections = map[string]bool{

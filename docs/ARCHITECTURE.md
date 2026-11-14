@@ -3,12 +3,11 @@
 ## System Overview
 
 ```
-      ┌────────────────────────┐   ┌─────────────────────────────────┐
-      │       snipe TUI        │   │       AI Coding CLI Agent       │
-      │       cmd/snipe        │   │      (reads modes/*.md)         │
-      └───────────┬────────────┘   └──────────────┬──────────────────┘
-                  └───────────────┬───────────────┘
-                                  │
+                   ┌────────────────────────┐
+                   │       snipe TUI        │
+                   │       cmd/snipe        │
+                   └───────────┬────────────┘
+                               │
             ┌──────────────────┼──────────────────────┐
             │                  │                       │
      ┌──────▼──────┐   ┌──────▼──────┐   ┌───────────▼────────┐
@@ -25,7 +24,7 @@
      │                    Output Pipeline                      │
      │  ┌──────────┐  ┌────────────┐  ┌───────────────────┐  │
      │  │ Report.md│  │ PDF (.tex → │  │ Tracker TSV       │  │
-     │  │ (A-F eval)│  │  pdflatex)   │  │ (merge-tracker)  │  │
+     │  │ (A-D eval)│  │  pdflatex)   │  │ (merge-tracker)  │  │
      │  └──────────┘  └────────────┘  └───────────────────┘  │
      └────────────────────────────────────────────────────────┘
                                │
@@ -38,7 +37,7 @@
 ## What is here
 
 One Go binary. `internal/` is a package per concern, `cmd/snipe` is the binary,
-`cmd/gate` the oracle harness.
+`cmd/gate` the quality gates.
 
 | concern | package |
 |---|---|
@@ -46,7 +45,7 @@ One Go binary. `internal/` is a package per concern, `cmd/snipe` is the binary,
 | phases | `internal/phase1`, `internal/phase2`, `internal/phase3` |
 | CV selection | `internal/cvselect` |
 | render | `internal/latex`, `internal/fill`, `internal/pdf` |
-| providers | `internal/providers`, `internal/scan` |
+| providers | `internal/providers`, `internal/scan`, `internal/registry` |
 | tracker | `internal/tracker` |
 | TUI | `internal/tui` |
 
@@ -55,31 +54,22 @@ splits by what you lose if it is gone: `batch/state/` is the record,
 `batch/cache/` is derived and safe to delete, and the per-offer directories are
 their own thing.
 
-Two pieces of the Node implementation this replaced are still in the tree, and
-neither is on the path of a run:
-
-- `batch/*.mjs`, the oracle `cmd/gate` diffs against. It is what proved the port
-  and what would catch a regression in the ported logic.
-- `batch/bench-tools/`, the sweeps that measured the tuned constants.
-
-Everything else is at the `oracle/node-complete` tag.
-
-`cmd/gate` agreeing with the oracle is not the same as being right: both can
-share a defect and agree perfectly. `gate goldset` asks a human instead.
+The Node implementation this replaced, with the oracle and the sweeps that
+measured the tuned constants, is at the `oracle/node-complete` tag. `cmd/gate`
+measures the Go pipeline against hand labels and the cached postings instead:
+`gate goldset` asks a human, `gate skills` and `gate tailor` score the page.
 
 ## Data contract
 
 **User layer — never auto-update, all personalization goes here:**
 `cv.md`, `config/profile.yml`, `config/profile.md`, `article-digest.md`,
-`portals.yml`, `data/*`, `reports/*`, `output/*`, `interview-prep/*`
+`portals.yml`, `data/*`, `reports/*`, `output/*`
 
 **System layer — safe to edit as code:**
-`internal/*`, `cmd/*`, `prompts/*`, `templates/*`, `modes/*`, `scripts/*`, and
-the Node oracle under `batch/` that the gates compare against.
+`internal/*`, `cmd/*`, `prompts/*`, `templates/*`.
 
 **Rule:** customization (archetypes, narrative, comp targets, location policy,
-scoring weights) goes in `config/profile.md` or `config/profile.yml`. Never
-`modes/_shared.md`.
+scoring weights) goes in `config/profile.md` or `config/profile.yml`.
 
 `config/profile.md` is a hard dependency: `internal/phase1` and
 `internal/phase2` read it at runtime.
@@ -90,16 +80,17 @@ substring of the `### ` title. It is the escape hatch for an entry whose value i
 not its subject — an Honours dissertation loses the cut on any posting with no
 use for its topic, and is the first thing a reader of a graduate CV looks for.
 Each pin spends one of the three slots, so it is a project the ranker no longer
-chooses. **It also moves the benchmark**: the sweeps under `batch/bench-tools/`
-read this file, so a pin changes selection for every arm. Note it when comparing
+chooses. **It also moves the benchmark**: `gate tailor` reads this file too, so
+a pin changes selection for every arm. Note it when comparing
 against a run made before the pin existed.
 
 ## Entry points
 
 ```
-bin/snipe                    the TUI (default)
+./snipe                      the TUI (default)
   ├─ snipe run               the three-phase pipeline
-  ├─ snipe scan              portals.yml → internal/providers → the queue
+  ├─ snipe scan              portals.yml + data/registry.tsv → internal/providers → the queue
+  ├─ snipe registry          pay gap data → careers-page crawl → data/registry.tsv
   ├─ snipe add               one pasted JD, queued or run
   └─ snipe tracker fix       canonical statuses, one row per opening
 ```
@@ -119,16 +110,17 @@ of the three and `cv.md` is user data that is never committed.
 1. **Input**: User pastes JD text or URL
 2. **Extract**: the JD text is supplied by the caller. `snipe add -link` keeps the URL for tracking and never fetches it
 3. **Classify**: Detect archetype, from the list you define in `config/profile.yml`
-4. **Evaluate**: 6 blocks (A-F):
+4. **Evaluate**: 4 blocks (A-D), only what decides the tailored CV:
    - A: Role summary
-   - B: CV match (gaps + mitigation)
+   - B: CV match (evidence table, gaps, strengths)
    - C: Level strategy
-   - D: Comp research (WebSearch)
-   - E: CV personalization plan
-   - F: Interview prep (STAR stories)
-5. **Score**: Weighted blend of three integer dimensions (1-5).
+   - D: CV personalisation plan
+5. **Score**: Weighted blend of three dimensions (1-5).
    `cv_match × 0.50 + north_star × 0.30 + comp × 0.20`, or
    `cv_match × 0.625 + north_star × 0.375` when the posting states no salary.
+   `north_star` is not judged: it is the archetype's `fit` tier in
+   `profile.yml` (primary 5, secondary 3, adjacent 2, outside 1), then capped
+   for seniority in code. `comp` is computed from the posted salary.
    Below 3.0 the verdict is Skip; an Apply under 3.5 becomes Consider
 6. **Report**: Save as `reports/{num}-{company}-{date}.md`
 7. **PDF**: Generate ATS-optimised CV through `internal/pdf`, compiling `templates/cv-template.tex`
@@ -160,6 +152,7 @@ cv.md                    →  Evaluation context
 article-digest.md        →  Proof points for matching
 config/profile.yml       →  Candidate identity
 portals.yml              →  Scanner configuration
+data/registry.tsv        →  UK employers (250+ staff) and the ATS behind each careers page
 templates/states.yml     →  Canonical status values
 templates/cv-template.tex  → PDF generation template (Jake's Resume, pdflatex)
 ```

@@ -8,9 +8,9 @@ import (
 	"github.com/dsk1ra/snipe-cli/internal/cvselect"
 )
 
-// sectionAliases folds the template's wording into cv.md's. The document says
-// "Work Experience" because that is what an ATS keyword scan expects to read;
-// cv.md says "Experience" because that is what a person writing it types.
+// sectionAliases folds other templates' wording into cv.md's. The shipped
+// template says "Experience", not "Work Experience": that section also holds a
+// university industry project, which is experience but was not a job.
 var sectionAliases = map[string]string{
 	"professional summary":       "summary",
 	"core competencies":          "competencies",

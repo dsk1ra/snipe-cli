@@ -15,6 +15,7 @@ import (
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/embed"
+	"github.com/dsk1ra/snipe-cli/internal/extract"
 	"github.com/dsk1ra/snipe-cli/internal/fit"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
@@ -49,6 +50,11 @@ type Evaluator struct {
 	ReportNum string
 	Threshold float64
 
+	// Extract is Phase 1's extractor, read from its cache only. The extracted
+	// facts replace the word-list caps; with no entry for the posting the lists
+	// decide, as before.
+	Extract *extract.Extractor
+
 	calib []Calibration
 }
 
@@ -76,11 +82,11 @@ type Eval struct {
 	HardStops      []string     `json:"hard_stops"`
 	SoftGaps       []string     `json:"soft_gaps"`
 	TopStrengths   []string     `json:"top_strengths"`
-	LegitimacyTier string       `json:"legitimacy_tier"`
 	PDFDecision    bool         `json:"pdf_decision"`
 	Notes          string       `json:"notes"`
 	SalaryPosted   *text.Salary `json:"salary_posted"`
 	Evaluator      string       `json:"evaluator"`
+	CapShadow      []string     `json:"cap_shadow,omitempty"`
 	Error          *string      `json:"error"`
 }
 
@@ -107,7 +113,14 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	// 30B and the 0.6 GB embedder costs a reload — measured at 4 reloads across
 	// 5 calls on Phase 3. Everything the embedder can do without stage 1's
 	// output therefore happens here, not between the two 30B calls.
-	atoms := embed.ExtractAtoms(e.Cfg.CVRaw, embed.ReadFileOr(filepath.Join(e.L.Home, "article-digest.md")))
+	// So does the 4B, the one time it is needed. The stack cap below reads the
+	// CV's language list from Phase 1's cache, and when Phase 1 has not run
+	// since the ledger last changed there is none: the word lists then decide,
+	// and say nothing. Asked here it is one call per ledger, cached after.
+	if e.Extract != nil {
+		_, _ = e.Extract.CVLanguages(ctx) // no ledger or no prompt leaves the word lists in charge, as before
+	}
+	atoms := embed.ExtractAtoms(e.Cfg.CVRaw, embed.ReadFileOr(e.L.Digest()))
 	cvIndex, err := e.IX.LoadCV(ctx, atoms)
 	if err != nil {
 		return fmt.Errorf("loading the CV index: %w", err)
@@ -152,7 +165,7 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	compDim, hasComp := text.CompScore(salary, e.Cfg.Comp)
 
 	judgment, err := state.Staged(ctx, ck, "p2.judgment",
-		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash},
+		stage3Input{Parsed: parsed, Rows: rows, Coverage: coverage, Calib: calib, Salary: salary, JD: jd, CVHash: cvHash, Profile: e.Cfg.ProfileMD},
 		func(ctx context.Context, in stage3Input) (Judgment, error) { return e.stage3(ctx, id, in) })
 	if err != nil {
 		return err
@@ -171,7 +184,17 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 			id, len(dropped), strings.Join(dropped, " | "))
 	}
 
-	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp)
+	var facts *extract.Facts
+	if e.Extract != nil && !fit.LooksMultiPosting(jd) {
+		if f, ok := e.Extract.Cached(extract.Posting(jd)); ok {
+			facts = &f
+		}
+	}
+	var cvLangs []string
+	if facts != nil {
+		cvLangs, _ = e.Extract.CVLanguagesCached()
+	}
+	res := e.compose(id, row.URL, jd, parsed, rows, coverage, judgment, salary, compDim, hasComp, facts, cvLangs)
 	return e.commit(ctx, id, res)
 }
 
@@ -183,25 +206,47 @@ type composed struct {
 
 // compose computes the score in code and applies every cap.
 func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, coverage Coverage,
-	j Judgment, salary *text.Salary, compDim int, hasComp bool) composed {
+	j Judgment, salary *text.Salary, compDim int, hasComp bool, facts *extract.Facts, cvLangs []string) composed {
 
 	modelCV := clampDim(j.CVMatch, 1)
-	ns := clampDim(j.NorthStar, 1)
+	ns := e.Cfg.NorthStar(j.Archetype)
 	rf := clampDim(j.RedFlagsScore, 5)
 
 	// Blend the continuous coverage metric into cv_match.
 	coverage5 := 1 + 4*coverage.Coverage
 	cvBlend := float64(modelCV)*(1-coverageBlend) + coverage5*coverageBlend
 
-	sen := fit.SeniorityCaps(parsed.Role, jd, parsed.YearsRequired, parsed.SeniorityLevel)
+	// Location and language come from the extracted facts Phase 1 read, and
+	// nothing caps when there are none. Seniority reads the title and stage 1's
+	// level, with the years from the facts when there are any.
+	lang, missing, loc, city := fit.CapsFromFacts(facts, e.Cfg.CVRaw, e.Cfg.ProfileYML)
+	years := parsed.YearsRequired
+	if facts != nil {
+		years = facts.Years.MinYears
+	}
+	sen := fit.SeniorityCaps(parsed.Role, years, parsed.SeniorityLevel)
+	var shadow []string
+	for _, r := range rows {
+		if r.Shadow != "" {
+			shadow = append(shadow, r.Shadow)
+		}
+	}
 	cvBlend = math.Min(cvBlend, float64(sen.CV))
 	ns = minInt(ns, sen.NS)
 
-	cvBlend = math.Min(cvBlend, float64(fit.StackMismatchCap(jd, e.Cfg.CVRaw, 0, 0).Cap))
+	stack := fit.StackMismatchCap(jd, e.Cfg.CVRaw, 0, 0)
+	if facts != nil && cvLangs != nil {
+		x := fit.StackCapFrom(facts.Stack, cvLangs)
+		if d := fit.CapDiff("stack", fit.Caps{CV: stack.Cap, NS: 5}, fit.Caps{CV: x.Cap, NS: 5}, strings.Join(stack.Missing, "+"), strings.Join(x.Missing, "+")); d != "" {
+			shadow = append(shadow, d)
+		}
+		stack = x
+	}
+	cvBlend = math.Min(cvBlend, float64(stack.Cap))
 
 	// A required natural language the candidate lacks is a hard blocker: one Gap
 	// row barely moves the coverage average, so it has to be gated in code.
-	if lang, missing := fit.LanguageMismatchCap(jd, e.Cfg.CVRaw); missing != "" {
+	if missing != "" {
 		cvBlend = math.Min(cvBlend, float64(lang.CV))
 		ns = minInt(ns, lang.NS)
 		j.HardStops = prepend(j.HardStops, "Requires "+missing+" fluency — not in CV languages")
@@ -210,7 +255,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	// and it has to be one: hard_stops never reaches final_decision, so Phase 2
 	// was printing this exact deal-breaker on offers it then told the user to
 	// apply to, with a tailored PDF.
-	if loc, city := fit.LocationMismatchCap(jd, e.Cfg.ProfileYML); city != "" {
+	if city != "" {
 		cvBlend = math.Min(cvBlend, float64(loc.CV))
 		ns = minInt(ns, loc.NS)
 		j.HardStops = prepend(j.HardStops, "On-site/hybrid in "+city+" — outside the commutable base")
@@ -223,9 +268,6 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 	if !parsed.IsSinglePosting || fit.LooksMultiPosting(jd) {
 		cvBlend = math.Min(cvBlend, 2)
 		ns = minInt(ns, 2)
-		j.LegitimacyTier = "Suspicious"
-		j.LegitimacyReason = strings.TrimSpace(
-			"NOT a single job posting (thread/list/blog/homepage) — evaluation unreliable. " + j.LegitimacyReason)
 		j.HardStops = prepend(j.HardStops, "Not a single job posting — verify the URL manually")
 	}
 	cvBlend = round(cvBlend, 2)
@@ -255,8 +297,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 		NorthStar: ns, CompInferred: comp, RedFlagsScore: rf, Score: score,
 		Archetype: j.Archetype, FinalDecision: final,
 		HardStops: nonNil(j.HardStops), SoftGaps: nonNil(j.SoftGaps), TopStrengths: nonNil(j.TopStrengths),
-		LegitimacyTier: j.LegitimacyTier, Notes: j.Notes,
-		SalaryPosted: salary, Evaluator: "staged",
+		Notes: j.Notes, SalaryPosted: salary, Evaluator: "staged", CapShadow: shadow,
 	}
 	today := time.Now().Format("2006-01-02")
 	slug := slugify(orNone(parsed.Company, "unknown"))
@@ -279,8 +320,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 		CVBlended: ev.CVBlended, NorthStar: ev.NorthStar, CompInferred: ev.CompInferred,
 		RedFlagsScore: ev.RedFlagsScore, Score: ev.Score, Archetype: ev.Archetype,
 		FinalDecision: ev.FinalDecision, HardStops: ev.HardStops, SoftGaps: ev.SoftGaps,
-		TopStrengths: ev.TopStrengths, LegitimacyTier: ev.LegitimacyTier,
-		PDFDecision: ev.PDFDecision, Notes: ev.Notes,
+		TopStrengths: ev.TopStrengths, PDFDecision: ev.PDFDecision, Notes: ev.Notes,
 	})
 
 	pre, hasPre := 0.0, false
@@ -290,7 +330,7 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 
 	report := assembleReport(reportInput{
 		ID: id, URL: url, Today: today, Parsed: parsed, Rows: rows, Coverage: coverage,
-		J: j, Salary: salary, CompDim: compDim, HasComp: hasComp, CompTargets: e.Cfg.Comp,
+		J: j, Salary: salary, CompDim: compDim, HasComp: hasComp,
 		Score: score, PreScore: pre, HasPreScore: hasPre, PDFNote: pdfNote,
 		MachineSummary: machine, Calib: e.calib,
 	})
@@ -300,23 +340,22 @@ func (e *Evaluator) compose(id int, url, jd string, parsed Parsed, rows []Row, c
 // machineSummary is the compact block the report header carries and everything
 // downstream reads instead of re-parsing the prose.
 type machineSummary struct {
-	Company        string   `json:"company"`
-	Role           string   `json:"role"`
-	CVMatch        int      `json:"cv_match"`
-	CVCoverage     float64  `json:"cv_coverage"`
-	CVBlended      float64  `json:"cv_blended"`
-	NorthStar      int      `json:"north_star"`
-	CompInferred   *int     `json:"comp_inferred"`
-	RedFlagsScore  int      `json:"red_flags_score"`
-	Score          float64  `json:"score"`
-	Archetype      string   `json:"archetype"`
-	FinalDecision  string   `json:"final_decision"`
-	HardStops      []string `json:"hard_stops"`
-	SoftGaps       []string `json:"soft_gaps"`
-	TopStrengths   []string `json:"top_strengths"`
-	LegitimacyTier string   `json:"legitimacy_tier"`
-	PDFDecision    bool     `json:"pdf_decision"`
-	Notes          string   `json:"notes"`
+	Company       string   `json:"company"`
+	Role          string   `json:"role"`
+	CVMatch       int      `json:"cv_match"`
+	CVCoverage    float64  `json:"cv_coverage"`
+	CVBlended     float64  `json:"cv_blended"`
+	NorthStar     int      `json:"north_star"`
+	CompInferred  *int     `json:"comp_inferred"`
+	RedFlagsScore int      `json:"red_flags_score"`
+	Score         float64  `json:"score"`
+	Archetype     string   `json:"archetype"`
+	FinalDecision string   `json:"final_decision"`
+	HardStops     []string `json:"hard_stops"`
+	SoftGaps      []string `json:"soft_gaps"`
+	TopStrengths  []string `json:"top_strengths"`
+	PDFDecision   bool     `json:"pdf_decision"`
+	Notes         string   `json:"notes"`
 }
 
 // commit writes the report and the artifact, then the state row — in that

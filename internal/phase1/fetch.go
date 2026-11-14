@@ -95,6 +95,9 @@ var (
 	ghDirectRe = regexp.MustCompile(`greenhouse\.io/([^/?#]+)/jobs/(\d+)`)
 	ashbyRe    = regexp.MustCompile(`jobs\.ashbyhq\.com/([^/?#]+)/([a-fA-F0-9-]{36})`)
 	leverRe    = regexp.MustCompile(`jobs\.lever\.co/([^/?#]+)/([a-fA-F0-9-]{36})`)
+	// Both of Workday's URL shapes: <tenant>.wdN.myworkdayjobs.com/<site>/job/…
+	// and wdN.myworkdaysite.com/recruiting/<tenant>/<site>/job/…
+	workdayRe = regexp.MustCompile(`(?i)^https://((?:([a-z0-9-]+)\.)?wd\d+\.myworkday(?:jobs|site)\.com)/(?:[a-z]{2}-[a-z]{2}/)?(?:recruiting/([a-z0-9-]+)/)?([a-z0-9_-]+)(/job/[^?#]+)`)
 )
 
 // fromProvider hits the board's own API where one exists, which avoids
@@ -124,7 +127,47 @@ func fromProvider(ctx context.Context, raw string) (string, error) {
 	if m := leverRe.FindStringSubmatch(raw); m != nil {
 		return lever(ctx, m[1], m[2])
 	}
+	if api, ok := workdayAPI(raw); ok {
+		return workday(ctx, api)
+	}
 	return "", nil
+}
+
+// workdayAPI maps a posting's page to its detail record on the API the page
+// itself reads. The page is a script shell, and its JSON-LD sits in a <script>
+// that stripHTML removes, so the HTML fallback gets nothing.
+func workdayAPI(raw string) (string, bool) {
+	m := workdayRe.FindStringSubmatch(raw)
+	if m == nil {
+		return "", false
+	}
+	tenant := strings.ToLower(m[2] + m[3]) // the host's first label, or the recruiting/ segment
+	if tenant == "" || strings.EqualFold(m[4], "wday") {
+		return "", false
+	}
+	return "https://" + strings.ToLower(m[1]) + "/wday/cxs/" + tenant + "/" + m[4] + m[5], true
+}
+
+func workday(ctx context.Context, api string) (string, error) {
+	var j struct {
+		Info struct {
+			Title          string   `json:"title"`
+			Location       string   `json:"location"`
+			Additional     []string `json:"additionalLocations"`
+			JobDescription string   `json:"jobDescription"`
+			Country        struct {
+				Descriptor string `json:"descriptor"`
+			} `json:"country"`
+		} `json:"jobPostingInfo"`
+	}
+	if _, err := httpGet(ctx, api, true, &j); err != nil {
+		return "", err
+	}
+	loc := strings.Join(append([]string{j.Info.Location}, j.Info.Additional...), "; ")
+	if c := j.Info.Country.Descriptor; c != "" && !strings.Contains(loc, c) {
+		loc += " (" + c + ")"
+	}
+	return clip(j.Info.Title+"\nLocation: "+loc+"\n\n"+stripHTML(j.Info.JobDescription), maxJD), nil
 }
 
 func greenhouse(ctx context.Context, board, jobID string) (string, error) {

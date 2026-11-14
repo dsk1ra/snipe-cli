@@ -70,7 +70,9 @@ func TestEveryStepTrimsFromTheFullList(t *testing.T) {
 func TestLadderProducesAOnePagePDF(t *testing.T) {
 	repo := os.Getenv("SNIPE_NODE_REPO")
 	if repo == "" {
-		repo = filepath.Join(os.Getenv("HOME"), "projects", "snipe")
+		// go test runs in the package directory, so the checkout is two up. It
+		// used to be $HOME/projects/snipe, which only resolved on one machine.
+		repo, _ = filepath.Abs(filepath.Join("..", ".."))
 	}
 	if _, err := os.Stat(filepath.Join(repo, "cv.md")); err != nil {
 		t.Skip("no CV checkout to render")
@@ -87,7 +89,14 @@ func TestLadderProducesAOnePagePDF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(repo, "output", "2026-07-30_wise_104", "cv-content.json"))
+	// Any cached offer renders. Naming one pinned this to a single past
+	// application, so the only check that the emitted .tex compiles skipped
+	// itself on every machine but the one that produced that folder.
+	cached, _ := filepath.Glob(filepath.Join(repo, "output", "*", "cv-content.json"))
+	if len(cached) == 0 {
+		t.Skip("no cached content to render")
+	}
+	raw, err := os.ReadFile(cached[0])
 	if err != nil {
 		t.Skip("no cached content to render")
 	}
@@ -110,4 +119,20 @@ func TestLadderProducesAOnePagePDF(t *testing.T) {
 		t.Errorf("page fill %.3f is not a sane fraction", fit.PDF.Fill)
 	}
 	t.Logf("step %d, %d page(s), fill %.3f, %d KB", fit.Step, fit.Pages, fit.PDF.Fill, fit.PDF.Size/1024)
+}
+
+// A respelling from config/skills.yml or a hand-accepted suggestion is a word
+// cv.md does not write, so grounding would drop it and take the item with it.
+func TestApprovedSpellingsSurviveGrounding(t *testing.T) {
+	cv := "# X\n\n## Skills\n\n**Data:** PostgreSQL, Redis\n"
+	c := fill.Content{}
+	c.Skills = []byte(`[{"category":"Data","items":"Postgres, Redis"}]`)
+	p := Params{Template: "{{SKILLS}}", CV: fill.ParseCV(cv), Content: c, CVText: cv}
+	if tex := Fill(p, Step{}); strings.Contains(tex, "Postgres,") {
+		t.Fatalf("setup: an unapproved spelling printed:\n%s", tex)
+	}
+	p.Approved = []string{"Postgres"}
+	if tex := Fill(p, Step{}); !strings.Contains(tex, "Postgres, Redis") {
+		t.Errorf("approved spelling dropped:\n%s", tex)
+	}
 }

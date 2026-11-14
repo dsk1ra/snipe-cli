@@ -28,6 +28,12 @@ type Job struct {
 	// PostedAt is epoch milliseconds, zero when the source exposes no usable
 	// date. The age filter is fail-closed, so zero means dropped.
 	PostedAt int64
+	// Locate, when set, places a posting the list could not — Workday's
+	// "3 Locations" — and returns the location to filter on. It costs a
+	// request, so the scan calls it only for postings that pass the title
+	// filter, from the goroutine that fetched them. Not cached: it is a call,
+	// not data.
+	Locate func(context.Context) string `json:"-"`
 }
 
 // Entry is one tracked_companies entry.
@@ -76,6 +82,9 @@ type Options struct {
 	// take minutes, and holding one connection open is how its API is designed
 	// to be called.
 	Timeout time.Duration
+	// MaxBytes overrides the 8 MB response cap. A SuccessFactors board is one
+	// response with every description in it, and CNH's passes 8 MB.
+	MaxBytes int64
 	// NoRedirect refuses to follow redirects. Combined with a hostname
 	// allowlist it is what closes SSRF via a server-side redirect: the
 	// allowlist checks the URL we send, the refusal stops it becoming another.

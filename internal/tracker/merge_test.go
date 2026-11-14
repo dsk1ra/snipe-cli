@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dsk1ra/snipe-cli/internal/paths"
 )
 
 const header = `# Applications Tracker
@@ -19,9 +21,12 @@ const header = `# Applications Tracker
 func fixture(t *testing.T, additions ...string) (string, string) {
 	t.Helper()
 	root := t.TempDir()
-	data := filepath.Join(root, "data")
+	l := paths.Layout{Home: root, Code: root}
+	data := l.Data()
+	// Not l.Additions(): it reads SNIPE_ADDITIONS, and a fixture must not
+	// depend on the environment the test happens to run in.
 	add := filepath.Join(root, "batch", "tracker-additions")
-	for _, d := range []string{data, add, filepath.Join(root, "reports")} {
+	for _, d := range []string{data, add, l.Reports()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -106,6 +111,34 @@ func TestMergeUpgradesOnAHigherScore(t *testing.T) {
 	}
 	if strings.Count(body, "| 7 | ") != 1 {
 		t.Error("the upgrade added a second row instead of replacing one")
+	}
+}
+
+// A re-evaluation comes back with a new report number and a new row number, and
+// "Backend Engineer" is all baseline tokens, so only the posting URL in the
+// notes says it is the same offer. A different posting with the same generic
+// title at the same company is still a second row.
+func TestMergeMatchesAReRunByItsPostingURL(t *testing.T) {
+	tr, add := fixture(t,
+		"50\t2026-03-03\tAcme\tBackend Engineer\tEvaluated\t3.0/5\tY\t[30](reports/030-acme-2026-03-03.md)\tPDF generated — score 3/5 — https://jobs.example.com/acme/123",
+		"51\t2026-03-03\tAcme\tBackend Engineer\tEvaluated\t4.0/5\tY\t[31](reports/031-acme-2026-03-03.md)\tPDF generated — score 4/5 — https://jobs.example.com/acme/456")
+	row := "| 7 | 2026-01-01 | Acme | Backend Engineer | 3.0/5 | Evaluated | Y | [12](../reports/012-acme-2026-01-01.md) | PDF generated — score 3/5 — https://jobs.example.com/acme/123 |\n"
+	if err := os.WriteFile(tr, []byte(strings.Replace(header, "| 7 | 2026-01-01 | Acme | Backend Engineer | 3.0/5 | Evaluated | N | [12](../reports/012-acme-2026-01-01.md) | first pass |\n", row, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Merge(tr, add)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || res.Added != 1 || res.Updated != 0 {
+		t.Fatalf("got %+v, want the re-run skipped and the other posting added", res)
+	}
+	body := read(t, tr)
+	if strings.Count(body, "acme/123") != 1 {
+		t.Errorf("the re-run of acme/123 was written as a second row:\n%s", body)
+	}
+	if !strings.Contains(body, "acme/456") {
+		t.Errorf("a different posting at the same company was dropped:\n%s", body)
 	}
 }
 

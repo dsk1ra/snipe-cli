@@ -2,7 +2,6 @@ package state
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -134,26 +133,4 @@ func (c *Cache) Activity(evalsDir, appliedFile string) Activity {
 	c.act = &cachedActivity{evalsMtime: evalsMod, appliedMod: appliedMod, act: act}
 	c.mu.Unlock()
 	return act
-}
-
-// ReportsPerDay is the durable counterpart to Scans: report filenames carry
-// their own date, so a rebuilt tree does not move them.
-func ReportsPerDay(reportsDir string) Buckets {
-	b := newBuckets()
-	ents, err := os.ReadDir(reportsDir)
-	if err != nil {
-		return b
-	}
-	for _, e := range ents {
-		name := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-		if len(name) < 10 {
-			continue
-		}
-		// <NNN>-<slug>-<YYYY-MM-DD>
-		date := name[len(name)-10:]
-		if t, err := time.Parse("2006-01-02", date); err == nil {
-			b.add(t)
-		}
-	}
-	return b
 }

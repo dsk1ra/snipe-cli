@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/fill"
@@ -120,6 +121,11 @@ type Params struct {
 	JDText     string
 	TargetRole string
 	OutPath    string
+	// Approved are spellings the skills block may print although cv.md does not
+	// write them: config/skills.yml's aliases and the skills a person accepted.
+	// Grounding drops any item cv.md cannot vouch for, which would otherwise take
+	// every respelling out again.
+	Approved []string
 }
 
 // Fill renders one rung. Exported because the gate drives it directly, without
@@ -135,7 +141,7 @@ func Fill(p Params, s Step) string {
 	}
 	return fill.Render(p.Template, p.CV, c, p.Candidate, fill.Opts{
 		MaxSkills: s.Skills, MaxBullets: s.Bullets, MaxProjBullets: s.ProjBullets,
-		TargetRole: p.TargetRole, CVText: p.CVText,
+		TargetRole: p.TargetRole, CVText: p.CVText + "\n" + strings.Join(p.Approved, "\n"),
 	})
 }
 

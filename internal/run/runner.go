@@ -27,6 +27,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/dsk1ra/snipe-cli/internal/aliases"
+	"github.com/dsk1ra/snipe-cli/internal/config"
 	"github.com/dsk1ra/snipe-cli/internal/ollama"
 	"github.com/dsk1ra/snipe-cli/internal/paths"
 	"github.com/dsk1ra/snipe-cli/internal/state"
@@ -119,8 +121,6 @@ func New(l paths.Layout, opt Options, ph Phases, st *state.Store, cl *ollama.Cli
 // not have to coordinate with this.
 func (r *Runner) RequestStop() { r.stopping.Store(true) }
 
-func (r *Runner) Stopping() bool { return r.stopping.Load() }
-
 // Run executes the pipeline. The lock is held for its whole duration; a second
 // runner refuses rather than interleaving.
 func (r *Runner) Run(ctx context.Context) error {
@@ -151,12 +151,40 @@ func (r *Runner) Run(ctx context.Context) error {
 	// Drain works through the queue file, one id at a time, so a JD pasted
 	// while a run is active is picked up rather than colliding with it.
 	if r.Opt.Drain {
-		return r.drain(ctx, offers)
+		err = r.drain(ctx)
+	} else {
+		err = r.pipeline(ctx, offers)
 	}
-	return r.pipeline(ctx, offers)
+	if err == nil && !r.Opt.DryRun {
+		r.suggestAliases(ctx)
+	}
+	return err
 }
 
-func (r *Runner) drain(ctx context.Context, offers map[int]state.Offer) error {
+// suggestAliases rebuilds the skills review queue once the run is over, when
+// the 30B has nothing left to do and the embedder can have the GPU. It is a
+// courtesy, not a phase: a failure is reported and the run still succeeds.
+// 8–10 s over 228 reports.
+func (r *Runner) suggestAliases(ctx context.Context) {
+	if r.Ollama == nil {
+		return
+	}
+	cfg, err := config.Load(r.L)
+	if err != nil {
+		r.out("skills: no suggestions (%v)", err)
+		return
+	}
+	n, err := aliases.Suggest(ctx, r.L, cfg, r.Ollama)
+	if err != nil {
+		r.out("skills: no suggestions (%v)", err)
+		return
+	}
+	if n > 0 {
+		r.out("skills: %d spellings to review — v on any finished row", n)
+	}
+}
+
+func (r *Runner) drain(ctx context.Context) error {
 	for {
 		id, ok := popQueue(r.L.Queue())
 		if !ok {
@@ -168,11 +196,18 @@ func (r *Runner) drain(ctx context.Context, offers map[int]state.Offer) error {
 			return ErrStopped
 		}
 		r.out("── picked up queued offer #%d ──", id)
+		// Re-read every pop: an id queued mid-run is an offer the map read at
+		// the start has never seen, and the pipeline would drop it unrun.
+		offers, err := state.LoadOffers(r.L.Input())
+		if err != nil {
+			pushQueueFront(r.L.Queue(), id)
+			return err
+		}
 		sub := r.Opt
 		sub.OnlyID = id
 		saved := r.Opt
 		r.Opt = sub
-		err := r.pipeline(ctx, offers)
+		err = r.pipeline(ctx, offers)
 		r.Opt = saved
 		if err != nil && !errors.Is(err, ErrStopped) {
 			return err

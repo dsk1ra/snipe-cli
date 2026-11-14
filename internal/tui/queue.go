@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +78,14 @@ type queueTab struct {
 	// due answers "how many follow-ups are actionable", asked of the tab that
 	// owns the data rather than copied from it. nil before the root binds it.
 	due func() int
+
+	// review is the skills screen, open over the list when non-nil.
+	review *skillsReview
+	// tailor is the tailored-text screen, open over the list when non-nil.
+	tailor *tailorScreen
+	// ledger is the fact-ledger review, open over the list when non-nil. Not
+	// about a row, so it opens from the list or the tab bar rather than a row.
+	ledger *ledgerScreen
 
 	detail      viewport.Model
 	detailOpen  bool
@@ -225,6 +232,46 @@ func (q *queueTab) Update(m tea.Msg) (bool, tea.Cmd) {
 		// framing, including the case where a chunk boundary split the marker.
 		return true, q.onPaste(m.Content)
 
+	case reviewMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.review = m.r
+		if m.rebuild != nil {
+			return true, failf("skills queue is from before the cv.md edit, could not rebuild: %v", m.rebuild)
+		}
+		return true, nil
+
+	case tailorMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.tailor = m.s
+		return true, nil
+
+	case ledgerMsg:
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.ledger = m.s
+		return true, nil
+
+	case tailorOpMsg:
+		if q.tailor == nil {
+			return true, nil
+		}
+		return true, q.tailor.done(m)
+
+	case reviewDoneMsg:
+		if q.review == nil {
+			return true, nil
+		}
+		if m.err != nil {
+			return true, failf("%v", m.err)
+		}
+		q.review.done(m)
+		return true, notef("%s", m.note)
+
 	case detailMsg:
 		q.busy = ""
 		if m.err != nil {
@@ -309,6 +356,41 @@ func (q *queueTab) pasteJD(text string) {
 }
 
 func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
+	// The skills screen is modal like the reader pane, and closes the same way.
+	if q.review != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q", "v":
+			q.review = nil
+			return true, nil
+		}
+		return true, q.review.key(k)
+	}
+	if q.ledger != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q":
+			if !q.ledger.capturing() {
+				q.ledger = nil
+				return true, nil
+			}
+		}
+		return true, q.ledger.key(k)
+	}
+	if q.tailor != nil {
+		switch k.String() {
+		case "ctrl+c":
+			return false, nil
+		case "esc", "q", "t":
+			// A subcommand in flight finishes into nothing; its files land
+			// either way.
+			q.tailor = nil
+			return true, nil
+		}
+		return true, q.tailor.key(k)
+	}
 	// The reader pane owns every key while it is open, bar the ones that close
 	// it. ctrl+c is the exception: a modal must never trap a quit.
 	if q.detailOpen {
@@ -343,6 +425,12 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	if !q.focus.typing() && key.Matches(k, q.keys.Find) {
 		q.setFocus(fFind)
 		return true, nil
+	}
+
+	// g opens the fact ledger. Guarded on typing() like / and f: a g typed
+	// into a job description is a g.
+	if !q.focus.typing() && key.Matches(k, q.keys.Ledger) {
+		return true, openLedger(q.l)
 	}
 
 	// A focused text field claims every printable key and the arrows. This is
@@ -421,8 +509,10 @@ func (q *queueTab) onKey(k tea.KeyPressMsg) (bool, tea.Cmd) {
 	switch {
 	case key.Matches(k, q.keys.Open):
 		return true, q.openResult(info)
-	case key.Matches(k, q.keys.Detail):
-		return true, q.openDetail(info)
+	case key.Matches(k, q.keys.Skills):
+		return true, openSkills(q.l, info)
+	case key.Matches(k, q.keys.Tailor):
+		return true, q.openTailor(info)
 	case key.Matches(k, q.keys.Applied):
 		return true, q.markApplied(info)
 	case key.Matches(k, q.keys.Skip):
@@ -676,8 +766,10 @@ func (q *queueTab) fire() tea.Cmd {
 			return q.proceed(info)
 		case actDebug:
 			return q.openDebug(info)
-		case actDetail:
-			return q.openDetail(info)
+		case actSkills:
+			return openSkills(q.l, info)
+		case actTailor:
+			return q.openTailor(info)
 		default:
 			return q.openResult(info)
 		}
@@ -900,13 +992,20 @@ func (q *queueTab) openResult(info rowInfo) tea.Cmd {
 	}
 	switch {
 	case info.NoCV:
-		return failf("#%d made no CV — the score did not clear the gate. v reads the report", info.ID)
+		return failf("#%d made no CV — the score did not clear the gate", info.ID)
 	case info.AwaitingCV:
-		return failf("#%d has no CV: phase 3 never ran for it. v reads the report", info.ID)
+		return failf("#%d has no CV: phase 3 never ran for it", info.ID)
 	case info.Kind != kindDone:
 		return failf("#%d has no CV yet — it has not been evaluated", info.ID)
 	}
 	return failf("#%d says it made a CV, but output/ has no folder for it", info.ID)
+}
+
+func (q *queueTab) openTailor(info rowInfo) tea.Cmd {
+	if _, ok := q.cache.ResultDir(q.l.Output(), info.Report); !ok {
+		return q.openResult(info) // says why there is no CV
+	}
+	return openTailor(q.l, q.cache, info)
 }
 
 func (q *queueTab) openError(info rowInfo) tea.Cmd {
@@ -927,24 +1026,16 @@ func (q *queueTab) openDebug(info rowInfo) tea.Cmd {
 	return openExternal(target)
 }
 
-func (q *queueTab) openDetail(info rowInfo) tea.Cmd {
-	path, ok := q.cache.ReportFile(q.l.Reports(), info.Report)
-	if !ok {
-		return failf("#%d has no report", info.ID)
-	}
-	return func() tea.Msg {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return detailMsg{err: err}
-		}
-		return detailMsg{title: info.Label, body: string(b)}
-	}
-}
-
 // ShortHelp and FullHelp answer for whatever is focused right now, which is how
 // the footer stays contextual with no hintFor() switch.
 func (q *queueTab) ShortHelp() []key.Binding {
 	switch {
+	case q.review != nil:
+		return q.review.help()
+	case q.tailor != nil:
+		return q.tailor.help()
+	case q.ledger != nil:
+		return q.ledger.help()
 	case q.detailOpen:
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("up/down"), key.WithHelp("↑↓", "scroll")),
@@ -988,7 +1079,7 @@ func (q *queueTab) ShortHelp() []key.Binding {
 func (q *queueTab) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{q.keys.Cycle, q.keys.Step, q.keys.In, q.keys.Out, q.keys.Fire, q.keys.Slash, q.keys.Find},
-		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Detail},
+		{q.keys.PrevAct, q.keys.NextAct, q.keys.Open, q.keys.Tailor, q.keys.Skills, q.keys.Ledger},
 		{q.keys.Applied, q.keys.Skip, q.keys.Yes, q.keys.No},
 	}
 }
@@ -1009,6 +1100,15 @@ const inputBlockHeight = 7
 const queueMinW = 4 + 8 + minLabelW + 10
 
 func (q *queueTab) View() string {
+	if q.review != nil {
+		return q.review.view(q.width, q.height)
+	}
+	if q.tailor != nil {
+		return q.tailor.view(q.width, q.height)
+	}
+	if q.ledger != nil {
+		return q.ledger.view(q.width, q.height)
+	}
 	if q.detailOpen {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			styHeading.Render(truncate(q.detailTitle, q.width)),

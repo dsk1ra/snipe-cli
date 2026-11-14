@@ -41,11 +41,10 @@ trusting a number in one.
 
 | file | status |
 |---|---|
+| `PRD-TAILORING-REWORK.md` | proposed 2026-10-21, nothing built. Adapting `cv.md` lines per posting under a fact ledger and a verifier: per-phase changes, the metric suite, the hardcoding plan |
+| `REWORK-PLAN.md` | the lean-report / posting-vocabulary / supervised-skills rework — status table, what is built, what is next, and what was ruled out |
 | `PHASE3-NEXT.md` | current attribution, open experiments, and ideas already closed — **read before re-opening any Phase 3 idea** |
 | `CV-GENERATION-BACKLOG.md` | candidate improvements to CV generation — the pick-list, most items now struck through with results |
-| `SESSION-HANDOFF.md` | where the CV-generation work stands, what is open, and what is waiting on the user — written to be read cold |
-| `TAILORING-QUALITY-PLAN.md` | execution plan for the tailoring campaign |
-| `PHASE3-TAILORING-STRATEGY.md` | proposed, awaiting verification — nothing here is implemented |
 
 ## Reference
 

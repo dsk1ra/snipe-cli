@@ -109,3 +109,26 @@ func TestCatalogueTakesAtMostOneCandidateSlot(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyTypedKeepsOnlyQuotedTerms(t *testing.T) {
+	posting := "You will build services in Go and run them on Kubernetes.\nGood communication."
+	reqs := []Requirement{
+		{Text: "Go and Kubernetes", Kind: "tool", Terms: []string{"Go", "Kubernetes", "Docker", "microservices"}, Quote: "services in Go and run them on Kubernetes"},
+		{Text: "invented", Kind: "tool", Terms: []string{"Rust"}, Quote: "ten years of Rust"},
+		{Text: "comms", Kind: "soft", Quote: "Good communication"},
+		{Text: "bad kind", Kind: "wizard", Quote: "Good communication"},
+	}
+	verifyTyped(reqs, posting)
+	if !reqs[0].Typed || len(reqs[0].Terms) != 2 {
+		t.Errorf("a docker not in the quote, and a lower-case concept, should drop: %+v", reqs[0])
+	}
+	if reqs[1].Typed || reqs[1].Kind != "" || reqs[1].Terms != nil {
+		t.Errorf("a quote not in the posting leaves the requirement untyped: %+v", reqs[1])
+	}
+	if !reqs[2].Typed || len(reqs[2].Terms) != 0 {
+		t.Errorf("a soft requirement is typed with no terms: %+v", reqs[2])
+	}
+	if reqs[3].Typed {
+		t.Errorf("a kind outside the list is untyped: %+v", reqs[3])
+	}
+}
