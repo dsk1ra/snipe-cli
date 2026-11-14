@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/dsk1ra/snipe-cli/internal/fill"
 )
 
 // The fixture cv-writers.mjs checks itself against.
@@ -239,5 +241,31 @@ func TestSelectSkillsPrintsEachSkillOnce(t *testing.T) {
 		if skillKey(p[0]) == skillKey(p[1]) {
 			t.Errorf("%q and %q read as one skill", p[0], p[1])
 		}
+	}
+}
+
+// A posting that asks for English gets the human languages row, which lives
+// outside the Skills section. One that does not keeps the line.
+func TestSelectSkillsAddsLanguagesThePostingNames(t *testing.T) {
+	cv := writerCV + "\n## Languages\n\n- English: Advanced (C1 certified)\n- Welsh: Native\n"
+	has := func(jd string) string {
+		for _, p := range SelectSkills(cv, jd, SkillCats, SkillItems, SkillFloor, nil) {
+			if p.Category == fill.HumanLanguages {
+				return p.Items
+			}
+		}
+		return ""
+	}
+	if got := has("Rust engineer. Fluent in English."); got != "English: Advanced (C1 certified), Welsh: Native" {
+		t.Errorf("posting names English, row = %q", got)
+	}
+	if got := has("Rust engineer on AWS."); got != "" {
+		t.Errorf("posting names no language, row = %q", got)
+	}
+	// End to end: the pick has to survive ResolveSkills onto the page.
+	c := VerbatimContent(cv, cv, "Rust engineer. Fluent in English.", 0, nil)
+	rows := fill.ResolveSkills(fill.ParseCV(cv).Skills, c, 0, cv)
+	if last := rows[len(rows)-1]; last.Category != fill.HumanLanguages || !strings.Contains(last.Items, "C1") {
+		t.Errorf("page's last skills row = %+v", last)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/dsk1ra/snipe-cli/internal/cvselect"
+	"github.com/dsk1ra/snipe-cli/internal/fill"
 )
 
 // The deterministic writer: the tailored content is lifted verbatim out of
@@ -487,7 +488,34 @@ func SelectSkills(cvText, jdText string, maxCats, maxItems, minItems int, aliase
 			picks = append(picks, SkillPick{Category: c.category, Items: strings.Join(names, ", ")})
 		}
 	}
+	if langs := namedLanguages(cvText, jdNorm); langs != "" {
+		picks = append(picks, SkillPick{Category: fill.HumanLanguages, Items: langs})
+	}
 	return picks
+}
+
+// namedLanguages is cv.md's human languages row when the posting names one of
+// them, else "". The row is outside the Skills section, so nothing above can
+// pick it, and a posting whose must-have is fluent English got a page that
+// never said English. 28 of 452 cached postings name one; the rest keep the
+// line for a bullet.
+//
+// ponytail: a word match, so "our policies in English and French" prints the
+// row too. Read p1.extract's languages field instead if that ever costs a
+// bullet that mattered.
+func namedLanguages(cvText, jdNorm string) string {
+	for _, r := range fill.ParseCV(cvText).Skills {
+		if r.Category != fill.HumanLanguages {
+			continue
+		}
+		for _, item := range fill.SkillItems(r.Items) {
+			name, _, _ := strings.Cut(item, ":")
+			if strings.Contains(jdNorm, NormPhrase(name)) {
+				return r.Items
+			}
+		}
+	}
+	return ""
 }
 
 // skillKey is a printed skill reduced to what it names: NormPhrase with each

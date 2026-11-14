@@ -32,6 +32,10 @@ type Cert struct{ Name, Org, Year string }
 
 type SkillRow struct{ Category, Items string }
 
+// HumanLanguages is the category parseSkills gives cv.md's Languages section,
+// so it cannot be mistaken for the programming languages row.
+const HumanLanguages = "Human Languages"
+
 // CV is cv.md, parsed.
 type CV struct {
 	Exp      []Exp
@@ -277,7 +281,7 @@ func parseSkills(lines []string) []SkillRow {
 		}
 	}
 	if len(humanLangs) > 0 {
-		rows = append(rows, SkillRow{"Human Languages", strings.Join(humanLangs, ", ")})
+		rows = append(rows, SkillRow{HumanLanguages, strings.Join(humanLangs, ", ")})
 	}
 	return rows
 }
