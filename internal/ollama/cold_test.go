@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// Cold puts one throwaway call in front of the real one, on the same model and
-// window so that nothing reloads, and capped at one token.
-func TestColdFlushesThePromptCacheFirst(t *testing.T) {
+// Cold puts Ollama's unload in front of the real call: the same model, no
+// messages and keep_alive 0. The real call is sent as it would be without it.
+func TestColdUnloadsTheModelFirst(t *testing.T) {
 	var seen []chatRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req chatRequest
@@ -28,13 +28,13 @@ func TestColdFlushesThePromptCacheFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(seen) != 2 {
-		t.Fatalf("%d requests, want the flush and the call", len(seen))
+		t.Fatalf("%d requests, want the unload and the call", len(seen))
 	}
-	f := seen[0]
-	if f.Model != "m" || f.Options.NumCtx != 8192 || f.Options.NumPredict != 1 || f.Messages[0].Content == req.System {
-		t.Errorf("flush %+v: want the same model and window, one token, another prompt", f)
+	u := seen[0]
+	if u.Model != "m" || len(u.Messages) != 0 || u.KeepAlive == nil || *u.KeepAlive != 0 {
+		t.Errorf("unload %+v: want the same model, no messages, keep_alive 0", u)
 	}
-	if seen[1].Messages[0].Content != req.System || seen[1].Options.NumPredict != 900 {
+	if seen[1].Messages[0].Content != req.System || seen[1].Options.NumPredict != 900 || seen[1].KeepAlive != nil {
 		t.Errorf("the real call changed: %+v", seen[1])
 	}
 

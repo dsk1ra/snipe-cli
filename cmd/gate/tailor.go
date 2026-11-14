@@ -338,7 +338,8 @@ func readOfferIDs(path string) ([]string, error) {
 
 // gateClient is the client for a gate's model calls. A gate repeats one call
 // across postings and the model reuses the prefix they share. SNIPE_GATE_COLD=1
-// makes every call read its prompt from the start (see ollama.Client.Cold). Run
+// unloads the model before every call, so each prompt is read from the start
+// by a server that remembers nothing (see ollama.Client.Cold). Run
 // a gate both ways: the difference is noise that rerunning the same binary
 // cannot show, because a rerun repeats the same call states.
 func gateClient() *ollama.Client {

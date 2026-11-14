@@ -32,13 +32,15 @@ type Client struct {
 	BaseURL string
 	HTTP    *http.Client
 	Timing  *TimingLog
-	// Cold sends a throwaway one-token chat before every real one, so the real
-	// call shares no prefix with what the model last read. A model that stays
-	// loaded keeps the previous prompt and re-reads only what differs. The two
-	// paths differ in floating point, and at temperature 0 that is enough to
-	// change an answer: the Phase 3 judge graded 5 of 12 postings differently
-	// from a byte-identical prompt, warm against cold. The gates set it under
-	// SNIPE_GATE_COLD to measure how far a number moves on call state alone.
+	// Cold unloads the model before every chat, so each prompt is read from its
+	// first token by a server that remembers nothing. A model that stays loaded
+	// keeps the previous prompt and re-reads only what differs, and the server
+	// also keeps finished prompts in memory and restores the one that shares
+	// the longest prefix. The paths differ in floating point, and at
+	// temperature 0 that is enough to change an answer: the Phase 3 judge
+	// graded 6 of 12 postings differently from a byte-identical prompt on two
+	// days. The gates set it under SNIPE_GATE_COLD so a number does not depend
+	// on what the server read before. It costs one model load per call.
 	Cold bool
 }
 
@@ -81,6 +83,8 @@ type chatRequest struct {
 	// Think is a pointer so that only an explicit false is sent: every other
 	// caller's body stays byte-identical to what the equivalence gate dumped.
 	Think *bool `json:"think,omitempty"`
+	// KeepAlive is a pointer for the same reason. Only the unload sets it.
+	KeepAlive *int `json:"keep_alive,omitempty"`
 }
 
 type chatResponse struct {
@@ -138,16 +142,13 @@ func (c *Client) Chat(ctx context.Context, req Request, out any) error {
 
 	dumpRequest(req.Label, body)
 	if c.Cold {
-		// Same model and window, so nothing reloads; another prompt, so the
-		// real one shares no prefix with what the model last read. A failure
-		// here is the real call's to report.
-		flush, _ := json.Marshal(chatRequest{
-			Model:    req.Model,
-			Messages: []Message{{Role: "system", Content: "-"}, {Role: "user", Content: "-"}},
-			Options:  Options{NumCtx: req.Options.NumCtx, NumPredict: 1},
-			Think:    think,
-		})
-		_ = c.post(ctx, "/api/chat", flush, &chatResponse{})
+		// No messages and keep_alive 0 is Ollama's unload. A throwaway prompt
+		// in between is not enough: the server saves the prompt it had and
+		// restores it for the next call that shares its prefix. A failure here
+		// is the real call's to report.
+		zero := 0
+		unload, _ := json.Marshal(chatRequest{Model: req.Model, Messages: []Message{}, KeepAlive: &zero})
+		_ = c.post(ctx, "/api/chat", unload, &chatResponse{})
 	}
 	var resp chatResponse
 	if err := c.post(ctx, "/api/chat", body, &resp); err != nil {
