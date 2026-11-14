@@ -668,18 +668,19 @@ that call's first six tokens.
 `SNIPE_GATE_COLD=1` now unloads the model before each call, with the request
 Ollama documents for it: no messages and `keep_alive` 0. In the log every
 call then reads its whole prompt, 5,821 to 6,001 tokens, and nothing is
-restored. Two runs of `gate judge`, the first after Phase 2 calls and the
-second after the first:
+restored. Three runs of `gate judge`: the first after Phase 2 calls, the
+second after the first, and the third as the first thing after
+`systemctl restart ollama`:
 
-| | run 1 | run 2 |
-|---|---|---|
-| blend | 0.848 | 0.848 |
-| judge alone | 0.758 | 0.758 |
-| postings graded differently | | 0 of 12 |
+| | run 1 | run 2 | after a restart |
+|---|---|---|---|
+| blend | 0.848 | 0.848 | 0.848 |
+| judge alone | 0.758 | 0.758 | 0.758 |
+| postings graded differently | | 0 of 12 | 0 of 12 |
 
-It costs a model load per call. The judge gate takes 615 s where it took
-394. Whether the number survives a restart is not tested yet: both runs were
-on 14 Nov.
+It costs a model load per call. The judge gate takes about 610 s where it
+took 394. All three runs were on 14 Nov, so the number has survived a
+restart of the server and not yet a reboot of the machine.
 
 `goldset grade` under the new flag, one run, against the old flag's cold run
 of 11 Nov:
@@ -887,15 +888,8 @@ Three ticks made by hand on 23 October are blank since the remap of
 were left as they are. Whether the remap dropped them on purpose is not
 known.
 
-Two smaller things are open.
-
-The unloading cold flag has run on one day. Run `gate judge` with it after
-`sudo systemctl restart ollama`. 0.848 again makes that the judge's
-baseline, and any other number means the server keeps more between calls
-than its prompt cache.
-
-One window for Phase 2 is a choice between 8 s an offer and a `labels` gate
-that repeats. Section 5 has both sides.
+One decision is open. One window for Phase 2 is a choice between 8 s an
+offer and a `labels` gate that repeats. Section 5 has both sides.
 
 For anything new, run both arms in one session and count only a difference
 larger than the gate's own spread, which on the judge blend is 0.03 between
