@@ -5,6 +5,9 @@ and how long it takes, records a baseline for every gate, ranks the changes
 worth trying, and logs what each one measured. Numbers come from a copy of the
 live home, never the live home itself.
 
+A second pass on 2026-11-14 ran the list section 6 held then. Its results
+start at "Second pass" in section 4.
+
 ## 1. Map
 
 This is the pipeline as the branch found it. Section 4 says what changed.
@@ -455,9 +458,12 @@ prompt and re-reads only what differs. At temperature 0 that changes some
 answers. The judge graded 5 of its 12 postings differently from a
 byte-identical prompt.
 
-`SNIPE_GATE_COLD=1` sends a throwaway one-token call before each of a gate's
-30B calls, so each prompt is read from the start. One binary and one set of
-caches, the gates run warm and then cold:
+`SNIPE_GATE_COLD=1` sent a throwaway one-token call before each of a gate's
+30B calls, meant to make each prompt read from the start. It did not do
+that, and on 14 Nov the flag was changed to unload the model instead: see
+"The same gate on another day". The table is from the first version, so its
+columns are two call states inside one session and neither is a first read.
+One binary and one set of caches:
 
 | | warm | cold |
 |---|---|---|
@@ -474,9 +480,10 @@ caches, the gates run warm and then cold:
 `ats` itself is not cold. It grades the pages `tailor` wrote, and the cold
 `tailor` chose different bullets. One judge posting moved 0.145 on its own.
 
-This is the noise floor to read the other results against: about 0.01 on the
-judge blend, one to two citations and false gaps on `goldset grade`, 0.04 on
-`ats`. A rerun cannot show it, since a rerun repeats the same call states.
+This is the noise floor inside one session: about 0.01 on the judge blend,
+one to two citations and false gaps on `goldset grade`, 0.04 on `ats`. A
+rerun cannot show it, since a rerun repeats the same call states. Between
+sessions the judge blend has moved by 0.026.
 The flag is off by default, so numbers already in the ledgers stay
 comparable.
 
@@ -556,6 +563,185 @@ Model loading is down from 86 to 98 s a run to about 26: the 4B for
 larger window. The 30B's four calls take 152 to 204 s of the run, loads
 included, and `p2.judgment` is the largest of them.
 
+### Second pass, 14 November
+
+Section 6 listed six things to try, and this pass ran them. Two are on the
+branch and described next. Two were measured and dropped, and one passed its
+gates and was left out: section 5 has the three. The last, the evidence
+sheet, needs four lines ticked by hand and is what section 6 now holds.
+
+The measuring turned up two faults, and both fixes are on the branch. The
+gates' cold flag did not make a call cold, and Phase 2 scored an offer by
+whether Phase 1 had run before it. They follow the two changes.
+
+Both arms of every comparison below ran in the same session. "The same gate
+on another day" says why.
+
+### A Languages row when the posting names one (`9fdd6d2`)
+
+cv.md keeps English, Ukrainian and Russian under their own heading, outside
+Skills, so `SelectSkills` never saw them and no tailored page said English.
+It now adds the row when the posting names one of those languages as a whole
+word. 28 of the 452 cached postings do, most of them as a must-have. The
+other 94% keep the line for a bullet.
+
+`gate tailor`, cold, on 38 reports: the usual 16 and the 22 other evaluated
+postings that name English. The head binary against this one, then
+`gate ats` on both sets of pages.
+
+| | before | after |
+|---|---|---|
+| pages with the row | 0 | 24 of 38 |
+| rest of the page changed | | 0 of 38 |
+| one page | 38 of 38 | 38 of 38 |
+| lines | 50.9 | 51.5 |
+| `ats`, must-have evidence | 0.850 | 0.866 |
+| the 19 English must-haves: unmet, partly, met | 9, 4, 6 | 0, 4, 15 |
+
+Paired by offer, 9 went up, 3 went down and 25 tied. The 3 that went down
+lost other qualifications, not English: gemma3 re-reads a page that differs
+by one line and changes 15 of the 346 other verdicts, 5 up and 10 down.
+
+Of the usual 16 pages, 2 gain the row, reports 004 and 056, so their mean
+goes from 50.81 lines to 50.94.
+
+The match is on the word, so a posting that only says its policies are
+available in English prints the row too. The row is headed "Human
+Languages", the name the template parser already had for it.
+
+### The spike background keeps the requirement vectors (`017d516`)
+
+The spike background is keyed on the bullets. Editing one bullet in cv.md
+threw every row away, and the next run embedded the requirements of every
+past report again, though none of them had changed: 67 s on the GPU, about
+190 s since T2 moved the embedder to the CPU.
+
+A rebuild now goes through `ledger.CachedEmbed`, the text-to-vector file T5
+uses for alias terms, in `batch/cache/spike-embed.json`. The next rebuild
+embeds only the reports written since. A run that adds one report does not
+open the file, which is 43 MB to read for about ten texts.
+
+Offer 45, Phase 3 alone, 404 reports, the cache key broken between runs to
+force a rebuild:
+
+| | texts embedded | embedding | Phase 3 wall |
+|---|---|---|---|
+| nothing kept | 3,441 | 186.6 s | 231 s |
+| vectors kept | 44 | 3.8 s | 32 s |
+| vectors kept, again | 44 | 3.9 s | 32 s |
+
+The 44 are the offer's own requirements and the 33 bullets. All 404 rows
+are bit-identical across the three runs.
+
+### The same gate on another day (`7d14676`)
+
+The warm-against-cold spread is the noise inside one session. Between
+sessions it is larger. `gate judge` on the same judge code, the same home
+copy and the same Ollama, 0.31.1, three days and several restarts apart:
+
+| | 11 Nov | 14 Nov |
+|---|---|---|
+| blend, warm | 0.839 | 0.858 |
+| blend, cold | 0.836 | 0.862 |
+| judge alone, cold | 0.745 | 0.784 |
+| cosine | 0.750 | 0.750 |
+
+The cosine arm is equal to the digit, so the vectors and the candidates are
+the same and the 30B alone answered differently, on 6 of the 12 postings.
+Within 14 Nov, warm and cold differ on one posting.
+
+Ollama's log has the cause. The server keeps finished prompts in memory, up
+to 8 GB of them, and gives each new call the stored prompt that shares its
+longest prefix. The judge's calls share the system prompt and two
+exemplars, about 4,100 of 6,000 tokens. So only the first judge call of a
+session read that prefix. Every later call restored it and read the 1,700
+to 1,850 tokens of its own posting. The throwaway call did not stop this:
+the log shows "found better prompt with f_keep = 0.63" before each real call
+on both days.
+
+Warm and cold in one session therefore reuse one prefix state and agree, and
+two sessions do not, because the prefix was first read in different
+company. On 11 Nov it was read after a model load. On 14 Nov it was read
+straight after a Phase 2 judgment in the same window, into a slot that kept
+that call's first six tokens.
+
+`SNIPE_GATE_COLD=1` now unloads the model before each call, with the request
+Ollama documents for it: no messages and `keep_alive` 0. In the log every
+call then reads its whole prompt, 5,821 to 6,001 tokens, and nothing is
+restored. Two runs of `gate judge`, the first after Phase 2 calls and the
+second after the first:
+
+| | run 1 | run 2 |
+|---|---|---|
+| blend | 0.848 | 0.848 |
+| judge alone | 0.758 | 0.758 |
+| postings graded differently | | 0 of 12 |
+
+It costs a model load per call. The judge gate takes 615 s where it took
+394. Whether the number survives a restart is not tested yet: both runs were
+on 14 Nov.
+
+`goldset grade` under the new flag, one run, against the old flag's cold run
+of 11 Nov:
+
+| | old flag | new flag |
+|---|---|---|
+| ticked line shown to the grader | 53 of 63 | 53 |
+| cited a ticked line | 34 | 33 |
+| cited an unticked line | 22 | 23 |
+| cited a line the sheet never had | 4 | 3 |
+| false gap | 3 | 4 |
+| precision of cited lines | 0.607 | 0.589 |
+| blank requirements graded Gap | 6 of 25 | 6 |
+| time | 262 s | 405 s |
+
+The totals are a citation apart, and 8 of the 88 requirements get another
+grade. The right-hand column is the one to pair a stage 2 change against.
+
+The five judge blends on record for this code are 0.836, 0.839, 0.848, 0.858
+and 0.862. A difference under 0.03 on that gate is not a result.
+
+Phase 2 through `snipe run` did not have the problem. Each offer is a new
+process and the same sequence of loads, so its calls meet the same states
+every time. Between 11 and 14 Nov, stage 1 and stage 2 wrote identical
+output on all 18 rated offers, stage 3 on the 14 whose earlier checkpoints
+were kept, and `labels` orders 68 of 83 pairs on both days.
+
+### Phase 2 asks for the CV's language list (`c5c8bc0`)
+
+One offer scored differently between the two days for a reason that is not
+the model. Offer 42 was 4.2 on 11 Nov and is 3.8 on 14 Nov, on the same three
+stage outputs.
+
+The stack cap compares the languages a posting wants with the languages the
+CV has work in. The second list comes from one 4B call in Phase 1, cached
+under a key of the ledger's entities. Phase 2 only read that cache. A home
+where Phase 1 has not run since the entities last changed has no list, and
+the cap fell back to the word lists without saying so. Offer 42 wants Go:
+the word lists cap it at 3 and the extracted facts do not.
+
+The live home has no list today and holds offer 42 at 3.8. So did the copy
+every 14 Nov arm ran on, which keeps those arms paired like for like.
+
+Phase 2 now asks for the list before its first 30B call. Offers 42 and 86
+through `snipe run --skip-phase1` on a copy with no list:
+
+| | before | after |
+|---|---|---|
+| offer 42, score | 3.8 | 4.2 |
+| offer 42, cv_blended | 3 | 3.73 |
+| offer 86, score | 3.4 | 3.4 |
+| `p1.cvstack` calls | 0 | 1, on offer 42, 25.6 s |
+| Phase 2 wall, offer 42 | 138.6 s | 157.5 s |
+| Phase 2 wall, offer 86 | 125.4 s | 124.7 s |
+
+Every other field of the two eval files is equal. The call is made once per
+ledger and read from the cache after that.
+
+Of the 391 evaluations in the home, 4 record a cap the two sources disagree
+on. The word lists cap offers 42, 414 and 439 at 3 where the facts do not,
+and the facts cap offer 401 for Kotlin where the word lists do not.
+
 ## 5. Negatives
 
 Measured and dropped. None of these should come back without a new reason.
@@ -570,18 +756,51 @@ Measured and dropped. None of these should come back without a new reason.
 | Skills or Education line always last | `goldset grade` | cited a ticked line 35 -> 39, precision 0.574 -> 0.650, false gap 2 -> 3, blank graded Gap 9 -> 5 | Best precision of any arm and the most generous. Adds nothing on top of four candidates |
 | Instruction prefix on the requirement before embedding it | embeddings only | hit@3 47 to 51 of 63 against 50 | Not decidable. 53 to 92 of the 189 slots hold lines the sheet never offered. The sheet was pooled from the current retriever, so it cannot score a retriever that looks elsewhere |
 | Embedder on the CPU for small jobs and the GPU for large ones | `goldset score`, `goldset grade`, `judge` | ticked line shown 50 -> 48, cited a ticked line 35 -> 33, false gap 2 -> 5, blend 0.847 -> 0.840 | The CPU and the GPU return different vectors for one text: the same top 3 for 273 of 320 requirements. Queries from one device against an index from the other are worse than either alone (48 shown, against 50 all-GPU and 51 all-CPU) |
+| Stage 1 without `kind`, `terms` and `quote` | `labels`, a fresh Phase 2 on the 18 rated offers | Phase 2 score 68 -> 62 of 83 pairs, rho 0.559 -> 0.431; Phase 2 132 -> 118 s an offer | Nothing shipped reads the three fields, but the model writes its requirements differently without them: 128 must-haves where there were 138, and stage 2 then grades 54 requirements Strong where it graded 70 and calls the tooling different on 68 rows where it did on 43 |
+| Stage 1 without `quote` alone | the same | Phase 2 score 68 -> 65 pairs, rho 0.559 -> 0.499; Phase 2 132 -> 128 s | `quote` is 23% of what stage 1 writes and the other two fields 6%, so this was the cheap one to lose. It costs 3 pairs for 4 s: Strong 70 -> 62 |
+| Bonus in Phase 3 for a bullet Phase 2 cited (Q3) | `judge`, with a fresh Phase 2 on its 12 postings | blend 0.858 -> 0.860 and 0.862 -> 0.864 on the two runs of 14 Nov at a bonus of 0.05, nothing or a loss from 0.10 up | Inside the noise. Phase 2 cites 50 bullets and 26 of them are ticked, 52% against 24% of all bullets, so the bonus lifts 24 unticked bullets with them. Strong citations only, or must-haves only, do the same |
 
-Two things were looked at and not run.
+One thing passed its gates and is left out.
 
-One window for all three Phase 2 stages (T4) would save 7 s, the reload
-between `p2.evidence` and `p2.judgment`. T3 shows what a window change does
-to a model's answers at temperature 0, and here it would need the 50-minute
-Phase 2 gate to show it was harmless.
+One window for all three Phase 2 stages (T4) removes the 8 s reload before
+`p2.judgment` and costs nothing else: the 30B writes 25 tokens a second in
+either window. That is the saving on an offer run whole, where Phase 1's 4B
+evicts the 30B in between. On the 18 rated offers run one after another the
+30B stays loaded from offer to offer and both of Phase 2's loads go, 15 s.
+The wall falls by 10 s, because the three stages write 2,350 tokens an offer
+where they wrote 2,210.
 
-Telling Phase 3 which bullets Phase 2 cited (Q3) cannot be screened on what
-is on disk. Every stored report quotes cv.md as it was worded in August, so
-its evidence column names lines that no longer exist. It needs a fresh
-Phase 2 on the judge sheet's 12 postings first.
+| | two windows | one window |
+|---|---|---|
+| `labels`, Phase 2 score | 68 of 83 pairs, rho 0.559 | 71.5, rho 0.635 |
+| `labels`, cv_blended | 68.5 | 69.5 |
+| `labels`, coverage | 68 | 70 |
+| `labels`, cv_match | 60 | 63.5 |
+| requirements, must-haves among them | 160, 138 | 163, 147 |
+| graded Strong, Transferable, Gap | 70, 68, 22 | 63, 67, 33 |
+| Phase 2 wall, mean of the 18 | 132.2 s | 121.9 s |
+| `goldset grade`, cited a ticked line | 33 of 63 | 33 |
+| `goldset grade`, false gap | 4 | 1 |
+| `goldset grade`, cited a line the sheet never had | 3 | 7 |
+| `goldset grade`, blank graded Gap | 6 of 25 | 7 |
+
+The `goldset grade` rows are stage 2 alone, cold, one run each: the same
+requirements in an 8192 window and a 12288 one. The window changes what the
+model writes with nothing else different. 17 of the 88 requirements get
+another grade and 12 another line. The count of ticked lines cited does not
+move. Three false gaps become citations of unticked lines, and four other
+citations move to lines the sheet never offered, so they cannot be scored.
+
+It is not worse, and 3.5 pairs is at the edge of what 18 ratings can tell
+apart. It stays out for what it does to the measuring. Each change of window
+restarts the server's runner, which is why Phase 2 gives the same answer on
+any day: every offer starts from nothing. With one window the runner lives
+on, and the server hands each call the prefix an earlier offer left. On this
+run `p2.jdparse` read its prompt in 2.3 s where it took 3.8. An offer's score
+would then depend on the offers before it, and `labels` would stop being the
+one gate that repeats. That is a poor trade for 4 to 8% of a run. If the
+speed is wanted more, it is `NumCtx: 12288` on one line of
+`cmd/snipe/cmds.go`.
 
 ### The ATS ceiling is not a measurement
 
@@ -600,35 +819,47 @@ and the judge calls "Experience with PostgreSQL database" unmet.
 So `must_have_evidence` is usable as a paired comparison between two pages
 and as nothing else.
 
-One thing the listing does show. The tailored page has no Languages section,
-so a posting whose must-have is English fluency gets no evidence for it,
-though cv.md says C1 certified.
+One thing the listing did show. The tailored page had no Languages section,
+so a posting whose must-have is English fluency got no evidence for it,
+though cv.md says C1 certified. `9fdd6d2` prints the row (section 4).
 
 ## 6. What to try next
 
-In the order I would run them.
+The six things this section listed on 11 November are done. Section 4's
+second pass has the two that are on the branch, and section 5 the three
+that are not.
 
-1. **A Languages line on the tailored page.** Postings that list English
-   fluency as a must-have get no evidence for it, though cv.md says C1
-   certified: none of the 16 tailored pages names English. It needs no
-   model, and `ats` can check it as a paired comparison.
-2. **Cache requirement vectors by text in the spike background.** Editing a
-   bullet in cv.md re-embeds every requirement of every past report, about
-   190 s on the CPU. The requirements did not change. With the
-   `ledger.CachedEmbed` file T5 uses for alias terms, an edit would embed the
-   33 bullets and nothing else.
-3. **Re-tick the evidence sheet for the CPU retriever.** Its candidates were
-   pooled from the GPU's top 3, so up to 4 citations per run now land on lines
-   it never offered and cannot be scored. Ticking those few lines makes
-   `goldset grade` exact again.
-4. **One window for all three Phase 2 stages (T4).** The reload before
-   `p2.judgment` is now the largest load left, 9 s. It needs `goldset grade`
-   and the Phase 2 `labels` run, read against the cold floor.
-5. **What each typed field in stage 1 buys.** The typed fields took
-   `p2.jdparse` from 507 to 917 output tokens, about 16 s an offer. Some feed
-   the strength rule; whether all of them do was not checked.
-6. **Tell Phase 3 which bullets Phase 2 cited (Q3).** Needs a fresh Phase 2
-   on the judge sheet's 12 postings before it can be screened.
+What is left is to re-tick the evidence sheet for the CPU retriever. Its
+candidates were pooled from the GPU's top 3, so on CPU vectors
+`goldset grade` cites lines the sheet never offered and cannot score them.
+The two cold runs at the shipped window cite four between them:
 
-For any of these, run the 30B gates twice, warm and with
-`SNIPE_GATE_COLD=1`, and count only a difference larger than theirs.
+| report | requirement | line cited |
+|---|---|---|
+| 320, R4 | Experience with cloud, APIs, microservices, or distributed systems | Distributed Store Management Platform: Built 10 Spring Boot microservices... |
+| 329, R4 | Strong problem-solving skills to break down complex technical or logistical problems | Software Engineer: Built the React and Next.js admin console... |
+| 327, R2 | Fresh graduate or 1+ years of professional Java development experience | the summary line that starts "Built a 10-service event-driven platform in Java" |
+| 326, R3 | Skills in Object-Oriented Design, Design Patterns, Architecture, and Application Integration | the header line of the Distributed Store Management Platform project |
+
+Each needs a yes or a no by the sheet's own rule: would the work on that
+line let you answer the requirement in an interview? With the four on the
+sheet, ticked or blank, `goldset grade` is exact for those runs. Another
+binary can cite other lines, so read its count of "unlabelled line" before
+its grade.
+
+Three smaller things are open.
+
+The unloading cold flag has run on one day. Run `gate judge` with it after a
+restart. 0.848 again makes that the judge's baseline, and any other number
+means the server keeps more between calls than its prompt cache.
+
+`gate tailor` has no number under the new flag. Section 4's were taken with
+the old one, where only the first call of a run read its whole prompt.
+
+One window for Phase 2 is a choice between 8 s an offer and a `labels` gate
+that repeats. Section 5 has both sides.
+
+For anything new, run both arms in one session and count only a difference
+larger than the gate's own spread, which on the judge blend is 0.03 between
+sessions. `SNIPE_GATE_COLD=1` makes every 30B call read its whole prompt, at
+a model load a call, and is the setting to quote a number from.
