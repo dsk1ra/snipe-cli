@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dsk1ra/snipe-cli/internal/cvselect"
+	"github.com/dsk1ra/snipe-cli/internal/ledger"
 	"github.com/dsk1ra/snipe-cli/internal/state"
 )
 
@@ -90,6 +91,7 @@ func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, bv [][]f
 			cache = c
 		}
 	}
+	rebuild := len(cache.Rows) == 0
 
 	// One requirement set per report the cache has not seen.
 	var fresh []string
@@ -111,10 +113,19 @@ func (t *Tailor) spikeBackground(ctx context.Context, bullets []string, bv [][]f
 		for _, set := range reqSets {
 			flat = append(flat, set...)
 		}
+		// A rebuild re-reads every report because the bullets changed, and the
+		// requirements did not: 4,037 texts and about 190 s on the CPU to edit
+		// one bullet. So a rebuild keeps their vectors by text, and the next one
+		// embeds only the reports written since. A run that adds one report
+		// leaves the file alone, which is 50 MB to read for ten texts.
+		emb := t.embed
+		if rebuild {
+			emb = ledger.CachedEmbed(filepath.Join(t.L.CacheDir(), "spike-embed.json"), fingerprint, t.embed)
+		}
 		var vecs [][]float64
 		if len(flat) > 0 { // a report with no Block B needs no embedding
 			var err error
-			if vecs, err = t.embed(ctx, flat); err != nil || len(vecs) != len(flat) {
+			if vecs, err = emb(ctx, flat); err != nil || len(vecs) != len(flat) {
 				return nil
 			}
 		}

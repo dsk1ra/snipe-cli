@@ -58,8 +58,14 @@ func TestSpikeBackgroundEmbedsOnlyNewReports(t *testing.T) {
 		t.Fatalf("one new report embedded %d texts, want its 2 requirements", got)
 	}
 
+	// A rebuild keeps the requirement vectors of the last one, so it embeds
+	// only the report written since.
 	os.Remove(tl.L.Spike())
+	before = f.embedded
 	full := tl.spikeBackground(ctx, bullets, bv, "fp")
+	if got := f.embedded - before; got != 2 {
+		t.Fatalf("a rebuild embedded %d texts, want the 2 written since the last one", got)
+	}
 	for i := range full {
 		if inc[i] != full[i] {
 			t.Fatalf("bullet %d: incremental mean %v, rebuilt mean %v", i, inc[i], full[i])
