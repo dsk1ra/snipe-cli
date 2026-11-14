@@ -698,6 +698,23 @@ of 11 Nov:
 The totals are a citation apart, and 8 of the 88 requirements get another
 grade. The right-hand column is the one to pair a stage 2 change against.
 
+`gate tailor` under the new flag, twice, on the usual 16 reports, then
+`gate ats` on the pages:
+
+| | run 1 | run 2 |
+|---|---|---|
+| one page | 16 of 16 | 16 of 16 |
+| lines | 51.19 | 51.19 |
+| exp_starved | 1.375 | 1.375 |
+| front_load | 0.313 | 0.313 |
+| keep_rate | 0.958 | 0.958 |
+| pages that differ | | 0 of 16 |
+| time | 855 s | 862 s |
+| `ats`, must-have evidence | 0.808 | |
+| `ats`, preferred evidence | 0.856 | |
+
+The old flag's cold run took 522 s.
+
 The five judge blends on record for this code are 0.836, 0.839, 0.848, 0.858
 and 0.862. A difference under 0.03 on that gate is not a result.
 
@@ -847,14 +864,12 @@ sheet, ticked or blank, `goldset grade` is exact for those runs. Another
 binary can cite other lines, so read its count of "unlabelled line" before
 its grade.
 
-Three smaller things are open.
+Two smaller things are open.
 
-The unloading cold flag has run on one day. Run `gate judge` with it after a
-restart. 0.848 again makes that the judge's baseline, and any other number
-means the server keeps more between calls than its prompt cache.
-
-`gate tailor` has no number under the new flag. Section 4's were taken with
-the old one, where only the first call of a run read its whole prompt.
+The unloading cold flag has run on one day. Run `gate judge` with it after
+`sudo systemctl restart ollama`. 0.848 again makes that the judge's
+baseline, and any other number means the server keeps more between calls
+than its prompt cache.
 
 One window for Phase 2 is a choice between 8 s an offer and a `labels` gate
 that repeats. Section 5 has both sides.
