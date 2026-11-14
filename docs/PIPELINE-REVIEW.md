@@ -853,8 +853,8 @@ that are not.
 The evidence sheet has its four lines. Its candidates were pooled from the
 GPU's top 3, so on CPU vectors `goldset grade` cited lines the sheet never
 offered and could not score them. The two cold runs at the shipped window
-cited four between them. Each was decided by the sheet's own rule on
-14 November, by Claude Opus and not by hand, so each is open to overruling:
+cited four between them. Claude Opus decided each by the sheet's own rule on
+14 November, and the four calls were then read and confirmed by hand:
 
 | report | requirement | line cited | on the sheet |
 |---|---|---|---|
@@ -888,8 +888,9 @@ Three ticks made by hand on 23 October are blank since the remap of
 were left as they are. Whether the remap dropped them on purpose is not
 known.
 
-One decision is open. One window for Phase 2 is a choice between 8 s an
-offer and a `labels` gate that repeats. Section 5 has both sides.
+One window for Phase 2 was a choice between 8 s an offer and a `labels` gate
+that repeats. It was decided on 14 November: the two windows stay. Section 5
+has both sides.
 
 For anything new, run both arms in one session and count only a difference
 larger than the gate's own spread, which on the judge blend is 0.03 between
