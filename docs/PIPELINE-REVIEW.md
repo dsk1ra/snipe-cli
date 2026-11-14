@@ -568,7 +568,7 @@ included, and `p2.judgment` is the largest of them.
 Section 6 listed six things to try, and this pass ran them. Two are on the
 branch and described next. Two were measured and dropped, and one passed its
 gates and was left out: section 5 has the three. The last, the evidence
-sheet, needs four lines ticked by hand and is what section 6 now holds.
+sheet, got its four lines the same day, and section 6 has them.
 
 The measuring turned up two faults, and both fixes are on the branch. The
 gates' cold flag did not make a call cold, and Phase 2 scored an offer by
@@ -696,7 +696,9 @@ of 11 Nov:
 | time | 262 s | 405 s |
 
 The totals are a citation apart, and 8 of the 88 requirements get another
-grade. The right-hand column is the one to pair a stage 2 change against.
+grade. The right-hand column is the one to pair a stage 2 change against. A
+second run under the new flag, on the re-ticked sheet of section 6, gave all
+88 requirements the same grade and the same line.
 
 `gate tailor` under the new flag, twice, on the usual 16 reports, then
 `gate ats` on the pages:
@@ -737,8 +739,8 @@ where Phase 1 has not run since the entities last changed has no list, and
 the cap fell back to the word lists without saying so. Offer 42 wants Go:
 the word lists cap it at 3 and the extracted facts do not.
 
-The live home has no list today and holds offer 42 at 3.8. So did the copy
-every 14 Nov arm ran on, which keeps those arms paired like for like.
+The live home had no list and held offer 42 at 3.8. So did the copy every
+14 Nov arm ran on, which keeps those arms paired like for like.
 
 Phase 2 now asks for the list before its first 30B call. Offers 42 and 86
 through `snipe run --skip-phase1` on a copy with no list:
@@ -753,7 +755,8 @@ through `snipe run --skip-phase1` on a copy with no list:
 | Phase 2 wall, offer 86 | 125.4 s | 124.7 s |
 
 Every other field of the two eval files is equal. The call is made once per
-ledger and read from the cache after that.
+ledger and read from the cache after that. Re-evaluated in the live home on
+the merged code, offer 42 is 4.2 there too, as report 408.
 
 Of the 391 evaluations in the home, 4 record a cap the two sources disagree
 on. The word lists cap offers 42, 414 and 439 at 3 where the facts do not,
@@ -846,23 +849,43 @@ The six things this section listed on 11 November are done. Section 4's
 second pass has the two that are on the branch, and section 5 the three
 that are not.
 
-What is left is to re-tick the evidence sheet for the CPU retriever. Its
-candidates were pooled from the GPU's top 3, so on CPU vectors
-`goldset grade` cites lines the sheet never offered and cannot score them.
-The two cold runs at the shipped window cite four between them:
+The evidence sheet has its four lines. Its candidates were pooled from the
+GPU's top 3, so on CPU vectors `goldset grade` cited lines the sheet never
+offered and could not score them. The two cold runs at the shipped window
+cited four between them. Each was decided by the sheet's own rule on
+14 November, by Claude Opus and not by hand, so each is open to overruling:
 
-| report | requirement | line cited |
+| report | requirement | line cited | on the sheet |
+|---|---|---|---|
+| 320, R4 | Experience with cloud, APIs, microservices, or distributed systems | Distributed Store Management Platform: Built 10 Spring Boot microservices... | ticked |
+| 329, R4 | Strong problem-solving skills to break down complex technical or logistical problems | Software Engineer: Built the React and Next.js admin console... | blank |
+| 327, R2 | Fresh graduate or 1+ years of professional Java development experience | the summary line that starts "Built a 10-service event-driven platform in Java" | blank |
+| 326, R3 | Skills in Object-Oriented Design, Design Patterns, Architecture, and Application Integration | the header line of the Distributed Store Management Platform project | ticked |
+
+The tick on 326 R3 is the least certain. The header names a stack and no
+design work. It is ticked because the sheet ticks the same header under its
+microservice and distributed-systems requirements.
+
+`goldset grade`, cold, the same binary on the sheet before and after:
+
+| | before | after |
 |---|---|---|
-| 320, R4 | Experience with cloud, APIs, microservices, or distributed systems | Distributed Store Management Platform: Built 10 Spring Boot microservices... |
-| 329, R4 | Strong problem-solving skills to break down complex technical or logistical problems | Software Engineer: Built the React and Next.js admin console... |
-| 327, R2 | Fresh graduate or 1+ years of professional Java development experience | the summary line that starts "Built a 10-service event-driven platform in Java" |
-| 326, R3 | Skills in Object-Oriented Design, Design Patterns, Architecture, and Application Integration | the header line of the Distributed Store Management Platform project |
+| ticked line shown to the grader | 53 of 63 | 54 |
+| cited a ticked line | 33 | 35 |
+| cited an unticked line | 23 | 24 |
+| cited a line the sheet never had | 3 | 0 |
+| false gap | 4 | 4 |
+| precision of cited lines | 0.589 | 0.593 |
+| blank requirements graded Gap | 6 of 25 | 6 |
 
-Each needs a yes or a no by the sheet's own rule: would the work on that
-line let you answer the requirement in an interview? With the four on the
-sheet, ticked or blank, `goldset grade` is exact for those runs. Another
+The right-hand column is the baseline for a stage 2 change now. Another
 binary can cite other lines, so read its count of "unlabelled line" before
 its grade.
+
+Three ticks made by hand on 23 October are blank since the remap of
+9 November: line 13 under 329 R2, and line 32 under 330 R6 and 327 R6. They
+were left as they are. Whether the remap dropped them on purpose is not
+known.
 
 Two smaller things are open.
 
