@@ -44,6 +44,22 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
   first and quoted. Enter adds the spelling to `config/skills.yml` and `n`
   rejects it for good. Nothing applies itself, and an item with a spaced ` / `
   is refused until it is split in cv.md.
+- The tailored page prints a Languages row when the posting names a language
+  cv.md lists, as a whole word. cv.md keeps its human languages outside
+  Skills, so no page said English, and a posting whose must-have is English
+  fluency got no evidence for it. Over 38 tailored pages, 24 gain the row and
+  nothing else on them changes. Of their 19 English must-haves the ATS judge
+  calls 15 met, where it called 6 met.
+- `gate labels <home>` scores the Phase 1 and Phase 2 scores against the hand
+  ratings in `batch/labels`, and `gate goldset grade` scores the CV line stage
+  2 cites against the evidence gold sheet. `SNIPE_GATE_COLD=1` unloads the
+  model before each of a gate's calls, so every prompt is read from its first
+  token and a number does not depend on what the server had cached. With it
+  the judge gate gave 0.848 three times, the third straight after an Ollama
+  restart.
+- `docs/PIPELINE-REVIEW.md`: a map of the three phases and where their time
+  goes, a baseline for every gate, what each change measured, and the changes
+  that were measured and dropped.
 
 ### Changed
 
@@ -87,6 +103,19 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 - `v`, and a finished row's action (now "skills", was "report"), open that
   review instead of the report. Reports are still written to `reports/`, and
   the follow-ups board still opens them.
+- An offer takes 207 s end to end where it took 311 s (mean of 3 offers). The
+  embedder runs on the CPU, so it no longer evicts the 30B between calls.
+  Phase 1 uses one context window, so the 4B is not reloaded for the
+  extraction. The spike background, the alias term vectors and the requirement
+  vectors are kept between runs, so a run embeds only what is new. The CPU
+  returns different vectors from the GPU, so the first run after this rebuilds
+  the vector caches once, about 12 minutes.
+- Stage 2's grader sees four candidate CV lines per requirement, not three. On
+  the evidence gold sheet a ticked line is among those shown for 53 of 63
+  requirements, up from 50.
+- Phase 1's `north_star` is looked up from the archetype's tier, as Phase 2's
+  is. Against the 18 rated offers Phase 1 orders 52 of 83 pairs, where it
+  ordered 47: 2 more from the lookup and 3 from the embedder leaving the GPU.
 
 ### Fixed
 
@@ -138,6 +167,14 @@ Notable changes to snipe, newest first. Format follows [Keep a Changelog](https:
 - Accepting an alias wrote `config/skills.yml` by renaming a temporary file
   over it, which replaced a symlinked `skills.yml` with a plain file. It now
   writes through the link to the file behind it.
+- Phase 2 scored an offer lower when Phase 1 had not run since the fact ledger
+  last changed. The stack cap read the CV's language list from Phase 1's
+  cache, and without one fell back to the word lists and did not say so. Phase
+  2 now asks for the list itself, once per ledger. One offer that wants Go
+  went from 3.8 to 4.2 on the same three stage outputs.
+- `gate ats --ceiling` reads a verdict gemma3 gives on two bare lines, without
+  its labels. It had counted all 151 such replies as unusable and reported
+  nothing.
 
 ### Removed
 
