@@ -113,6 +113,13 @@ func (e *Evaluator) Run(ctx context.Context, id int, ck *state.Checkpoint) error
 	// 30B and the 0.6 GB embedder costs a reload — measured at 4 reloads across
 	// 5 calls on Phase 3. Everything the embedder can do without stage 1's
 	// output therefore happens here, not between the two 30B calls.
+	// So does the 4B, the one time it is needed. The stack cap below reads the
+	// CV's language list from Phase 1's cache, and when Phase 1 has not run
+	// since the ledger last changed there is none: the word lists then decide,
+	// and say nothing. Asked here it is one call per ledger, cached after.
+	if e.Extract != nil {
+		_, _ = e.Extract.CVLanguages(ctx) // no ledger or no prompt leaves the word lists in charge, as before
+	}
 	atoms := embed.ExtractAtoms(e.Cfg.CVRaw, embed.ReadFileOr(e.L.Digest()))
 	cvIndex, err := e.IX.LoadCV(ctx, atoms)
 	if err != nil {
